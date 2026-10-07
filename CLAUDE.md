@@ -5,7 +5,7 @@ Framework Rust, no espírito do Rails, em que cada post-it do Event Storming vir
 ## Onde está o contexto
 
 - `docs/ROADMAP.md`: fases, o que está feito ([x]) e o que falta. **Cada fase é feita num chat próprio.**
-- `docs/DECISOES.md`: decisões D1–D29, todas tomadas. São a fonte da verdade: siga-as e não reabra uma decisão sem perguntar.
+- `docs/DECISOES.md`: a tabela-resumo de todas as decisões (D1–D37) e o texto completo só das que estão em aberto. As tomadas são a fonte da verdade: siga-as e não reabra uma decisão sem perguntar. O texto completo de uma decisão tomada está no histórico do git (`git show 67cf4c7:docs/DECISOES.md`).
 - `README.md`: não é incluído na documentação da crate (o `lib.rs` tem a própria, com a tabela post-it → código). É um tutorial que percorre o `main.rs` do `examples/rde` (D26). Cada bloco marcado com `<!-- snippet: <arquivo> -->` é uma cópia literal do arquivo, e o `examples/rde/tests/readme.rs` falha se a cópia ficar desatualizada. Ao mudar um trecho da rde que aparece no README, atualize o bloco também.
 
 ## Estilo de código (o mais importante)

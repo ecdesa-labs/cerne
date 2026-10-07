@@ -145,6 +145,7 @@ O que já existe no código, comparado com os elementos do Event Storming:
 - [ ] Executar o repositório que o `cerne g entity --aggregate` gera para Postgres. Hoje ele só passa pelo `clippy` no e2e.
 - [ ] Executar o REST gerado: no e2e, mandar um `POST` e um `GET` ao projeto `--http rest`, como o teste de ida e volta que já existe para o repositório. Hoje o handler gerado pelo `cerne g endpoint` só passa pelo `clippy`; a rde usa JSON-RPC.
 
+- [ ] Acrescentar HTTP a um projeto que nasceu sem `--http`: hoje não há `cerne g http rest|jsonrpc`, e o `cerne g endpoint` recusa o projeto. Quem muda de ideia cria a camada à mão.
 - [ ] JSON-RPC com `params` por posição (array), além de por nome (objeto): decidir e implementar a **D36**, item 1.
 - [ ] JSON-RPC: conferir o `"jsonrpc": "2.0"` e responder `-32600` quando ele faltar ou for outro (**D36**, item 2).
 - [ ] JSON-RPC: responder JSON malformado com `-32700` e um envelope inválido (sem `method`) com `-32600`, em vez do erro HTTP do extractor do axum (**D36**, item 3).
@@ -164,6 +165,20 @@ O que já existe no código, comparado com os elementos do Event Storming:
 
 ---
 
+## Fase 5 — O domínio em outras linguagens
+
+**Meta:** o domínio de um projeto Cerne (value objects, entidades, invariantes, regras de negócio) vira biblioteca para TypeScript e Elixir, com as mesmas invariantes nos dois lados (**D37**).
+
+- [ ] Decidir a **D37**: a fronteira (JSON ou tipos nativos), o que sai e a ordem dos alvos.
+- [ ] Generator de uma crate à parte que embrulha o domínio (`cerne g bindings ...`), sem atributos de alvo no domínio.
+- [ ] TypeScript via WebAssembly (`wasm-bindgen` + `wasm-pack`): pacote npm com os tipos.
+- [ ] Elixir via Rustler (NIFs).
+- [ ] Na rde: o `TxHash` e a `Transfer` validados em TypeScript e em Elixir com as mesmas violações do Rust.
+
+**Fica de fora:** a camada de aplicação (commands, repositórios, outbox), que é async e depende de `tokio` e `sqlx`, e as policies.
+
+---
+
 ## Decisões pendentes
 
-Uma: a **D36**, item 1 (`params` do JSON-RPC por nome ou por posição). O ponto em aberto da D23 (id gerado pelo repositório) foi resolvido na D28. Ver o resumo em [DECISOES.md](./DECISOES.md).
+Duas: a **D36**, item 1 (`params` do JSON-RPC por nome ou por posição), e a **D37** (o domínio em outras linguagens). O ponto em aberto da D23 (id gerado pelo repositório) foi resolvido na D28. Ver o resumo em [DECISOES.md](./DECISOES.md).
