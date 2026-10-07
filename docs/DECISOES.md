@@ -48,7 +48,7 @@ Legenda de impacto:
 | D33 | HTTP: REST ou JSON-RPC | 🔴 | ✅ | Feature `axum`; `cerne new --http rest\|jsonrpc`; método `create_transfer`; ator no corpo até a fase de autenticação |
 | D34 | A transação entre o agregado e a outbox | 🔴 | ✅ | `TransactionalPorts` (`begin`, `commit`, `outbox`); os sistemas externos ficam fora da transação |
 | D35 | Como o CLI da Fase 3 foi feito | 🟢 | ✅ | `--policy`; repositório SQL gerado com `--aggregate`; linhas inseridas ao lado de âncoras do `cerne new` |
-| D36 | `params` do JSON-RPC: por nome ou por posição | 🔴 | ⏳ | Em aberto: hoje só objeto (por nome); a chamada padrão usa array |
+| D36 | O formato da chamada JSON-RPC | 🔴 | ⏳ | Em aberto: `params` só por nome (a chamada padrão usa array); `"jsonrpc": "2.0"` não é conferido; JSON malformado não volta `-32700` |
 
 ---
 
@@ -780,7 +780,11 @@ pub trait TransactionalPorts: Sized + Send + Sync + 'static {
 
 ---
 
-## D36 — `params` do JSON-RPC: por nome ou por posição 🔴 (em aberto, a partir da D33)
+## D36 — O formato da chamada JSON-RPC 🔴 (em aberto, a partir da D33)
+
+Três problemas na leitura da chamada, todos em `crates/cerne/src/http.rs` e no handler `rpc` (`examples/rde/src/infrastructure/http/rpc.rs` e o `rpc.rs.jinja` do CLI). O primeiro pede uma decisão; os outros dois são erros a corrigir.
+
+### 1. `params` por nome ou por posição
 
 **Problema:** a chamada JSON-RPC que o Cerne documenta e testa manda os `params` como **objeto**, com os campos do command por nome:
 
@@ -813,4 +817,18 @@ A especificação JSON-RPC 2.0 aceita as duas formas (by-position e by-name). Ho
 4. README, passo 7: o `curl` com a forma escolhida.
 5. Esta decisão: resposta e status ✅.
 
-**Resposta:** _pendente_
+### 2. O `"jsonrpc": "2.0"` não é conferido
+
+A struct `Request` (`http.rs`) tem só `method`, `params` e `id`. O `serde` ignora o campo `jsonrpc`, então uma chamada com `"jsonrpc": "1.0"`, ou sem o campo, é atendida como se fosse 2.0. A especificação exige o valor `"2.0"`.
+
+**Correção:** a `Request` ganha o campo `jsonrpc`, e um valor diferente de `"2.0"` (ou a ausência dele) volta `-32600` (invalid request).
+
+### 3. JSON malformado não volta como erro JSON-RPC
+
+O envelope é lido pelo extractor `Json<Request>` do axum, antes de o handler rodar. Um corpo que não é JSON, ou um JSON sem `method`, é recusado pelo axum com um erro HTTP dele (400, 415 ou 422), num corpo que não é uma resposta JSON-RPC. A especificação pede `-32700` (parse error) para JSON malformado e `-32600` (invalid request) para um envelope inválido, sempre com HTTP 200 e uma `Response` com `"id": null`.
+
+**Correção:** o handler recebe o corpo cru (`Bytes` ou `String`) e o lê com `serde_json`; a lib dá uma função que transforma o corpo numa `Request` ou num `ErrorObject` com `-32700`/`-32600`. O `rpc.rs` da rde e o `rpc.rs.jinja` do CLI passam a usá-la.
+
+**Testes que faltam (`examples/rde/tests/http.rs`):** corpo que não é JSON → `-32700`; JSON sem `method` → `-32600`; `"jsonrpc": "1.0"` → `-32600`.
+
+**Resposta:** _pendente_ (item 1). Os itens 2 e 3 são correções, sem escolha a fazer.
