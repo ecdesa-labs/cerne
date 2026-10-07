@@ -29,7 +29,7 @@ O que já existe no código, comparado com os elementos do Event Storming:
 | 🟨 Amarelo pequeno | Actor | ❌ Não existe | — |
 | — | CLI (`cerne new`, `cerne g`) | ✅ Pronto (`--db`, `--http`; entity com repositório, value_object, event, command, read_model, query, endpoint, http, port, adapter) | `crates/cerne-cli/` |
 
-**Próximo passo:** fechar a Fase 3.5 (ver no CI o repositório Postgres gerado rodar, e um "Cancelar" de verdade na MetaMask contra o servidor da rde); depois, a Fase 4, publicação.
+**Próximo passo:** a Fase 4, publicação.
 
 ---
 
@@ -131,7 +131,7 @@ O que já existe no código, comparado com os elementos do Event Storming:
 
 ---
 
-## Fase 3.5 — Verificar o que a Fase 3 só compilou
+## Fase 3.5 — Verificar o que a Fase 3 só compilou ✅
 
 **Meta:** tudo o que a Fase 3 entregou roda de verdade, não só passa no `clippy`.
 
@@ -142,7 +142,7 @@ O que já existe no código, comparado com os elementos do Event Storming:
   ```
 
   Ele cobre a outbox (`FOR UPDATE SKIP LOCKED`, rollback e commit).
-- [ ] Executar o repositório que o `cerne g entity --aggregate` gera para Postgres. Feito no código: com `DATABASE_URL`, o e2e cria um banco próprio no Postgres e roda no projeto `vitrine` um teste de ida e volta do repositório gerado, com inteiro, `f64`, `bool`, `String` e enum. O job `postgres` do CI ganhou o passo `cargo test -p cerne-cli`. Falta ver esse passo verde no CI: a máquina da Fase 3.5 também não tinha Postgres.
+- [x] Executar o repositório que o `cerne g entity --aggregate` gera para Postgres. Com `DATABASE_URL`, o e2e cria um banco próprio no Postgres e roda no projeto `vitrine` um teste de ida e volta do repositório gerado, com inteiro, `f64`, `bool`, `String` e enum. O job `postgres` do CI roda o `cargo test -p cerne-cli` e passa desde o commit `266e833`. Só o projeto Postgres recebe o `DATABASE_URL`: os projetos SQLite do e2e o leriam como o próprio banco.
 - [x] Executar o REST gerado: no e2e, o projeto `caixa` recebe um `POST` e um `GET` direto no router gerado (com o `tower`), inclusive um corpo que não é o command (422) e uma query string que não é a query (400).
 - [x] Acrescentar HTTP a um projeto que nasceu sem `--http`: `cerne g http rest|jsonrpc` escreve o que o `cerne new --http` teria escrito (o `axum` e a feature `axum` no `Cargo.toml`, `infrastructure/http/`, e o `main.rs` que serve o router, se ele ainda é o do `cerne new`). Em JSON-RPC, cada command de ator e cada query que já existem ganham o método (**D39**).
 - [x] JSON-RPC com `params` por posição (array) e por nome (objeto) (**D36** ✅). Por posição é o que a MetaMask manda ([METAMASK.md](./METAMASK.md)).
