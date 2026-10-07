@@ -145,7 +145,9 @@ O que já existe no código, comparado com os elementos do Event Storming:
 - [ ] Executar o repositório que o `cerne g entity --aggregate` gera para Postgres. Hoje ele só passa pelo `clippy` no e2e.
 - [ ] Executar o REST gerado: no e2e, mandar um `POST` e um `GET` ao projeto `--http rest`, como o teste de ida e volta que já existe para o repositório. Hoje o handler gerado pelo `cerne g endpoint` só passa pelo `clippy`; a rde usa JSON-RPC.
 
-**Pronto quando:** o CI roda o Postgres e o e2e executa os handlers REST gerados.
+- [ ] JSON-RPC com `params` por posição (array), além de por nome (objeto): decidir e implementar a **D36**.
+
+**Pronto quando:** o CI roda o Postgres, o e2e executa os handlers REST gerados e o JSON-RPC aceita os `params` da D36.
 
 ---
 
@@ -162,4 +164,4 @@ O que já existe no código, comparado com os elementos do Event Storming:
 
 ## Decisões pendentes
 
-Nenhuma: as 35 decisões estão tomadas. O ponto em aberto da D23 (id gerado pelo repositório) foi resolvido na D28. Ver o resumo em [DECISOES.md](./DECISOES.md).
+Uma: a **D36** (`params` do JSON-RPC por nome ou por posição). O ponto em aberto da D23 (id gerado pelo repositório) foi resolvido na D28. Ver o resumo em [DECISOES.md](./DECISOES.md).

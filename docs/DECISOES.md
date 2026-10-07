@@ -48,6 +48,7 @@ Legenda de impacto:
 | D33 | HTTP: REST ou JSON-RPC | 🔴 | ✅ | Feature `axum`; `cerne new --http rest\|jsonrpc`; método `create_transfer`; ator no corpo até a fase de autenticação |
 | D34 | A transação entre o agregado e a outbox | 🔴 | ✅ | `TransactionalPorts` (`begin`, `commit`, `outbox`); os sistemas externos ficam fora da transação |
 | D35 | Como o CLI da Fase 3 foi feito | 🟢 | ✅ | `--policy`; repositório SQL gerado com `--aggregate`; linhas inseridas ao lado de âncoras do `cerne new` |
+| D36 | `params` do JSON-RPC: por nome ou por posição | 🔴 | ⏳ | Em aberto: hoje só objeto (por nome); a chamada padrão usa array |
 
 ---
 
@@ -776,3 +777,40 @@ pub trait TransactionalPorts: Sized + Send + Sync + 'static {
 - **`cerne g endpoint <Nome> <MÉTODO> </caminho>`** (REST): `POST`/`PUT`/`PATCH`/`DELETE` apontam para o command `<Nome>Command`, que é o corpo; `GET` aponta para a query `<Nome>Query`, que é a query string. O handler do command é `ports.execute_in_transaction(command).await.map(Json)`.
 - **`cerne g port <Nome>`** gera a trait vazia em `application/ports/`; **`cerne g adapter <Nome> <Port>`** gera o `impl` em `infrastructure/`. A ligação nos `Ports` fica com o usuário, porque um sistema externo não segue um molde.
 - **Teste end-to-end:** três projetos. Memória + JSON-RPC passa no `clippy -D warnings` e roda um teste que salva, carrega e atualiza um agregado pelo repositório gerado. Postgres + REST passa no `clippy`. SQLite em arquivo, sem HTTP, passa no `clippy` e no `cargo run`, que roda as migrações geradas.
+
+---
+
+## D36 — `params` do JSON-RPC: por nome ou por posição 🔴 (em aberto, a partir da D33)
+
+**Problema:** a chamada JSON-RPC que o Cerne documenta e testa manda os `params` como **objeto**, com os campos do command por nome:
+
+```json
+{ "jsonrpc": "2.0", "method": "create_transfer", "params": { "sender": "alice", "recipient": "bob", "amount": 100 }, "id": 1 }
+```
+
+A forma mais comum de uma chamada JSON-RPC manda os `params` como **array**, por posição:
+
+```json
+{ "jsonrpc": "2.0", "method": "create_transfer", "params": ["alice", "bob", 100], "id": 1 }
+```
+
+A especificação JSON-RPC 2.0 aceita as duas formas (by-position e by-name). Hoje o `Methods::command` e o `Methods::query` (`crates/cerne/src/http.rs`) leem os `params` com `serde_json::from_value` direto para a struct do command. Os testes (`examples/rde/tests/http.rs`), o `curl` do passo 7 do README e o comentário do `rpc.rs` gerado só usam objeto, então a forma por posição nunca foi testada nem documentada.
+
+**Por que importa:** quem chama a API (uma wallet, um SDK de blockchain, uma ferramenta como o `curl` de um nó Ethereum) espera poder mandar array. E, se a posição valer, a **ordem dos campos do command vira parte da API**: trocar a ordem de dois campos de mesmo tipo quebra os clientes sem erro de compilação.
+
+| Opção | A favor | Contra |
+|---|---|---|
+| A. Só por posição (array, na ordem dos campos do command) | Igual à chamada padrão | Os nomes somem da chamada; a ordem dos campos vira contrato |
+| B. As duas formas, como a especificação | Atende os dois tipos de cliente | A ordem dos campos vira contrato também; mais casos para testar |
+| C. Só por nome (como hoje) | Explícito; mudar a ordem dos campos não quebra nada | Foge da chamada padrão; o erro para quem manda array não diz isso |
+
+**Recomendação:** **B**. Provavelmente o `serde` já aceita array numa struct derivada (os campos na ordem da declaração), então a mudança pode ser pequena, mas isso ainda não foi verificado.
+
+**O que muda quando for decidido:**
+1. `crates/cerne/src/http.rs`: confirmar (ou implementar) a leitura de `params` em array no `Methods::command` e no `Methods::query`; um `params` que não é array nem objeto volta `-32602`.
+2. `examples/rde/tests/http.rs`: um teste com `params` em array para um command e para a query.
+3. Documentar que a ordem dos campos do command é contrato: no doc comment do `Methods`, no `rpc.rs.jinja` do CLI e no `command.rs.jinja`.
+4. README, passo 7: o `curl` com a forma escolhida.
+5. Esta decisão: resposta e status ✅.
+
+**Resposta:** _pendente_
