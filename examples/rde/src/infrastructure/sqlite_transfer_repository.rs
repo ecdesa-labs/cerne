@@ -78,7 +78,7 @@ fn transfer_from(row: &SqliteRow) -> Result<Transfer, Error> {
     Ok(transfer.validate()?)
 }
 
-pub(crate) fn status_name(status: TransferStatus) -> &'static str {
+fn status_name(status: TransferStatus) -> &'static str {
     match status {
         TransferStatus::Pending => "Pending",
         TransferStatus::Accepted => "Accepted",

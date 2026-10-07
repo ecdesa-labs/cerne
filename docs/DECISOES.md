@@ -758,10 +758,10 @@ pub trait TransactionalPorts: Sized + Send + Sync + 'static {
 }
 ```
 
-- O `begin` devolve **os mesmos `Ports`**, com o repositório, as leituras e a outbox construídos sobre a transação. O command não muda: ele continua chamando `ports.transfers.save(..)`, sem saber se está numa transação.
+- O `begin` devolve **os mesmos `Ports`**, com o repositório e a outbox construídos sobre a transação. O command não muda: ele continua chamando `ports.transfers.save(..)`, sem saber se está numa transação.
 - O fluxo fica explícito, como no Rails: `let transaction = ports.begin().await?;`, `execute(&transaction)`, `transaction.outbox.send_events(..)`, `transaction.commit().await?`. O `execute_in_transaction(command)` faz os quatro passos e é o que os handlers HTTP usam.
 - **"E os outros ports?"** Os sistemas externos (blockchain, notificador, KYC) não entram na transação: não há como desfazer uma notificação enviada. O `begin` passa a eles os mesmos adapters (`Arc`). Por isso, a chamada a um sistema externo deve morar num command disparado por policy: ele roda pela outbox, pelo menos uma vez, depois que a transação do ator fez o commit.
-- Uma query não abre transação: ela só lê.
+- Uma query não abre transação: ela só lê. O read model é só a struct que a query devolve, como o `Output` de um command; não existe port nem adapter de read model, e o `execute` da query lê pelos ports.
 - Com o SQLite em memória, o banco vive numa conexão só, e uma transação segura o banco inteiro até o commit. Dentro de uma transação, tudo precisa passar pelos ports dela, e não pelos de fora.
 
 ---

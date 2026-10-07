@@ -89,7 +89,7 @@ examples/rde/src/
 │   ├── commands/
 │   ├── queries/      o que o ator consulta antes de decidir (PendingTransfersQuery)
 │   ├── read_models/  o que a query devolve, no formato da tela (PendingTransfers)
-│   └── ports/        os sistemas externos (Blockchain, KycRegistry) e as leituras (TransferReadModels)
+│   └── ports/        os sistemas externos (Blockchain, KycRegistry)
 ├── infrastructure/   os adapters de cada port: SQLite para as transferências, memória para os sistemas externos
 ├── ports.rs          o composition root
 ├── lib.rs
@@ -125,18 +125,17 @@ let outbox_policy_processor =
     OutboxPolicyProcessor::new(Arc::clone(&ports), command_registry());
 ```
 
-Os `Ports` são uma struct comum da aplicação. Cada campo é um post-it rosa (sistema externo), um repositório, uma leitura ou a outbox:
+Os `Ports` são uma struct comum da aplicação. Cada campo é um post-it rosa (sistema externo), um repositório ou a outbox:
 
 <!-- snippet: examples/rde/src/ports.rs -->
 ```rust
 /// The composition root: every port the transfer commands and queries can use.
 ///
-/// The repository, the read models and the outbox live in the database, so they follow its transaction. The external
+/// The repository and the outbox live in the database, so they follow its transaction. The external
 /// systems do not: a transaction shares the same adapters.
 pub struct Ports {
     pub database: SqliteDatabase,
     pub transfers: Box<dyn Repository<Transfer>>,
-    pub transfer_read_models: Box<dyn TransferReadModels>,
     pub outbox: Box<dyn Outbox<Ports>>,
     pub blockchain: Arc<dyn Blockchain>,
     pub kyc: Arc<dyn KycRegistry>,
@@ -168,13 +167,13 @@ pub trait Blockchain: Send + Sync {
 }
 ```
 
-O repositório, as leituras e a outbox moram no banco, então seguem a transação dele. O `begin` devolve os mesmos `Ports`, com esses três escrevendo numa transação nova; os sistemas externos são compartilhados, porque não há como desfazer uma chamada a eles:
+O repositório e a outbox moram no banco, então seguem a transação dele. O `begin` devolve os mesmos `Ports`, com os dois escrevendo numa transação nova; os sistemas externos são compartilhados, porque não há como desfazer uma chamada a eles:
 
 <!-- snippet: examples/rde/src/ports.rs -->
 ```rust
 #[async_trait]
 impl TransactionalPorts for Ports {
-    /// The same ports, with the repository, the read models and the outbox writing in a new transaction.
+    /// The same ports, with the repository and the outbox writing in a new transaction.
     async fn begin(&self) -> Result<Self, Error> {
         let transaction = self.database.begin().await?;
 
@@ -635,8 +634,7 @@ Um command de ator roda numa transação: `ports.begin()`, `execute`, `send_even
 ```mermaid
 flowchart LR
   recipient["👤 Destinatário"]:::actor --> query["Transferências pendentes<br/>PendingTransfersQuery"]:::readmodel
-  query --> port["Leituras das transferências<br/>TransferReadModels"]:::external
-  port --> readModel["Read model<br/>PendingTransfers"]:::readmodel
+  query --> readModel["Read model<br/>PendingTransfers"]:::readmodel
   classDef actor fill:#ffe46b,stroke:#c9a800,color:#221f1a
   classDef readmodel fill:#a8e6a1,stroke:#4fa845,color:#221f1a
   classDef external fill:#f8adc9,stroke:#d0578a,color:#221f1a
@@ -663,7 +661,7 @@ let transfer_from_alice = pending_transfers
     .context("bob has no pending transfer from alice")?;
 ```
 
-A query espelha o command: uma struct com o que o ator informa e um `execute` que recebe os `Ports`. A diferença está no retorno: no lugar do `Executed`, ela devolve o read model.
+A query espelha o command: uma struct com o que o ator informa e um `execute` que recebe os `Ports`. A diferença está no retorno: no lugar do `Executed`, ela devolve o read model, como o `output` de um command. O `execute` lê do banco só as colunas que a tela mostra e monta o read model.
 
 <!-- snippet: examples/rde/src/application/queries/pending_transfers.rs -->
 ```rust
@@ -674,12 +672,27 @@ impl Query<Ports> for PendingTransfersQuery {
     async fn execute(&self, ports: &Ports) -> Result<PendingTransfers, Error> {
         // --- Ports -----------------------------------------------------------
 
-        let transfers = ports
-            .transfer_read_models
-            .pending_transfers(&self.recipient)
-            .await?;
+        let select = sqlx::query(
+            "SELECT tx_hash, sender, amount FROM transfers
+             WHERE recipient = $1 AND status = 'Pending'
+             ORDER BY sender, nonce",
+        )
+        .bind(&self.recipient);
+
+        let rows = ports.database.fetch_all(select).await?;
 
         // --- Read model ------------------------------------------------------
+
+        let transfers = rows
+            .iter()
+            .map(|row| {
+                Ok(PendingTransfer {
+                    tx_hash: TxHash::new(column(row, "tx_hash")?)?,
+                    sender: column(row, "sender")?,
+                    amount: column::<i64>(row, "amount")? as u64,
+                })
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
 
         let pending_transfers = PendingTransfers {
             recipient: self.recipient.clone(),
@@ -691,7 +704,7 @@ impl Query<Ports> for PendingTransfersQuery {
 }
 ```
 
-O read model tem o formato da tela do Bob, não o do agregado: só quem envia, quanto e o `tx_hash` para responder. Ele não tem invariantes nem comportamento.
+O read model é só a struct da resposta, no formato da tela do Bob, não no do agregado: quem envia, quanto e o `tx_hash` para responder. Ele não tem invariantes nem comportamento.
 
 <!-- snippet: examples/rde/src/application/read_models/pending_transfers.rs -->
 ```rust
@@ -711,19 +724,6 @@ pub struct PendingTransfer {
 }
 
 impl ReadModel for PendingTransfers {}
-```
-
-A leitura em si é um port, como a `Blockchain`. O adapter faz um `SELECT` só com as colunas que a tela mostra, direto na tabela `transfers`:
-
-<!-- snippet: examples/rde/src/infrastructure/sqlite_transfer_read_models.rs -->
-```rust
-let select = sqlx::query(
-    "SELECT tx_hash, sender, amount FROM transfers
-     WHERE recipient = $1 AND status = $2
-     ORDER BY sender, nonce",
-)
-.bind(recipient)
-.bind(status_name(TransferStatus::Pending));
 ```
 
 ### 4. O Bob aceita, e a policy encadeia a transação 🟦 → 🟧 → 🟪 → 🟦
