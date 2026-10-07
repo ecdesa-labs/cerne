@@ -42,7 +42,7 @@ Legenda de impacto:
 | D27 | Value Objects | 🔴 | ✅ | Trait `ValueObject` só com `new` (imutável); o id de toda entidade é um value object |
 | D28 | Quem decide o id | 🔴 | ✅ | O `save` devolve o id, como no Rails: `Entity::id()` é `Option` até o primeiro `save` |
 | D29 | Decisões do CLI antes da Fase 2 | 🟢 | ✅ | id como value object `u64` por padrão, `--aggregate`, dependência Git |
-| D30 | Como o CLI foi feito | 🟢 | ✅ | Sem `clap`; `minijinja`; `rustfmt` opcional; e2e com `clippy -D warnings` |
+| D30 | Como o CLI foi feito | 🟢 | ✅ | Sem `clap`; `minijinja`; `rustfmt` opcional; enum por `kind:A,B`, estado inicial por `status=A:A,B`; e2e com `clippy -D warnings` |
 
 ---
 
@@ -634,7 +634,11 @@ Escolhas tomadas durante a Fase 2, todas na linha "a versão com menos conceitos
 - **`rustfmt` opcional:** depois de gerar um arquivo, o `cerne g` roda `rustfmt` nele. Sem `rustfmt` no PATH, o arquivo continua válido, só menos arrumado.
 - **Nada é sobrescrito:** o `cerne new` falha se a pasta existe, e o `cerne g` falha se o arquivo existe ou se não acha o `mod.rs` (fora de um projeto do Cerne). O `mod.rs` só ganha `pub mod <arquivo>;` no final (D12).
 - **Formato do value object:** com um campo, vira tupla com `Props` igual ao tipo do campo (`OrderId(u64)`, `OrderId::new(7)`), como o `TxHash`. Com dois ou mais, vira struct com campos privados e uma `<Nome>Props`. Sem campos, o generator recusa.
-- **`--aggregate` sem `Status`:** a entidade ganha `impl Aggregate`, a seção `Aggregate` e a seção `State transitions` (um `impl` vazio). O enum de status da `Transfer` não é gerado, porque nem todo agregado tem status; quem precisa passa `status:OrderStatus` e escreve o enum.
+- **`--aggregate`:** a entidade ganha `impl Aggregate`, a seção `Aggregate` e a seção `State transitions` (um `impl` vazio).
+- **Enum pelos valores do campo:** as vírgulas fazem o campo virar um enum, com o nome da entidade + o nome do campo, gerado numa seção própria do mesmo arquivo, como o `TransferStatus` da rde. A regra olha o tipo do campo, nunca o nome.
+  - `cerne g entity Product kind:Physical,Digital`: o enum `ProductKind` entra na `ProductProps`, e quem cria o produto escolhe o valor.
+  - `cerne g entity Order status=Pending:Pending,Accepted,Rejected`: o `=Pending` marca o estado inicial. O campo fica fora da `OrderProps`, e o `new` começa em `OrderStatus::Pending`, então ninguém cria um pedido já aceito. Só as transições mudam o status.
+  - O valor inicial precisa estar na lista, e o `=` só vale para enum. Só o `entity` aceita esse formato: num event ou num command, o enum de outro arquivo precisaria de `use`, então o generator recusa.
 - **Lugares marcados, não código inventado:** o `validate` gerado traz `Invariants::new(vec![])`, o evento traz `Policies::new(vec![])`, e o `execute` traz as seções do Event Storming vazias. O usuário preenche cada lugar.
 - **Teste end-to-end:** `crates/cerne-cli/tests/new_and_generate.rs` cria um projeto num diretório temporário, roda os generators, troca a dependência Git pelo caminho de `crates/cerne` e passa `cargo clippy --all-targets -- -D warnings`. É mais rígido que o `cargo check` do roadmap: o código gerado não pode ter nenhum aviso.
 - **Tipos dos campos não são importados:** `amount:Amount` gera `pub amount: Amount`, e o `use` fica com o usuário.

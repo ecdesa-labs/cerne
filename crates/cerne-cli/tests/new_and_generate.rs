@@ -43,6 +43,17 @@ fn generated_project_passes_clippy_without_touching_anything() {
     ));
     assert!(cerne(&["g", "entity", "Tag"], &project));
     assert!(cerne(
+        &[
+            "g",
+            "entity",
+            "Payment",
+            "payment_status=Pending:Pending,Paid",
+            "method:Pix,Card",
+            "--aggregate"
+        ],
+        &project
+    ));
+    assert!(cerne(
         &["g", "value_object", "Amount", "value:u64"],
         &project
     ));
@@ -72,11 +83,32 @@ fn generated_project_passes_clippy_without_touching_anything() {
     );
     assert!(!cerne(&["g", "value_object", "Empty"], &project));
     assert!(!cerne(&["g", "event", "Bad", "qty"], &project));
+    assert!(!cerne(
+        &["g", "event", "Bad", "status:Pending,Paid"],
+        &project
+    ));
+    assert!(!cerne(
+        &["g", "entity", "Bad", "status:pending,Paid"],
+        &project
+    ));
+    assert!(!cerne(
+        &["g", "entity", "Bad", "status=Done:Pending,Paid"],
+        &project
+    ));
+    assert!(!cerne(&["g", "entity", "Bad", "qty=1:i32"], &project));
 
     assert_eq!(
         fs::read_to_string(project.join("src/domain/value_objects/mod.rs")).unwrap(),
-        "pub mod order_id;\npub mod order_item_id;\npub mod tag_id;\npub mod amount;\npub mod money;\n"
+        "pub mod order_id;\npub mod order_item_id;\npub mod tag_id;\npub mod payment_id;\npub mod amount;\npub mod money;\n"
     );
+
+    let payment = fs::read_to_string(project.join("src/domain/entities/payment.rs")).unwrap();
+
+    assert!(payment.contains("pub enum PaymentPaymentStatus {"));
+    assert!(payment.contains("payment_status: PaymentPaymentStatus::Pending,"));
+    assert!(payment.contains("pub enum PaymentMethod {"));
+    assert!(payment.contains("method: props.method,"));
+    assert!(payment.contains("pub struct PaymentProps {\n    pub method: PaymentMethod,\n}"));
 
     // --- cargo clippy: the repository's own crate stands in for the Git dependency
 

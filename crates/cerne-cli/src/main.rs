@@ -9,7 +9,7 @@ use std::{env, fs, process};
 const USAGE: &str = "\
 usage:
   cerne new <name>
-  cerne g entity <Name> [field:type ...] [id:type] [--aggregate]
+  cerne g entity <Name> [field:type ...] [field:Value1,Value2 ...] [field=Initial:Value1,Value2 ...] [id:type] [--aggregate]
   cerne g value_object <Name> field:type [field:type ...]
   cerne g event <Name> [field:type ...]
   cerne g command <Name> [field:type ...]";
@@ -89,10 +89,7 @@ fn new_project(name: &str) -> CliResult {
 // --- cerne g -----------------------------------------------------------------
 
 fn generate(kind: &str, name: &str, args: &[&str]) -> CliResult {
-    let name_is_pascal_case = name.starts_with(|c: char| c.is_ascii_uppercase())
-        && name.chars().all(|c| c.is_ascii_alphanumeric());
-
-    if !name_is_pascal_case {
+    if !is_pascal_case(name) {
         return Err(format!("{name} is not a PascalCase name, like Order").into());
     }
 
@@ -103,11 +100,18 @@ fn generate(kind: &str, name: &str, args: &[&str]) -> CliResult {
     }
 
     let mut fields = parse_fields(args.iter().filter(|arg| **arg != "--aggregate"))?;
+    let id_type = take_id_type(&mut fields);
+
+    let fields = fields
+        .into_iter()
+        .map(|(field_name, ty)| field(name, kind, field_name, ty))
+        .collect::<Result<Vec<_>, _>>()?;
+
     let file = snake_case(name);
 
     match kind {
         "entity" => {
-            let id_type = take_id_type(&mut fields).unwrap_or("u64".into());
+            let id_type = id_type.unwrap_or("u64");
             let id_field = context! { name => "value", ty => id_type };
 
             add_file(
@@ -196,26 +200,89 @@ fn render(template: &str, data: &Value) -> Result<String, minijinja::Error> {
     environment.render_str(template, data)
 }
 
-/// `qty:i32 id:u64` → `[{name: qty, ty: i32}, {name: id, ty: u64}]`, in the order given (D13).
-fn parse_fields<'a>(args: impl Iterator<Item = &'a &'a str>) -> Result<Vec<Value>, String> {
+/// `qty:i32 id:u64` → `[(qty, i32), (id, u64)]`, in the order given (D13).
+fn parse_fields<'a>(
+    args: impl Iterator<Item = &'a &'a str>,
+) -> Result<Vec<(&'a str, &'a str)>, String> {
     args.map(|arg| match arg.split_once(':') {
-        Some((name, ty)) if !name.is_empty() && !ty.is_empty() => Ok(context! { name, ty }),
+        Some((name, ty)) if !name.is_empty() && !ty.is_empty() => Ok((name, ty)),
         _ => Err(format!("{arg} is not a field: use name:type, like qty:i32")),
     })
     .collect()
 }
 
 /// Removes the `id:<type>` field, if there is one, and gives back its type: the id becomes a value object.
-fn take_id_type(fields: &mut Vec<Value>) -> Option<String> {
-    let position = fields.iter().position(|field| {
-        field
-            .get_attr("name")
-            .is_ok_and(|name| name.as_str() == Some("id"))
-    })?;
+fn take_id_type<'a>(fields: &mut Vec<(&'a str, &'a str)>) -> Option<&'a str> {
+    let position = fields.iter().position(|(name, _)| *name == "id")?;
 
-    let id_field = fields.remove(position);
+    Some(fields.remove(position).1)
+}
 
-    Some(id_field.get_attr("ty").ok()?.to_string())
+/// `qty:i32` is a plain field. In `Product`, `kind:Physical,Digital` is the enum `ProductKind`, chosen by whoever
+/// creates the product. In `Order`, `status=Pending:Pending,Accepted` is the enum `OrderStatus`, and every new
+/// `Order` starts as `Pending`, like the `TransferStatus` of the rde.
+fn field(owner: &str, kind: &str, name: &str, ty: &str) -> Result<Value, String> {
+    let (name, initial) = match name.split_once('=') {
+        Some((name, initial)) => (name, Some(initial)),
+        None => (name, None),
+    };
+
+    let is_enum = ty.contains(',');
+
+    if !is_enum && initial.is_none() {
+        return Ok(context! { name, ty });
+    }
+
+    if !is_enum {
+        return Err(format!(
+            "{name}: = only works with enum values, like status=Pending:Pending,Accepted"
+        ));
+    }
+
+    if kind != "entity" {
+        return Err(format!(
+            "{name}:{ty}: enum values only work in cerne g entity"
+        ));
+    }
+
+    let variants: Vec<&str> = ty.split(',').collect();
+
+    if !variants.iter().all(|variant| is_pascal_case(variant)) {
+        return Err(format!(
+            "{name}:{ty}: every value must be PascalCase, like status:Pending,Accepted"
+        ));
+    }
+
+    if initial.is_some_and(|initial| !variants.contains(&initial)) {
+        return Err(format!(
+            "{name}: the initial value must be one of {ty}, like status=Pending:Pending,Accepted"
+        ));
+    }
+
+    let title = pascal_case(name);
+    let section = format!("// --- {title} {}", "-".repeat(80 - 8 - title.len()));
+
+    Ok(context! { name, ty => format!("{owner}{title}"), variants, initial, section })
+}
+
+fn is_pascal_case(name: &str) -> bool {
+    name.starts_with(|letter: char| letter.is_ascii_uppercase())
+        && name.chars().all(|letter| letter.is_ascii_alphanumeric())
+}
+
+/// `payment_status` → `PaymentStatus`.
+fn pascal_case(name: &str) -> String {
+    name.split('_')
+        .flat_map(|word| {
+            let mut letters = word.chars();
+
+            letters
+                .next()
+                .into_iter()
+                .flat_map(char::to_uppercase)
+                .chain(letters)
+        })
+        .collect()
 }
 
 /// `OrderItem` → `order_item`.

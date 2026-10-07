@@ -1,6 +1,18 @@
 use crate::domain::value_objects::{{ file }}_id::{{ name }}Id;
 use cerne::domain::{ {% if aggregate %}Aggregate, {% endif %}EnforcementResult, Entity, Invariants};
 
+{% set props_fields = fields|rejectattr("initial")|list %}
+{% for field in fields|selectattr("variants") %}
+{{ field.section }}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum {{ field.ty }} {
+{% for variant in field.variants %}
+    {{ variant }},
+{% endfor %}
+}
+
+{% endfor %}
 {% if aggregate %}
 // --- Aggregate ---------------------------------------------------------------
 {% else %}
@@ -17,7 +29,7 @@ pub struct {{ name }} {
 
 /// What a new `{{ name }}` is made of. There is no id: the repository decides it on the first `save`.
 pub struct {{ name }}Props {
-{% for field in fields %}
+{% for field in props_fields %}
     pub {{ field.name }}: {{ field.ty }},
 {% endfor %}
 }
@@ -45,11 +57,15 @@ impl Entity for {{ name }} {
         }
     }
 
-    fn new({% if not fields %}_{% endif %}props: {{ name }}Props) -> EnforcementResult<Self> {
+    fn new({% if not props_fields %}_{% endif %}props: {{ name }}Props) -> EnforcementResult<Self> {
         Self {
             id: None,
 {% for field in fields %}
+{% if field.initial %}
+            {{ field.name }}: {{ field.ty }}::{{ field.initial }},
+{% else %}
             {{ field.name }}: props.{{ field.name }},
+{% endif %}
 {% endfor %}
         }
         .validate()

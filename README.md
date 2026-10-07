@@ -831,6 +831,8 @@ Dentro de `loja/`:
 |---|---|
 | `cerne g entity Order qty:i32` | `domain/entities/order.rs` e o id `OrderId(u64)` em `domain/value_objects/order_id.rs` |
 | `cerne g entity Order qty:i32 id:String --aggregate` | o mesmo, com o id `OrderId(String)` e o `impl Aggregate` |
+| `cerne g entity Product kind:Physical,Digital` | o enum `ProductKind` na seção `Kind` do arquivo; quem cria o produto escolhe o valor |
+| `cerne g entity Order status=Pending:Pending,Accepted --aggregate` | o enum `OrderStatus` na seção `Status`; o `=Pending` faz todo `Order` novo começar `Pending`, fora da `OrderProps` |
 | `cerne g value_object Amount value:u64` | `domain/value_objects/amount.rs` |
 | `cerne g event OrderPlaced order_id:u64` | `domain/events/order_placed.rs` |
 | `cerne g command PlaceOrder order_id:u64 qty:i32` | `application/commands/place_order.rs` com `PlaceOrderCommand` |
