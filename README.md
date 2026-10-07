@@ -69,7 +69,6 @@ flowchart TB
   classDef event fill:#ffb25c,stroke:#d97a14,color:#221f1a
   classDef policy fill:#c9b4f2,stroke:#7d5cc4,color:#221f1a
   classDef external fill:#f8adc9,stroke:#d0578a,color:#221f1a
-  classDef hotspot fill:#f2709a,stroke:#b8325e,color:#221f1a
 ```
 
 O `main` percorre as duas primeiras raias. A rejeição e o cancelamento seguem o mesmo molde do aceite e estão cobertos nos testes.
@@ -221,7 +220,6 @@ flowchart LR
   classDef event fill:#ffb25c,stroke:#d97a14,color:#221f1a
   classDef policy fill:#c9b4f2,stroke:#7d5cc4,color:#221f1a
   classDef external fill:#f8adc9,stroke:#d0578a,color:#221f1a
-  classDef hotspot fill:#f2709a,stroke:#b8325e,color:#221f1a
 ```
 
 <!-- snippet: examples/rde/src/main.rs -->
@@ -618,7 +616,7 @@ async fn execute(&self, ports: &Ports) -> Result<Executed<(), Ports>, Error> {
 >
 > A regra nova mora inteira no evento. O resto da lista é o que ela precisa para rodar: o command, o port e o adapter. Se a policy disparasse um command que já existe, bastaria a primeira linha da tabela.
 >
-> O caminho também valeu no sentido contrário: o código ajudou a corrigir o board. O mesmo aconteceu com o Hotspot 5 (o nonce das transferências pendentes), que apareceu num teste e voltou para o board como pergunta em aberto.
+> O caminho também valeu no sentido contrário: o código ajudou a corrigir o board.
 
 #### O que o command devolve
 
@@ -747,7 +745,6 @@ flowchart LR
   classDef event fill:#ffb25c,stroke:#d97a14,color:#221f1a
   classDef policy fill:#c9b4f2,stroke:#7d5cc4,color:#221f1a
   classDef external fill:#f8adc9,stroke:#d0578a,color:#221f1a
-  classDef hotspot fill:#f2709a,stroke:#b8325e,color:#221f1a
 ```
 
 <!-- snippet: examples/rde/src/main.rs -->
@@ -957,36 +954,11 @@ async fn creation_reports_every_broken_business_rule() {
 }
 ```
 
-Os testes também documentam os hotspots do board. O Hotspot 5 mostra um `InfrastructureError` num command de policy. O nonce entra no `tx_hash` na criação, mas só avança na chain depois do aceite. Por isso, duas transferências pendentes da Alice saem com o mesmo nonce, e a chain recusa a segunda. O aceite em si deu certo; quem falha é o encadeamento, na outbox, e o erro fica na linha do command:
-
-<!-- snippet: examples/rde/tests/transfers.rs -->
-```rust
-/// Hotspot 5: the nonce goes into the tx_hash at creation, but only advances on the chain after acceptance.
-/// Two pending transfers of a sender carry the same nonce, so the chain refuses the second one accepted.
-#[tokio::test]
-async fn hotspot_5_pending_transfers_of_a_sender_share_a_nonce() {
-    let ports = ports().await;
-    let first = create_transfer(&ports, "alice", "bob", 100).await;
-    let second = create_transfer(&ports, "alice", "bob", 200).await;
-
-    run(&ports, accept(&first, "bob")).await.unwrap();
-    run(&ports, accept(&second, "bob")).await.unwrap();
-
-    assert_eq!(
-        run_outbox(&ports).await,
-        vec![
-            done("chain_accepted_transfer"),
-            CommandRun {
-                command: "chain_accepted_transfer".into(),
-                error: Some("chain refused: alice expected nonce 1, got 0".into()),
-            }
-```
-
 ```bash
 cargo test -p rde
 ```
 
-Os testes estão organizados por raia do board: criação, read model das pendentes, resposta e encadeamento, e hotspots.
+Os testes estão organizados por raia do board: criação, transferências pendentes, e aceite com encadeamento.
 
 ### 7. A mesma aplicação por HTTP
 
