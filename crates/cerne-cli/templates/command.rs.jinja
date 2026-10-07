@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 /// No actor: a policy fires this command, and the outbox stores it (that is why it is `Serialize`).
 {% else %}
 /// Actor: who sends it? The body of the request is this command (that is why it is `Deserialize`).
+///
+/// In JSON-RPC, the params can come by position, in the order of these fields: that order is part of the API.
 {% endif %}
 #[derive(Serialize, Deserialize)]
 pub struct {{ name }}Command {

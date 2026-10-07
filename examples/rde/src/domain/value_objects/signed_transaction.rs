@@ -124,6 +124,12 @@ impl SignedTransaction {
     pub fn max_fee_per_gas(&self) -> u128 {
         self.max_fee_per_gas
     }
+
+    /// What MetaMask signs when the sender clicks "Cancel" on a pending transfer: nothing to the sender itself, with
+    /// the nonce of the transfer it replaces (`docs/METAMASK.md`).
+    pub fn is_a_cancellation(&self) -> bool {
+        self.amount == 0 && self.recipient == self.sender
+    }
 }
 
 impl TryFrom<String> for SignedTransaction {

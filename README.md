@@ -60,7 +60,11 @@ flowchart TB
     direction LR
     sender2["👤 Remetente"]:::actor --> cancel["Cancelar Transferência"]:::command --> xRules["Business rules"]:::rule --> xTransfer["Aggregate#lt;Transfer#gt;<br/>transfer.cancel() → Cancelada"]:::aggregate --> canceled["Transferência Cancelada"]:::event --> xPolicy["Sempre que cancelada, encadear como falha"]:::policy --> xFailCmd["Encadear Transferência Falha"]:::command
   end
-  criacao ~~~ aceite ~~~ rejeicao ~~~ cancelamento
+  subgraph cancelamentoMetaMask["Transferência · cancelamento na MetaMask"]
+    direction LR
+    sender3["👤 Remetente (MetaMask)"]:::actor --> sendCancellation["Enviar Cancelamento"]:::command --> mRules["Business rules"]:::rule --> mTransfer["Aggregate#lt;Transfer#gt;<br/>transfer.replace_by(cancellation) → Cancelada"]:::aggregate --> replaced["Transferência Substituída pelo Cancelamento"]:::event --> mPolicy["Sempre que substituída, encadear o cancelamento"]:::policy --> chainCancellation["Encadear Cancelamento"]:::command --> mChain["Blockchain"]:::external --> cancellationChained["Cancelamento Encadeado"]:::event
+  end
+  criacao ~~~ aceite ~~~ rejeicao ~~~ cancelamento ~~~ cancelamentoMetaMask
   classDef actor fill:#ffe46b,stroke:#c9a800,color:#221f1a
   classDef command fill:#8cc6f5,stroke:#3d8fd1,color:#221f1a
   classDef rule fill:#97dccf,stroke:#3fa892,color:#221f1a
@@ -72,6 +76,8 @@ flowchart TB
 ```
 
 O `main` percorre as duas primeiras raias. A rejeição e o cancelamento seguem o mesmo molde do aceite e estão cobertos nos testes. Os dois terminam na chain como transação que falhou: nenhum RDEC se move, mas o nonce do remetente anda, e a MetaMask para de esperar pela transação.
+
+A última raia é o "Cancelar" da própria MetaMask. Ela assina uma transação nova, com o nonce da transferência pendente, valor 0 e a própria conta como destino. Essa transação substitui a transferência: o cancelamento entra na chain como sucesso, sem mover RDEC e sem cobrar taxa, e a transferência nunca ganha bloco. A MetaMask passa a acompanhar o hash do cancelamento e mostra a transferência como "Falhou".
 
 A cada passo do `main`, o tutorial abre o código que aquele passo usa. Todos os trechos abaixo são copiados dos arquivos do `examples/rde`, e um teste (`examples/rde/tests/readme.rs`) falha se algum deles deixar de existir no arquivo de origem.
 
@@ -185,10 +191,17 @@ pub trait Blockchain: Send + Sync {
         signed_transaction: &SignedTransaction,
     ) -> Result<TxHash, Error>;
 
+    /// Puts the cancellation MetaMask signed in a new block, as succeeded: it moves no RDEC and charges no fee, only
+    /// the nonce of the sender moves on. The transfer it replaces never gets a block.
+    async fn send_cancellation(&self, cancellation: &SignedTransaction) -> Result<TxHash, Error>;
+
     /// The number of the last block.
     async fn block_number(&self) -> Result<u64, Error>;
 
     async fn block(&self, number: u64) -> Result<Option<Block>, Error>;
+
+    /// MetaMask reads the block of a receipt by its hash, for the base fee and the time.
+    async fn block_by_hash(&self, hash: &str) -> Result<Option<Block>, Error>;
 
     /// `None` while the transaction is in no block.
     async fn receipt(&self, tx_hash: &TxHash) -> Result<Option<Receipt>, Error>;
@@ -450,7 +463,7 @@ BusinessRules::new(vec![
 ```
 
 > [!TIP]
-> **Regras num método, só para exportar o domínio.** Numa aplicação só em Rust, as regras ficam no `execute`, como acima. Quando o domínio é exportado para outras linguagens (D37), o front precisa rodar as mesmas regras sem os ports. Aí elas saem do `execute` para um método síncrono do command, que recebe os valores já lidos (ou o agregado carregado), e o `execute` só o chama:
+> **Regras num método, só para exportar o domínio.** Numa aplicação só em Rust, as regras ficam no `execute`, como acima. Quando o domínio é exportado para outras linguagens, o front precisa rodar as mesmas regras sem os ports. Aí elas saem do `execute` para um método síncrono do command, que recebe os valores já lidos (ou o agregado carregado), e o `execute` só o chama:
 >
 > ```rust
 > impl CreateTransferCommand {
@@ -506,6 +519,7 @@ impl Entity for Transfer {
             fees: props.fees,
             status: TransferStatus::Pending,
             chained: false,
+            cancellation: None,
         }
         .validate()
     }
@@ -515,6 +529,16 @@ impl Entity for Transfer {
         let sender_is_not_recipient = self.sender != self.recipient;
         let is_pending = self.status == TransferStatus::Pending;
         let not_chained_yet = !self.chained;
+        let is_canceled = self.status == TransferStatus::Canceled;
+        let cancellation_has_the_nonce_of_the_transfer = self
+            .cancellation
+            .as_ref()
+            .is_none_or(|cancellation| cancellation.nonce() == self.nonce);
+        let cancellation_comes_from_the_sender = self
+            .cancellation
+            .as_ref()
+            .is_none_or(|cancellation| cancellation.sender() == &self.sender);
+        let has_no_cancellation = self.cancellation.is_none();
 
         Invariants::new(vec![
             Invariant::new("amount is positive", move || amount_is_positive),
@@ -523,6 +547,15 @@ impl Entity for Transfer {
             }),
             Invariant::new("a pending transfer is not chained", move || {
                 not_chained_yet || !is_pending
+            }),
+            Invariant::new("only a canceled transfer has a cancellation", move || {
+                has_no_cancellation || is_canceled
+            }),
+            Invariant::new("cancellation has the nonce of the transfer", move || {
+                cancellation_has_the_nonce_of_the_transfer
+            }),
+            Invariant::new("cancellation comes from the sender", move || {
+                cancellation_comes_from_the_sender
             }),
         ])
         .enforce()?;
@@ -554,6 +587,16 @@ impl Transfer {
 
     pub fn cancel(self) -> EnforcementResult<Self> {
         self.change_status(TransferStatus::Canceled)
+    }
+
+    /// Canceled in MetaMask: the cancellation goes to the chain instead of this transfer.
+    pub fn replace_by(self, cancellation: SignedTransaction) -> EnforcementResult<Self> {
+        Self {
+            status: TransferStatus::Canceled,
+            cancellation: Some(cancellation),
+            ..self
+        }
+        .validate()
     }
 
     pub fn chain(self) -> EnforcementResult<Self> {
@@ -1067,30 +1110,38 @@ Os testes estão organizados por raia do board: criação, transferências pende
 
 ### 7. A mesma aplicação por HTTP, chamada pela MetaMask
 
-O `main` percorre o fluxo numa função só. Numa aplicação de verdade, cada passo é uma requisição de um ator. O binário [`server`](examples/rde/src/bin/server.rs) monta os mesmos `Ports`, com o SQLite num arquivo (`rde.db`), e atende JSON-RPC 2.0 em `POST /rpc`. O projeto escolhe entre REST e JSON-RPC no `cerne new` (`--http rest|jsonrpc`); a rde usa JSON-RPC, como os nós de blockchain.
+O `main` percorre o fluxo numa função só. Numa aplicação de verdade, cada passo é uma requisição de um ator. O binário [`server`](examples/rde/src/bin/server.rs) monta os mesmos `Ports`, com as transferências num SQLite em arquivo (`rde.db`) e a chain em outro (`rde-chain.db`, o adapter `SqliteBlockchain`), e atende JSON-RPC 2.0 em `POST /rpc`. O projeto escolhe entre REST e JSON-RPC no `cerne new` (`--http rest|jsonrpc`); a rde usa JSON-RPC, como os nós de blockchain.
 
 O mesmo endpoint atende dois tipos de cliente:
 
-- **A MetaMask** fala o JSON-RPC da Ethereum, com os `params` por posição. O `eth_sendRawTransaction` é o `CreateTransferCommand`: o array `["0x02f8…"]` é lido direto na struct, cujo único campo é a transação assinada. Os outros métodos `eth_*` leem a chain e respondem no formato de um nó Ethereum (`eth.rs`). O que a MetaMask chama, e quando, está em [docs/METAMASK.md](docs/METAMASK.md).
-- **O Bob** usa os métodos da rde, com o nome do command ou da query em snake_case e os `params` por nome.
+- **A MetaMask** fala o JSON-RPC da Ethereum, com os `params` por posição. O `eth_sendRawTransaction` é o `CreateTransferCommand`: o array `["0x02f8…"]` é lido direto na struct, cujo único campo é a transação assinada. Quando a transação não manda nada para a própria conta, ela é um cancelamento, e o método executa o `SendCancellationCommand`. Uma transação que a rde já recebeu volta com o mesmo hash, como num nó: o "Acelerar" de um cancelamento manda os mesmos bytes de novo. O "Acelerar" de uma transferência pendente é recusado pela regra "sender has no open transfer". Os outros métodos `eth_*` leem a chain e respondem no formato de um nó Ethereum (`eth.rs`). O que a MetaMask chama, e quando, está em [docs/METAMASK.md](docs/METAMASK.md).
+- **O Bob** usa os métodos da rde, com o nome do command ou da query em snake_case.
 
-O `Methods` lê os `params` com `serde`: um command passa pelo `execute_in_transaction` (begin, execute, outbox, commit), e uma query só lê.
+O handler recebe o corpo cru e o lê com o `Request::from_body`. Assim, um corpo que não é JSON-RPC 2.0 também recebe uma resposta JSON-RPC, com HTTP 200 e `"id": null`: um corpo que não é JSON volta `-32700`, e um JSON sem `method`, ou com um `jsonrpc` diferente de `"2.0"`, volta `-32600`.
+
+O `Methods` lê os `params` com `serde`, por nome (um objeto) ou por posição (um array), como a especificação JSON-RPC 2.0 permite. Por posição, o array segue a ordem dos campos do command: `{"tx_hash": "0x…", "recipient": "0x…"}` e `["0x…", "0x…"]` são o mesmo `AcceptTransferCommand`. Por isso, a ordem dos campos de um command faz parte da API: trocar dois campos do mesmo tipo quebra os clientes sem erro de compilação. Um `params` que não é array nem objeto volta `-32602`. Depois, um command passa pelo `execute_in_transaction` (begin, execute, outbox, commit), e uma query só lê.
 
 <!-- snippet: examples/rde/src/infrastructure/http/rpc.rs -->
 ```rust
-pub async fn rpc(State(ports): State<Arc<Ports>>, Json(request): Json<Request>) -> Json<Response> {
+pub async fn rpc(State(ports): State<Arc<Ports>>, body: Bytes) -> Json<Response> {
+    let request = match Request::from_body(&body) {
+        Ok(request) => request,
+        Err(not_a_request) => return Json(Response::new(Value::Null, Err(not_a_request))),
+    };
+
     let methods = Methods::new(ports.as_ref());
     let params = request.params;
 
     let result = match request.method.as_str() {
         // --- Sender, through MetaMask --------------------------------------------
-        "eth_sendRawTransaction" => methods.command::<CreateTransferCommand>(params).await,
+        "eth_sendRawTransaction" => eth::send_raw_transaction(&ports, &methods, params).await,
 
         // --- MetaMask reading the chain --------------------------------------------
         "eth_chainId" => eth::chain_id(),
         "net_version" => eth::net_version(),
         "eth_blockNumber" => eth::block_number(&ports).await,
         "eth_getBlockByNumber" => eth::block_by_number(&ports, params).await,
+        "eth_getBlockByHash" => eth::block_by_hash(&ports, params).await,
         "eth_gasPrice" => eth::gas_price(&ports).await,
         "eth_estimateGas" => eth::estimate_gas(),
         "eth_getBalance" => eth::balance(&ports, params).await,
@@ -1121,19 +1172,25 @@ Os commands das policies rodam em background: o servidor dispara o `outbox_polic
 RDE_WALLETS=0x<a sua carteira>,0x<outra carteira> cargo run -p rde --bin server
 ```
 
-Na MetaMask, adicione uma rede com a URL `http://127.0.0.1:3000/rpc`, o chain id `8808` e a moeda `RDEC`. A partir daí, um envio pela MetaMask fica pendente até o destinatário chamar o `accept_transfer`:
+Na MetaMask, adicione uma rede com a URL `http://127.0.0.1:3000/rpc`, o chain id `8808` e a moeda `RDEC`. A partir daí, um envio pela MetaMask fica pendente até o destinatário chamar o `accept_transfer`. Com os `params` por posição, como a MetaMask manda:
 
 ```bash
-curl -s localhost:3000/rpc -H 'content-type: application/json' -d '{"jsonrpc":"2.0","method":"pending_transfers","params":{"recipient":"0x<outra carteira>"},"id":1}'
+curl -s localhost:3000/rpc -H 'content-type: application/json' -d '{"jsonrpc":"2.0","method":"pending_transfers","params":["0x<outra carteira>"],"id":1}'
 ```
+
+```bash
+curl -s localhost:3000/rpc -H 'content-type: application/json' -d '{"jsonrpc":"2.0","method":"accept_transfer","params":["0x<o hash>","0x<outra carteira>"],"id":2}'
+```
+
+Ou por nome, com os campos do command:
 
 ```bash
 curl -s localhost:3000/rpc -H 'content-type: application/json' -d '{"jsonrpc":"2.0","method":"accept_transfer","params":{"tx_hash":"0x<o hash>","recipient":"0x<outra carteira>"},"id":2}'
 ```
 
-A chain fica em memória e recomeça a cada vez que o servidor sobe, mas o `rde.db` fica. Apague o `rde.db` ao reiniciar o servidor; senão, as transferências antigas ficam em aberto e o nonce não bate.
+A cada vez que sobe, o servidor apaga o `rde.db` e o `rde-chain.db` e começa uma chain nova, então as transferências e a chain sempre batem. Enquanto ele roda, dá para ler a chain com o `sqlite3 rde-chain.db`. A MetaMask lembra os nonces da chain antiga: depois de reiniciar o servidor, use **Configurações → Avançado → Limpar dados da guia de atividade**.
 
-Os erros seguem as categorias do passo 6: uma regra de negócio violada volta com o código `-32001` e as violações em `data`, um `tx_hash` desconhecido volta com `-32004`, e uma falha de infraestrutura volta como `-32603`, sem detalhes. Um `tx_hash` malformado, ou bytes que não são uma transação assinada, nem chegam ao command: o value object é lido pelo `new`, e a requisição volta com `-32602` (params inválidos). Em REST, as mesmas categorias viram 422, 404 e 500. Os testes estão em [`tests/http.rs`](examples/rde/tests/http.rs).
+Os erros seguem as categorias do passo 6: uma regra de negócio violada volta com o código `-32001` e as violações no `message` (o que a MetaMask mostra) e em `data`, um `tx_hash` desconhecido volta com `-32004`, e uma falha de infraestrutura volta como `-32603`, sem detalhes. Um `tx_hash` malformado, ou bytes que não são uma transação assinada, nem chegam ao command: o value object é lido pelo `new`, e a requisição volta com `-32602` (params inválidos). Em REST, as mesmas categorias viram 422, 404 e 500. Os testes estão em [`tests/http.rs`](examples/rde/tests/http.rs).
 
 ## CLI
 
@@ -1172,12 +1229,13 @@ Dentro de `loja/`:
 | `cerne g read_model OrderSummary order_id:u64 total:u64` | `application/read_models/order_summary.rs` com o read model `OrderSummary` |
 | `cerne g query OrderSummary order_id:u64` | `application/queries/order_summary.rs` com `OrderSummaryQuery`, que devolve o read model `OrderSummary` (gere o read model antes); num projeto JSON-RPC, também o método `order_summary` |
 | `cerne g endpoint PlaceOrder POST /orders` | num projeto REST, `infrastructure/http/place_order.rs` e a rota; `GET` aponta para a query `OrderSummary` |
+| `cerne g http rest` | num projeto criado sem `--http`, a camada HTTP que o `cerne new --http rest` teria escrito: o `axum` no `Cargo.toml`, `infrastructure/http/mod.rs` e o `main.rs` que serve o router. Com `jsonrpc`, também o `rpc.rs`, com um método para cada command de ator e cada query que já existem |
 | `cerne g port Notifier` | a trait `Notifier` em `application/ports/notifier.rs` |
 | `cerne g adapter SmtpNotifier Notifier` | `infrastructure/smtp_notifier.rs`, que implementa o port `Notifier` |
 
 No repositório gerado, cada campo vira uma coluna: inteiros viram `BIGINT`, `f32`/`f64` viram `DOUBLE PRECISION`, `bool` vira `BOOLEAN`, `String` e os enums viram `TEXT`, e qualquer outro tipo (um value object, por exemplo) vira `TEXT` com JSON.
 
-Os campos seguem o formato `nome:tipo`. Nenhum comando sobrescreve um arquivo que já existe. Num arquivo que já existe (`mod.rs`, `ports.rs`, `rpc.rs`, o `mod.rs` do HTTP), o generator só acrescenta linhas, ao lado de uma linha que o `cerne new` escreveu.
+Os campos seguem o formato `nome:tipo`. Nenhum comando sobrescreve um arquivo que já existe, com uma exceção: o `cerne g http` reescreve o `main.rs` se ele ainda é o que o `cerne new` escreveu. Se o `main.rs` mudou, o generator não o toca e mostra o `main.rs` com HTTP, para a pessoa copiar o que falta. Num arquivo que já existe (`mod.rs`, `ports.rs`, `rpc.rs`, o `mod.rs` do HTTP), o generator só acrescenta linhas, ao lado de uma linha que o `cerne new` escreveu.
 
 ## Estrutura do repositório
 

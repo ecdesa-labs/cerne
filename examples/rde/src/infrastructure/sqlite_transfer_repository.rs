@@ -41,9 +41,13 @@ impl Repository<Transfer> for SqliteTransferRepository {
         let upsert = sqlx::query(
             "INSERT INTO transfers
                 (tx_hash, signed_transaction, sender, recipient, amount, decarbonization_fee, gas_fee, nonce, status,
-                 chained)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-             ON CONFLICT (tx_hash) DO UPDATE SET status = excluded.status, chained = excluded.chained",
+                 chained, cancellation, cancellation_tx_hash)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+             ON CONFLICT (tx_hash) DO UPDATE SET
+                status = excluded.status,
+                chained = excluded.chained,
+                cancellation = excluded.cancellation,
+                cancellation_tx_hash = excluded.cancellation_tx_hash",
         )
         .bind(transfer.tx_hash.to_string())
         .bind(transfer.signed_transaction.to_string())
@@ -54,7 +58,14 @@ impl Repository<Transfer> for SqliteTransferRepository {
         .bind(transfer.fees.gas.to_string())
         .bind(transfer.nonce as i64)
         .bind(status_name(transfer.status))
-        .bind(transfer.chained);
+        .bind(transfer.chained)
+        .bind(transfer.cancellation.as_ref().map(ToString::to_string))
+        .bind(
+            transfer
+                .cancellation
+                .as_ref()
+                .map(|cancellation| cancellation.tx_hash().to_string()),
+        );
 
         self.database.execute(upsert).await?;
 
@@ -68,6 +79,9 @@ impl Repository<Transfer> for SqliteTransferRepository {
 /// there for the queries.
 fn transfer_from(row: &SqliteRow) -> Result<Transfer, Error> {
     let signed_transaction = SignedTransaction::new(column(row, "signed_transaction")?)?;
+    let cancellation = column::<Option<String>>(row, "cancellation")?
+        .map(SignedTransaction::new)
+        .transpose()?;
 
     let transfer = Transfer {
         tx_hash: TxHash::new(column(row, "tx_hash")?)?,
@@ -82,6 +96,7 @@ fn transfer_from(row: &SqliteRow) -> Result<Transfer, Error> {
         },
         status: status_from(&column::<String>(row, "status")?)?,
         chained: column(row, "chained")?,
+        cancellation,
     };
 
     Ok(transfer.validate()?)

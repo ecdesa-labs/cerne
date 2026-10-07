@@ -10,6 +10,7 @@ O que está aqui foi **capturado**, não tirado da documentação. Onde o texto 
 | Carteira | MetaMask (extensão `nkbihfbeogaeaoehlefnkodbefgpgknn`), instalação nova, no Brave 154 (Linux) |
 | Rede | Chain ID `8808` (`0x2268`), moeda `RDEC`, RPC `http://localhost:8546` |
 | Volume | 60 requisições, 14 métodos, cerca de 7 minutos |
+| Segunda captura | 2026-10-07, mesma carteira: confirmação, "Cancelar" e "Acelerar" (seções 5 a 7), contra um servidor que minera blocos sob comando |
 
 Os endereços dos exemplos foram trocados por `0x1111…` (a conta da MetaMask) e `0x2222…` (o destinatário). As assinaturas foram omitidas.
 
@@ -113,27 +114,59 @@ O `result` do `eth_sendRawTransaction` é o hash da transação (`0x` + 64 dígi
 
 ### 5. Acompanhar a transação
 
-Logo depois do envio, a MetaMask chama este par **a cada 3 segundos**:
+Logo depois do envio, a MetaMask chama este par **a cada 3 segundos**, por cerca de 30 segundos:
 
 ```
-eth_getTransactionReceipt  ["0x<hash>"]   → null enquanto pendente; o recibo quando minerada
+eth_getTransactionReceipt  ["0x<hash>"]   → null enquanto pendente; o recibo quando está num bloco
 eth_getTransactionByHash   ["0x<hash>"]
 ```
 
-Na captura, o nó nunca devolveu recibo nem o número do bloco mudou. Depois de cerca de 30 segundos, a MetaMask parou de chamar a cada 3 segundos e voltou a seguir só o `eth_blockNumber`, a cada 20 segundos. Inferência, não testada: para a transação aparecer como confirmada, o nó precisa **avançar o número do bloco** e **devolver um recibo** com `status: "0x1"`.
+Depois, ela segue só o `eth_blockNumber`, a cada 20 segundos, e pede o recibo de novo **cada vez que o número do bloco muda**. Um nó que deixa uma transação pendente por mais de 30 segundos só a vê confirmada no próximo bloco.
+
+A MetaMask dá a transação por confirmada quando o recibo traz `status: "0x1"`, `blockNumber` e `blockHash`. Logo em seguida ela pede o bloco pelo hash (`eth_getBlockByHash`, para o `baseFeePerGas` e o `timestamp`) e o saldo da conta. O recibo que ela aceitou (os endereços abreviados):
+
+```json
+{
+  "transactionHash": "0x35b8…4634", "transactionIndex": "0x0",
+  "blockHash": "0x3437…7320", "blockNumber": "0x4",
+  "from": "0x1111…", "to": "0x2222…",
+  "status": "0x1", "gasUsed": "0x5208", "cumulativeGasUsed": "0x5208",
+  "effectiveGasPrice": "0x3b9aca00", "type": "0x2",
+  "contractAddress": null, "logs": [], "logsBloom": "0x00…00"
+}
+```
+
+A MetaMask acompanha a transação pelo hash que **o nó devolveu** no `eth_sendRawTransaction`, não pelo que ela mesma calcula. Na primeira captura, o servidor de teste devolvia sempre o mesmo hash falso. Duas transações com o mesmo hash travaram o rastreador da MetaMask: ela parou de pedir recibos, inclusive de transações novas, até a extensão ser recarregada (desligar e religar em `brave://extensions`). O nó precisa devolver o hash de verdade, o keccak dos bytes assinados.
 
 ### 6. Cancelar
 
-Ao cancelar uma transação pendente, a MetaMask manda outra pelo `eth_sendRawTransaction`, sem chamar antes o `eth_estimateGas` nem o `eth_getTransactionCount`:
+Ao cancelar uma transação pendente, a MetaMask manda outra pelo `eth_sendRawTransaction`, sem chamar antes o `eth_estimateGas` nem o `eth_getTransactionCount`. A capturada, decodificada:
 
 | Campo | Valor capturado |
 |---|---|
-| `nonce` | `0`, o **mesmo** da transação cancelada |
+| `nonce` | o **mesmo** da transação cancelada |
 | `maxFeePerGas`, `maxPriorityFeePerGas` | `0x4190ab00` (1,1 gwei, 10% acima) |
-| `to` | a própria conta (`0x1111…`) |
+| `to` | a própria conta (`0x1111…`); o remetente recuperado da assinatura é essa mesma conta |
 | `value` | `0` |
+| `gasLimit` | `21000` |
 
-Inferência, pela regra de um nó Ethereum: o nó substitui a transação pendente que tem o mesmo remetente e o mesmo nonce, se a taxa nova for maior. Sem essa regra, o botão "Cancelar" da MetaMask não tem efeito.
+A partir daí, a MetaMask acompanha **as duas**: pede o recibo da transferência e o do cancelamento. Para o cancelamento valer, o nó põe o cancelamento num bloco e devolve o recibo dele com `status: "0x1"`. A transferência fica sem recibo (`null`), e o `eth_getTransactionCount` passa do nonce dela. Com isso, a MetaMask mostra a transferência como **"Falhou", sem motivo**. Ela não mostra "Cancelada".
+
+Na tela, enquanto o cancelamento está pendente, a transferência aparece com um botão **"Acelerar esse cancelamento"**. Clicado, ele não assinou uma transação nova: a MetaMask mandou de novo **os mesmos bytes** do cancelamento, com o mesmo hash. O nó precisa aceitar uma transação que já tem e devolver o mesmo hash, como um nó Ethereum faz.
+
+Uma transferência nova, enviada enquanto outra está pendente, aparece como **"Na fila"**.
+
+### 7. Acelerar
+
+O "Acelerar" de uma transferência pendente manda outra pelo `eth_sendRawTransaction`:
+
+| Campo | Valor capturado |
+|---|---|
+| `nonce` | o **mesmo** da transferência |
+| `maxFeePerGas`, `maxPriorityFeePerGas` | 1,1 gwei, 10% acima |
+| `to`, `value` | os **mesmos** da transferência |
+
+Quando a nova entra num bloco, a MetaMask a dá por confirmada, e a original fica sem recibo. Na rde, o "Acelerar" de uma transferência é recusado (**D40**): a taxa não muda a ordem de nada, e a regra "sender has no open transfer" já cobre esse caso.
 
 ---
 
@@ -154,8 +187,9 @@ O que o nó precisa responder, em ordem de quando aparece. A coluna "Sem ele" di
 | `eth_estimateGas` | `[{from, to, value, data, type}]` | Gas: `"0x5208"` (21000 numa transferência simples) | Não testado |
 | `eth_getTransactionCount` | `[endereço, bloco]` | Próximo nonce da conta: `"0x0"` | Não testado |
 | `eth_sendRawTransaction` | `["0x02…"]` | Hash da transação | Não envia |
-| `eth_getTransactionReceipt` | `[hash]` | `null` (pendente) ou o recibo | Fica pendente |
+| `eth_getTransactionReceipt` | `[hash]` | `null` (pendente) ou o recibo (seção 5) | Fica pendente |
 | `eth_getTransactionByHash` | `[hash]` | `null` ou a transação | Recebeu `-32601` e seguiu chamando, sem erro na tela |
+| `eth_getBlockByHash` | `[hash do bloco, false]` | O bloco, como no `eth_getBlockByNumber` | Não testado; pedido logo depois de um recibo com `status: "0x1"` |
 
 O `eth_feeHistory` e o `eth_maxPriorityFeePerGas` estavam prontos no servidor de teste, mas a MetaMask não os chamou nesta captura. A taxa da transação enviada (1 gwei) é igual ao `eth_gasPrice` e ao `baseFeePerGas` do bloco que o servidor devolveu.
 
@@ -179,9 +213,8 @@ O servidor de teste respondeu com este bloco, e a MetaMask aceitou. Não foi tes
 
 ## O que ainda não foi capturado
 
-- **O recibo de uma transação confirmada:** o servidor de teste nunca devolveu um, então não se sabe quais campos a MetaMask lê dele.
 - **Um dApp chamando pela MetaMask** (`window.ethereum.request`). O esperado, pela documentação da MetaMask: `eth_requestAccounts`, `personal_sign` e `eth_signTypedData_v4` ficam dentro da carteira, e o `eth_sendTransaction` do dApp chega ao nó como o `eth_sendRawTransaction` deste documento.
 - **Tokens (ERC-20):** a MetaMask lê saldo e símbolo pelo `eth_call` (`balanceOf`, `symbol`, `decimals`), mas a captura só viu essas chamadas com resposta `"0x"`.
 - **Trocar de rede e voltar**, e a MetaMask no celular.
 
-Para capturar de novo, o servidor de teste é um script Python de cerca de 100 linhas que grava cada requisição num arquivo `.jsonl` e responde aos métodos da tabela acima. Ele não está no repositório.
+Para capturar de novo, os servidores de teste são scripts Python que gravam cada requisição e a resposta num arquivo `.jsonl`. O da primeira captura responde aos métodos da tabela acima com valores fixos. O da segunda é uma chain mínima: calcula o hash (keccak), recupera o remetente da assinatura, guarda nonces e saldos, e só minera um bloco quando recebe `POST /mine`, o que dá tempo de clicar em "Cancelar" ou "Acelerar". Num bloco, entre transações de mesmo remetente e mesmo nonce, entra a de taxa maior. Os scripts não estão no repositório.

@@ -1,35 +1,43 @@
 use crate::application::commands::accept_transfer::AcceptTransferCommand;
 use crate::application::commands::cancel_transfer::CancelTransferCommand;
-use crate::application::commands::create_transfer::CreateTransferCommand;
 use crate::application::commands::reject_transfer::RejectTransferCommand;
 use crate::application::queries::pending_transfers::PendingTransfersQuery;
 use crate::infrastructure::http::eth;
 use crate::ports::Ports;
 use axum::Json;
+use axum::body::Bytes;
 use axum::extract::State;
 use cerne::http::jsonrpc::{Methods, Request, Response};
+use serde_json::Value;
 use std::sync::Arc;
 
 /// One endpoint for two kinds of client:
 ///
-/// - MetaMask speaks the Ethereum JSON-RPC: `eth_sendRawTransaction` is the `CreateTransferCommand`, and the other
-///   `eth_*` methods read the chain (`eth.rs`).
+/// - MetaMask speaks the Ethereum JSON-RPC: `eth_sendRawTransaction` is the `CreateTransferCommand`, or the
+///   `SendCancellationCommand` when the sender cancels in MetaMask; the other `eth_*` methods read the chain
+///   (`eth.rs`).
 /// - The rde methods, named in snake_case after their command or query: `accept_transfer` reads its params into an
-///   `AcceptTransferCommand` and executes it in a transaction. The actor comes in the params until there is
-///   authentication.
-pub async fn rpc(State(ports): State<Arc<Ports>>, Json(request): Json<Request>) -> Json<Response> {
+///   `AcceptTransferCommand` and executes it in a transaction. The params come by name or by position, in the order
+///   of the fields of the command. The actor comes in the params until there is authentication.
+pub async fn rpc(State(ports): State<Arc<Ports>>, body: Bytes) -> Json<Response> {
+    let request = match Request::from_body(&body) {
+        Ok(request) => request,
+        Err(not_a_request) => return Json(Response::new(Value::Null, Err(not_a_request))),
+    };
+
     let methods = Methods::new(ports.as_ref());
     let params = request.params;
 
     let result = match request.method.as_str() {
         // --- Sender, through MetaMask --------------------------------------------
-        "eth_sendRawTransaction" => methods.command::<CreateTransferCommand>(params).await,
+        "eth_sendRawTransaction" => eth::send_raw_transaction(&ports, &methods, params).await,
 
         // --- MetaMask reading the chain --------------------------------------------
         "eth_chainId" => eth::chain_id(),
         "net_version" => eth::net_version(),
         "eth_blockNumber" => eth::block_number(&ports).await,
         "eth_getBlockByNumber" => eth::block_by_number(&ports, params).await,
+        "eth_getBlockByHash" => eth::block_by_hash(&ports, params).await,
         "eth_gasPrice" => eth::gas_price(&ports).await,
         "eth_estimateGas" => eth::estimate_gas(),
         "eth_getBalance" => eth::balance(&ports, params).await,

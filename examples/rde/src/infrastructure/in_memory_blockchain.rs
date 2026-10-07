@@ -83,8 +83,14 @@ impl State {
         Ok(())
     }
 
-    /// A new block with this one transaction, its receipt, and the nonce of the sender moved on.
-    fn add_block(&mut self, signed_transaction: &SignedTransaction, succeeded: bool) -> TxHash {
+    /// A new block with this one transaction, its receipt, and the nonce of the sender moved on. `gas_used` is what
+    /// the receipt says the sender paid for: 0 when nothing was charged.
+    fn add_block(
+        &mut self,
+        signed_transaction: &SignedTransaction,
+        succeeded: bool,
+        gas_used: u64,
+    ) -> TxHash {
         let parent = self.blocks.last().map(|block| block.hash.clone());
         let number = self.blocks.len() as u64;
         let tx_hash = signed_transaction.tx_hash().clone();
@@ -105,11 +111,7 @@ impl State {
             sender: signed_transaction.sender().clone(),
             recipient: signed_transaction.recipient().clone(),
             succeeded,
-            gas_used: if succeeded {
-                signed_transaction.gas_limit()
-            } else {
-                0
-            },
+            gas_used,
             gas_price: signed_transaction.max_fee_per_gas(),
         };
 
@@ -169,7 +171,9 @@ impl Blockchain for InMemoryBlockchain {
 
         // --- Block -----------------------------------------------------------
 
-        Ok(state.add_block(signed_transaction, true))
+        let gas_used = signed_transaction.gas_limit();
+
+        Ok(state.add_block(signed_transaction, true, gas_used))
     }
 
     async fn send_failed_transaction(
@@ -180,7 +184,15 @@ impl Blockchain for InMemoryBlockchain {
 
         state.check_nonce(signed_transaction)?;
 
-        Ok(state.add_block(signed_transaction, false))
+        Ok(state.add_block(signed_transaction, false, 0))
+    }
+
+    async fn send_cancellation(&self, cancellation: &SignedTransaction) -> Result<TxHash, Error> {
+        let mut state = self.state.lock().unwrap();
+
+        state.check_nonce(cancellation)?;
+
+        Ok(state.add_block(cancellation, true, 0))
     }
 
     async fn block_number(&self) -> Result<u64, Error> {
@@ -194,6 +206,17 @@ impl Blockchain for InMemoryBlockchain {
             .unwrap()
             .blocks
             .get(number as usize)
+            .cloned())
+    }
+
+    async fn block_by_hash(&self, hash: &str) -> Result<Option<Block>, Error> {
+        Ok(self
+            .state
+            .lock()
+            .unwrap()
+            .blocks
+            .iter()
+            .find(|block| block.hash == hash)
             .cloned())
     }
 

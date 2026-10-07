@@ -17,6 +17,7 @@ usage:
   cerne g read_model <Name> [field:type ...]
   cerne g query <Name> [field:type ...]   (needs the read model <Name>)
   cerne g endpoint <Name> <GET|POST|PUT|PATCH|DELETE> </path>   (REST projects)
+  cerne g http <rest|jsonrpc>   (projects created without --http)
   cerne g port <Name>
   cerne g adapter <Name> <Port>";
 
@@ -25,7 +26,7 @@ const PROJECT: [(&str, &str); 17] = [
     ("Cargo.toml", include_str!("../templates/Cargo.toml.jinja")),
     (".gitignore", "/target\n*.db\n*.db-shm\n*.db-wal\n"),
     ("src/lib.rs", include_str!("../templates/lib.rs.jinja")),
-    ("src/main.rs", include_str!("../templates/main.rs.jinja")),
+    ("src/main.rs", MAIN),
     ("src/ports.rs", include_str!("../templates/ports.rs.jinja")),
     (
         "src/domain/mod.rs",
@@ -56,6 +57,7 @@ const PROJECT: [(&str, &str); 17] = [
     ),
 ];
 
+const MAIN: &str = include_str!("../templates/main.rs.jinja");
 const HTTP_MOD: &str = include_str!("../templates/http_mod.rs.jinja");
 const RPC: &str = include_str!("../templates/rpc.rs.jinja");
 const VALUE_OBJECT: &str = include_str!("../templates/value_object.rs.jinja");
@@ -88,6 +90,7 @@ fn main() -> ExitCode {
         ["new", name, flags @ ..] => new_project(name, flags),
         ["g" | "generate", "endpoint", name, method, path] => generate_endpoint(name, method, path),
         ["g" | "generate", "adapter", name, port] => generate_adapter(name, port),
+        ["g" | "generate", "http", http] => generate_http(http),
         ["g" | "generate", kind, name, rest @ ..] => generate(kind, name, rest),
         _ => Err(USAGE.into()),
     };
@@ -112,39 +115,11 @@ fn new_project(name: &str, flags: &[&str]) -> CliResult {
         return Err(format!("{name} already exists").into());
     }
 
-    let module = if db == "postgres" {
-        "postgres"
-    } else {
-        "sqlite"
-    };
-    let prefix = pascal_case(module);
-
-    let cerne_features: Vec<String> = [(db == "postgres", "postgres"), (!http.is_empty(), "axum")]
-        .into_iter()
-        .filter(|(wanted, _)| *wanted)
-        .map(|(_, feature)| format!("{feature:?}"))
-        .collect();
-
-    let project = context! {
-        name,
-        crate_name => name.replace('-', "_"),
-        db,
-        http,
-        module,
-        database => format!("{prefix}Database"),
-        outbox => format!("{prefix}Outbox"),
-        cerne_features => cerne_features.join(", "),
-    };
+    let project = project_context(name, db, http);
 
     let mut files = PROJECT.to_vec();
 
-    if !http.is_empty() {
-        files.push(("src/infrastructure/http/mod.rs", HTTP_MOD));
-    }
-
-    if http == "jsonrpc" {
-        files.push(("src/infrastructure/http/rpc.rs", RPC));
-    }
+    files.extend(http_files(http));
 
     for (path, template) in files {
         let file = root.join(path);
@@ -159,6 +134,45 @@ fn new_project(name: &str, flags: &[&str]) -> CliResult {
     );
 
     Ok(())
+}
+
+/// What the templates of `cerne new` read: the name, the database and the HTTP of the project.
+fn project_context(name: &str, db: &str, http: &str) -> Value {
+    let module = if db == "postgres" {
+        "postgres"
+    } else {
+        "sqlite"
+    };
+    let prefix = pascal_case(module);
+
+    let cerne_features: Vec<String> = [(db == "postgres", "postgres"), (!http.is_empty(), "axum")]
+        .into_iter()
+        .filter(|(wanted, _)| *wanted)
+        .map(|(_, feature)| format!("{feature:?}"))
+        .collect();
+
+    context! {
+        name,
+        crate_name => name.replace('-', "_"),
+        db,
+        http,
+        module,
+        database => format!("{prefix}Database"),
+        outbox => format!("{prefix}Outbox"),
+        cerne_features => cerne_features.join(", "),
+    }
+}
+
+/// The files of the HTTP layer: the router, and the JSON-RPC endpoint when the project speaks JSON-RPC.
+fn http_files(http: &str) -> Vec<(&'static str, &'static str)> {
+    match http {
+        "rest" => vec![("src/infrastructure/http/mod.rs", HTTP_MOD)],
+        "jsonrpc" => vec![
+            ("src/infrastructure/http/mod.rs", HTTP_MOD),
+            ("src/infrastructure/http/rpc.rs", RPC),
+        ],
+        _ => vec![],
+    }
 }
 
 /// `--db sqlite` → `Some("sqlite")`, checked against the allowed values.
@@ -177,6 +191,8 @@ fn flag<'a>(flags: &[&'a str], name: &str, allowed: &[&str]) -> Result<Option<&'
 
 /// What `cerne new` chose, read from `[package.metadata.cerne]` in the `Cargo.toml` of the project.
 struct Project {
+    name: String,
+    db: String,
     module: &'static str,
     prefix: &'static str,
     http: String,
@@ -200,6 +216,8 @@ fn project() -> Result<Project, String> {
     };
 
     Ok(Project {
+        name: value("name").unwrap_or_default(),
+        db: value("db").unwrap_or_default(),
         module,
         prefix,
         http: value("http").unwrap_or_default(),
@@ -544,6 +562,128 @@ fn generate_endpoint(name: &str, method: &str, path: &str) -> CliResult {
         )],
         Before,
     )
+}
+
+/// `cerne g http rest|jsonrpc`: the HTTP layer of a project created without `--http`, as `cerne new --http` writes
+/// it. In JSON-RPC, every command and query an actor sends gets its method.
+fn generate_http(http: &str) -> CliResult {
+    if !["rest", "jsonrpc"].contains(&http) {
+        return Err(format!("cerne g http takes rest|jsonrpc, not {http}").into());
+    }
+
+    let project = project()?;
+
+    if !project.http.is_empty() {
+        return Err(format!("the project already speaks {}", project.http).into());
+    }
+
+    // --- Cargo.toml: the choice, axum, and the feature axum of cerne ---------
+
+    let cargo_toml = fs::read_to_string("Cargo.toml")?;
+    let mut cargo_lines: Vec<String> = cargo_toml.lines().map(String::from).collect();
+
+    let Some(cerne_line) = cargo_lines
+        .iter()
+        .position(|line| line.starts_with("cerne = ") && line.contains("features = ["))
+    else {
+        return Err(r#"Cargo.toml has no line cerne = { .., features = [..] }: add the feature "axum" by hand"#.into());
+    };
+
+    let cerne_line_without_features = cargo_lines[cerne_line].contains("features = []");
+    let cerne_with_axum = if cerne_line_without_features {
+        cargo_lines[cerne_line].replace("features = []", r#"features = ["axum"]"#)
+    } else {
+        cargo_lines[cerne_line].replace("features = [", r#"features = ["axum", "#)
+    };
+
+    cargo_lines[cerne_line] = cerne_with_axum;
+    cargo_lines.insert(cerne_line, r#"axum = "0.8""#.to_string());
+
+    for line in cargo_lines.iter_mut() {
+        if line == r#"http = """# {
+            *line = format!("http = {http:?}");
+        }
+    }
+
+    fs::write("Cargo.toml", cargo_lines.join("\n") + "\n")?;
+
+    println!("updated Cargo.toml");
+
+    // --- The HTTP layer ------------------------------------------------------
+
+    let without_http = project_context(&project.name, &project.db, "");
+    let with_http = project_context(&project.name, &project.db, http);
+
+    for (path, template) in http_files(http) {
+        fs::create_dir_all(Path::new(path).parent().unwrap())?;
+        fs::write(path, render(template, &with_http)?)?;
+
+        println!("created {path}");
+    }
+
+    let infrastructure_mod = fs::read_to_string("src/infrastructure/mod.rs")?;
+
+    fs::write(
+        "src/infrastructure/mod.rs",
+        format!("pub mod http;\n{infrastructure_mod}"),
+    )?;
+
+    // --- main.rs: rewritten only if it is still the one cerne new wrote -------
+
+    let main_rs = fs::read_to_string("src/main.rs")?;
+    let main_is_untouched = main_rs == render(MAIN, &without_http)?;
+
+    if main_is_untouched {
+        fs::write("src/main.rs", render(MAIN, &with_http)?)?;
+
+        println!("updated src/main.rs");
+    } else {
+        println!(
+            "src/main.rs changed since cerne new: serve the router by hand, as in\n\n{}",
+            render(MAIN, &with_http)?
+        );
+    }
+
+    // --- JSON-RPC: one method per command and query of an actor --------------
+
+    let ports_rs = fs::read_to_string("src/ports.rs")?;
+
+    for file in post_it_files("src/application/commands")? {
+        let command = format!("{}Command", pascal_case(&file));
+        let fired_by_a_policy = ports_rs.contains(&format!("register::<{command}>()"));
+
+        if !fired_by_a_policy {
+            let command_use = format!("use crate::application::commands::{file}::{command};");
+
+            add_rpc_method(&file, &command_use, &format!("command::<{command}>"))?;
+        }
+    }
+
+    for file in post_it_files("src/application/queries")? {
+        let query = format!("{}Query", pascal_case(&file));
+        let query_use = format!("use crate::application::queries::{file}::{query};");
+
+        add_rpc_method(&file, &query_use, &format!("query::<{query}>"))?;
+    }
+
+    Ok(())
+}
+
+/// The modules of a folder, without `mod.rs`, in alphabetical order: `place_order`, `ship_order`.
+fn post_it_files(folder: &str) -> Result<Vec<String>, Box<dyn Error>> {
+    let mut files: Vec<String> = fs::read_dir(folder)?
+        .filter_map(|entry| {
+            let name = entry.ok()?.file_name().to_string_lossy().to_string();
+
+            name.strip_suffix(".rs")
+                .filter(|module| *module != "mod")
+                .map(String::from)
+        })
+        .collect();
+
+    files.sort();
+
+    Ok(files)
 }
 
 /// `cerne g adapter SmtpNotifier Notifier`: a struct in `infrastructure/` that implements the port `Notifier`.

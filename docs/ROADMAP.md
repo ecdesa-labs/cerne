@@ -20,16 +20,16 @@ O que já existe no código, comparado com os elementos do Event Storming:
 | — | Policy Processor | ✅ Pronto (`OutboxPolicyProcessor`, o padrão dos projetos gerados; `InlinePolicyProcessor` e `TokioPolicyProcessor` continuam) | `crates/cerne/src/outbox.rs`, `policy_processors.rs` |
 | — | Outbox e transação | ✅ Pronto (`Outbox`, `TransactionalPorts`, `CommandRegistry`) | `crates/cerne/src/outbox.rs` |
 | — | Banco | ✅ Pronto (`cerne::sqlite`, também em memória, e `cerne::postgres`) | `crates/cerne/src/sql.rs` |
-| — | HTTP | ✅ Pronto (feature `axum`: REST e JSON-RPC) | `crates/cerne/src/http.rs` |
+| — | HTTP | ✅ Pronto (feature `axum`: REST e JSON-RPC 2.0, com `params` por posição ou por nome) | `crates/cerne/src/http.rs` |
 | 🩷 Rosa | External System (Ports) | ✅ `Repository<A>` (o `save` devolve o id) + composition root `Ports`; o repositório SQL de cada agregado é gerado no projeto | `crates/cerne/src/repositories.rs` |
 | — | Invariants | ✅ Pronto | `crates/cerne/src/invariants.rs` |
 | — | Business Rules | ✅ Pronto | `crates/cerne/src/business_rules.rs` |
 | — | Erros | ✅ Pronto (`Error` → `DomainError` / `ApplicationError` / `InfrastructureError`) | `crates/cerne/src/errors.rs` |
 | 🟩 Verde | Read Model / Query | ✅ Pronto (trait `Query<Ports>` que devolve um `ReadModel`) | `crates/cerne/src/queries.rs` |
 | 🟨 Amarelo pequeno | Actor | ❌ Não existe | — |
-| — | CLI (`cerne new`, `cerne g`) | ✅ Pronto (`--db`, `--http`; entity com repositório, value_object, event, command, read_model, query, endpoint, port, adapter) | `crates/cerne-cli/` |
+| — | CLI (`cerne new`, `cerne g`) | ✅ Pronto (`--db`, `--http`; entity com repositório, value_object, event, command, read_model, query, endpoint, http, port, adapter) | `crates/cerne-cli/` |
 
-**Próximo passo:** a Fase 3.5, que roda de verdade o que a Fase 3 só compilou (Postgres e REST); depois, a Fase 4, publicação.
+**Próximo passo:** fechar a Fase 3.5 (ver no CI o repositório Postgres gerado rodar, e um "Cancelar" de verdade na MetaMask contra o servidor da rde); depois, a Fase 4, publicação.
 
 ---
 
@@ -135,24 +135,23 @@ O que já existe no código, comparado com os elementos do Event Storming:
 
 **Meta:** tudo o que a Fase 3 entregou roda de verdade, não só passa no `clippy`.
 
-- [ ] Ver o job `postgres` do CI passar. O adapter Postgres (`cerne::postgres`) compila e passa no `clippy`, mas nunca rodou contra um Postgres de verdade: a máquina da Fase 3 não tinha Postgres nem Docker. O teste `crates/cerne/tests/postgres.rs` só roda com `DATABASE_URL`; localmente, com um Postgres no ar:
+- [x] Ver o job `postgres` do CI passar. O adapter Postgres (`cerne::postgres`) nunca tinha rodado contra um Postgres de verdade: a máquina da Fase 3 não tinha Postgres nem Docker. O job `postgres` do CI sobe um Postgres 17 e roda o `crates/cerne/tests/postgres.rs` com `DATABASE_URL`; ele passa desde o commit `d6a7b47`. Localmente, com um Postgres no ar:
 
   ```bash
   DATABASE_URL=postgres://postgres:cerne@localhost:5432/postgres cargo test -p cerne --no-default-features --features postgres --test postgres
   ```
 
   Ele cobre a outbox (`FOR UPDATE SKIP LOCKED`, rollback e commit).
-- [ ] Executar o repositório que o `cerne g entity --aggregate` gera para Postgres. Hoje ele só passa pelo `clippy` no e2e.
-- [ ] Executar o REST gerado: no e2e, mandar um `POST` e um `GET` ao projeto `--http rest`, como o teste de ida e volta que já existe para o repositório. Hoje o handler gerado pelo `cerne g endpoint` só passa pelo `clippy`; a rde usa JSON-RPC.
-
-- [ ] Acrescentar HTTP a um projeto que nasceu sem `--http`: hoje não há `cerne g http rest|jsonrpc`, e o `cerne g endpoint` recusa o projeto. Quem muda de ideia cria a camada à mão.
-- [ ] JSON-RPC com `params` por posição (array) e por nome (objeto) (**D36** ✅). Por posição é o que a MetaMask manda ([METAMASK.md](./METAMASK.md)).
-  - `crates/cerne/src/http.rs`: o `serde` já lê um array numa struct de command, na ordem dos campos. O `eth_sendRawTransaction` da rde depende disso (`["0x02f8…"]` vira o `CreateTransferCommand`). Falta o teste na lib, para o `Methods::command` e o `Methods::query`; um `params` que não é array nem objeto volta `-32602`.
-  - `examples/rde/tests/http.rs`: já cobertos o `params` em array para um command (`eth_sendRawTransaction`), o `params` ausente (`net_version`) e o `id` como string. Faltam o array para uma query, uma posição que leva um objeto (como o `eth_call`) e o `id` como número grande.
-  - Documentar que a ordem dos campos do command é contrato: no doc comment do `Methods`, no `rpc.rs.jinja` e no `command.rs.jinja` do CLI.
-  - README, passo 7: o `curl` com `params` em array.
-- [ ] JSON-RPC: a `Request` ganha o campo `jsonrpc`, e um valor diferente de `"2.0"` (ou a ausência dele) volta `-32600` (**D36**).
-- [ ] JSON-RPC: o handler lê o corpo cru com `serde_json`, em vez do extractor `Json<Request>` do axum. JSON malformado volta `-32700`, e um envelope sem `method` volta `-32600`, sempre com HTTP 200 e `"id": null` (**D36**). A lib dá a função que transforma o corpo numa `Request` ou num `ErrorObject`; o `rpc.rs` da rde e o `rpc.rs.jinja` do CLI passam a usá-la. Testes: corpo que não é JSON, JSON sem `method` e `"jsonrpc": "1.0"`.
+- [ ] Executar o repositório que o `cerne g entity --aggregate` gera para Postgres. Feito no código: com `DATABASE_URL`, o e2e cria um banco próprio no Postgres e roda no projeto `vitrine` um teste de ida e volta do repositório gerado, com inteiro, `f64`, `bool`, `String` e enum. O job `postgres` do CI ganhou o passo `cargo test -p cerne-cli`. Falta ver esse passo verde no CI: a máquina da Fase 3.5 também não tinha Postgres.
+- [x] Executar o REST gerado: no e2e, o projeto `caixa` recebe um `POST` e um `GET` direto no router gerado (com o `tower`), inclusive um corpo que não é o command (422) e uma query string que não é a query (400).
+- [x] Acrescentar HTTP a um projeto que nasceu sem `--http`: `cerne g http rest|jsonrpc` escreve o que o `cerne new --http` teria escrito (o `axum` e a feature `axum` no `Cargo.toml`, `infrastructure/http/`, e o `main.rs` que serve o router, se ele ainda é o do `cerne new`). Em JSON-RPC, cada command de ator e cada query que já existem ganham o método (**D39**).
+- [x] JSON-RPC com `params` por posição (array) e por nome (objeto) (**D36** ✅). Por posição é o que a MetaMask manda ([METAMASK.md](./METAMASK.md)).
+  - `crates/cerne/tests/jsonrpc.rs`: o `Methods::command` e o `Methods::query` leem array e objeto; um `params` que não é array nem objeto volta `-32602`.
+  - `examples/rde/tests/http.rs`: o array numa query (`pending_transfers`), uma posição que leva um objeto (`eth_estimateGas`, `eth_call`) e o `id` como número grande.
+  - A ordem dos campos do command é contrato: está no doc comment do `Methods`, no `rpc.rs.jinja` e no `command.rs.jinja` do CLI.
+  - README, passo 7: o `curl` com `params` em array, e também por nome.
+- [x] JSON-RPC: a `Request` ganha o campo `jsonrpc`, e um valor diferente de `"2.0"` (ou a ausência dele) volta `-32600` (**D36**).
+- [x] JSON-RPC: o handler lê o corpo cru (`Bytes`) com o `Request::from_body` da lib, em vez do extractor `Json<Request>` do axum. JSON malformado volta `-32700`, e um envelope sem `method` volta `-32600`, sempre com HTTP 200 e `"id": null` (**D36**). O `rpc.rs` da rde e o `rpc.rs.jinja` do CLI usam a função. Testes na lib e na rde: corpo que não é JSON, JSON sem `method` e `"jsonrpc": "1.0"`.
 
 ### A rde chamada pela MetaMask (D38 ✅)
 
@@ -166,9 +165,15 @@ Feito no começo da Fase 3.5. A rde fala o JSON-RPC da Ethereum ([METAMASK.md](.
 - [x] Rejeitada ou cancelada, a transferência entra na chain como falha (`ChainFailedTransferCommand`): recibo com `status: "0x0"`, nenhum saldo muda, e o nonce anda. A MetaMask para de esperar e libera o próximo envio.
 - [x] O port `Blockchain` ganhou blocos, recibos e o preço do gas; o `InMemoryBlockchain` põe cada transação num bloco próprio. O `eth.rs` responde os métodos de leitura da MetaMask a partir dele.
 - [x] O servidor lê o `RDE_WALLETS`: as carteiras que começam com 1000 RDEC e com KYC.
-- [ ] O "Cancelar" da MetaMask: ela manda outra transação com o mesmo nonce, valor 0 e taxa 10% maior. Mapear para o `CancelTransferCommand`, com a regra de que só se cancela o que ainda não foi incluído numa proposta de bloco. A MetaMask passa a acompanhar o hash da transação nova.
-- [ ] A mensagem do `-32001`: a MetaMask mostra só o `message` do erro ("the domain refused the request"), e as violações ficam no `data`, onde a pessoa não as vê. Pôr os nomes das violações no `message`.
-- [ ] A chain em memória recomeça a cada vez que o servidor sobe, mas o `rde.db` fica. Hoje é preciso apagar o `rde.db` ao reiniciar.
+- [x] O "Cancelar" da MetaMask (**D40**), capturado de uma MetaMask de verdade ([METAMASK.md](./METAMASK.md), seções 5 a 7). Uma transação de valor 0 para a própria conta é o `SendCancellationCommand`: ele acha a transferência em aberto do remetente, confere as regras "transfer is still pending" (ainda em nenhuma proposta de bloco) e "cancellation has the nonce of the transfer", e a substitui (`transfer.replace_by(cancellation)`). A policy "whenever a transfer is replaced by a cancellation, chain the cancellation" dispara o `ChainCancellationCommand`, que põe o cancelamento num bloco com `status: "0x1"`, sem mover RDEC nem cobrar taxa. A transferência fica sem recibo, e a MetaMask a mostra como "Falhou".
+- [x] Uma transação que a rde já recebeu volta com o mesmo hash (`ReceivedTransactionQuery`): o "Acelerar esse cancelamento" da MetaMask manda os mesmos bytes de novo. O "Acelerar" de uma transferência é recusado pela regra "sender has no open transfer".
+- [x] `eth_getBlockByHash`: a MetaMask o chama logo depois de um recibo com `status: "0x1"`, e sem ele não confirma a transação.
+- [x] Verificado com as transações que uma MetaMask de verdade assinou nas capturas (nonces 0 a 4: envio, cancelamento, "Acelerar esse cancelamento", aceite e "Acelerar" recusado), reenviadas ao servidor da rde com as mesmas leituras que a MetaMask faz.
+- [x] Achado nessa verificação: num SQLite em arquivo, um command que lê e depois grava falhava com "database is locked" quando a outbox gravava no meio. O `SqliteDatabase::begin` agora abre a transação com `BEGIN IMMEDIATE` (`crates/cerne/tests/sqlite_transactions.rs`).
+- [x] A mensagem do `-32001`: a MetaMask mostra só o `message` do erro, e as violações ficavam só no `data`, onde a pessoa não as vê. Agora o `message` é "the domain refused the request: sender has RDEC available, recipient has KYC", e o `data` continua com a lista.
+- [x] A chain e as transferências recomeçam juntas: o servidor apaga o `rde.db` e o `rde-chain.db` ao subir. A chain do servidor é o adapter `SqliteBlockchain`, num SQLite próprio (`chain_migrations/`), fora da transação das transferências (D34); os testes de HTTP usam o mesmo adapter, em memória.
+
+**Decisões novas:** D39 e D40.
 
 **Pronto quando:** o CI roda o Postgres, o e2e executa os handlers REST gerados e o JSON-RPC segue a especificação nos três itens da D36.
 
@@ -219,4 +224,4 @@ Escopo detalhado ainda a definir.
 
 ## Decisões pendentes
 
-Nenhuma. A D36, a D37 e a D38 foram decididas no começo da Fase 3.5; a D36 e a D38, com base na captura da MetaMask. O ponto em aberto da D23 (id gerado pelo repositório) foi resolvido na D28. Ver o resumo em [DECISOES.md](./DECISOES.md).
+Nenhuma. A D39 registra como a Fase 3.5 foi feita, e a D40, o "Cancelar" da MetaMask. A D36, a D37 e a D38 foram decididas no começo da Fase 3.5; a D36 e a D38, com base na captura da MetaMask. O ponto em aberto da D23 (id gerado pelo repositório) foi resolvido na D28. Ver o resumo em [DECISOES.md](./DECISOES.md).

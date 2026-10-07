@@ -31,10 +31,17 @@ pub trait Blockchain: Send + Sync {
         signed_transaction: &SignedTransaction,
     ) -> Result<TxHash, Error>;
 
+    /// Puts the cancellation MetaMask signed in a new block, as succeeded: it moves no RDEC and charges no fee, only
+    /// the nonce of the sender moves on. The transfer it replaces never gets a block.
+    async fn send_cancellation(&self, cancellation: &SignedTransaction) -> Result<TxHash, Error>;
+
     /// The number of the last block.
     async fn block_number(&self) -> Result<u64, Error>;
 
     async fn block(&self, number: u64) -> Result<Option<Block>, Error>;
+
+    /// MetaMask reads the block of a receipt by its hash, for the base fee and the time.
+    async fn block_by_hash(&self, hash: &str) -> Result<Option<Block>, Error>;
 
     /// `None` while the transaction is in no block.
     async fn receipt(&self, tx_hash: &TxHash) -> Result<Option<Receipt>, Error>;
@@ -60,7 +67,8 @@ pub struct Receipt {
     pub block_hash: String,
     pub sender: Address,
     pub recipient: Address,
-    /// `false` for a rejected or canceled transfer: in the block, but without moving RDEC.
+    /// `false` for a transfer rejected or canceled in the rde: in the block, but without moving RDEC. A cancellation
+    /// signed in MetaMask succeeds, also without moving RDEC.
     pub succeeded: bool,
     pub gas_used: u64,
     /// In wei per unit of gas.

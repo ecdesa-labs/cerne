@@ -18,7 +18,8 @@ pub enum TransferStatus {
 
 /// A transfer of RDEC between two wallets: Pending → Accepted, Rejected or Canceled.
 /// Once it leaves Pending, its transaction goes to the chain: accepted, it moves the RDEC; rejected or canceled, it
-/// goes in as failed, only so the nonce of the sender moves on (MetaMask waits for that).
+/// goes in as failed, only so the nonce of the sender moves on (MetaMask waits for that). Canceled in MetaMask, the
+/// cancellation it signed goes to the chain in its place.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Transfer {
     pub tx_hash: TxHash,
@@ -31,6 +32,8 @@ pub struct Transfer {
     pub nonce: u64,
     pub status: TransferStatus,
     pub chained: bool,
+    /// The transaction MetaMask signed to cancel this one: same nonce, nothing to the sender itself.
+    pub cancellation: Option<SignedTransaction>,
 }
 
 /// The transaction the sender signed, and what it costs on top. There is no id: it is the hash of the transaction.
@@ -70,6 +73,7 @@ impl Entity for Transfer {
             fees: props.fees,
             status: TransferStatus::Pending,
             chained: false,
+            cancellation: None,
         }
         .validate()
     }
@@ -79,6 +83,16 @@ impl Entity for Transfer {
         let sender_is_not_recipient = self.sender != self.recipient;
         let is_pending = self.status == TransferStatus::Pending;
         let not_chained_yet = !self.chained;
+        let is_canceled = self.status == TransferStatus::Canceled;
+        let cancellation_has_the_nonce_of_the_transfer = self
+            .cancellation
+            .as_ref()
+            .is_none_or(|cancellation| cancellation.nonce() == self.nonce);
+        let cancellation_comes_from_the_sender = self
+            .cancellation
+            .as_ref()
+            .is_none_or(|cancellation| cancellation.sender() == &self.sender);
+        let has_no_cancellation = self.cancellation.is_none();
 
         Invariants::new(vec![
             Invariant::new("amount is positive", move || amount_is_positive),
@@ -87,6 +101,15 @@ impl Entity for Transfer {
             }),
             Invariant::new("a pending transfer is not chained", move || {
                 not_chained_yet || !is_pending
+            }),
+            Invariant::new("only a canceled transfer has a cancellation", move || {
+                has_no_cancellation || is_canceled
+            }),
+            Invariant::new("cancellation has the nonce of the transfer", move || {
+                cancellation_has_the_nonce_of_the_transfer
+            }),
+            Invariant::new("cancellation comes from the sender", move || {
+                cancellation_comes_from_the_sender
             }),
         ])
         .enforce()?;
@@ -108,6 +131,16 @@ impl Transfer {
 
     pub fn cancel(self) -> EnforcementResult<Self> {
         self.change_status(TransferStatus::Canceled)
+    }
+
+    /// Canceled in MetaMask: the cancellation goes to the chain instead of this transfer.
+    pub fn replace_by(self, cancellation: SignedTransaction) -> EnforcementResult<Self> {
+        Self {
+            status: TransferStatus::Canceled,
+            cancellation: Some(cancellation),
+            ..self
+        }
+        .validate()
     }
 
     pub fn chain(self) -> EnforcementResult<Self> {

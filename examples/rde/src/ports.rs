@@ -1,4 +1,5 @@
 use crate::application::commands::chain_accepted_transfer::ChainAcceptedTransferCommand;
+use crate::application::commands::chain_cancellation::ChainCancellationCommand;
 use crate::application::commands::chain_failed_transfer::ChainFailedTransferCommand;
 use crate::application::commands::notify_recipient::NotifyRecipientCommand;
 use crate::application::ports::blockchain::Blockchain;
@@ -30,6 +31,7 @@ pub fn command_registry() -> CommandRegistry<Ports> {
         .register::<NotifyRecipientCommand>()
         .register::<ChainAcceptedTransferCommand>()
         .register::<ChainFailedTransferCommand>()
+        .register::<ChainCancellationCommand>()
 }
 
 /// The ports outside the database.

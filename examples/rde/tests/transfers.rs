@@ -5,6 +5,7 @@ use rde::application::commands::accept_transfer::AcceptTransferCommand;
 use rde::application::commands::cancel_transfer::CancelTransferCommand;
 use rde::application::commands::create_transfer::CreateTransferCommand;
 use rde::application::commands::reject_transfer::RejectTransferCommand;
+use rde::application::commands::send_cancellation::SendCancellationCommand;
 use rde::application::queries::pending_transfers::PendingTransfersQuery;
 use rde::application::read_models::pending_transfers::PendingTransfer;
 use rde::domain::entities::transfer::TransferStatus;
@@ -456,5 +457,103 @@ async fn only_the_sender_cancels() {
     assert_eq!(
         ports.transfers.load(&tx_hash).await.unwrap().status,
         TransferStatus::Canceled
+    );
+}
+
+// --- Lane: cancellation in MetaMask ------------------------------------------
+
+#[tokio::test]
+async fn a_cancellation_signed_in_metamask_replaces_the_pending_transfer() {
+    let ports = ports().await;
+    let tx_hash = create_transfer(&ports, &alice(), &bob(), 100).await;
+
+    let cancellation = alice().sign_cancellation(0);
+    let send_cancellation = SendCancellationCommand {
+        cancellation: cancellation.clone(),
+    };
+
+    let fired_policies = run(&ports, send_cancellation).await.unwrap();
+
+    assert_eq!(
+        fired_policies,
+        vec!["whenever a transfer is replaced by a cancellation, chain the cancellation"]
+    );
+    assert_eq!(run_outbox(&ports).await, vec![done("chain_cancellation")]);
+
+    let transfer = ports.transfers.load(&tx_hash).await.unwrap();
+    let cancellation_receipt = ports
+        .blockchain
+        .receipt(cancellation.tx_hash())
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(transfer.status, TransferStatus::Canceled);
+    assert_eq!(transfer.cancellation, Some(cancellation));
+    assert!(cancellation_receipt.succeeded);
+    assert_eq!(cancellation_receipt.gas_used, 0, "a cancellation is free");
+    assert_eq!(
+        ports.blockchain.receipt(&tx_hash).await.unwrap(),
+        None,
+        "the transfer never gets a block"
+    );
+    assert_eq!(
+        ports
+            .blockchain
+            .next_nonce(alice().address())
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        ports
+            .blockchain
+            .available_rdec(alice().address())
+            .await
+            .unwrap(),
+        1000 * WEI_PER_RDEC
+    );
+}
+
+#[tokio::test]
+async fn a_cancellation_needs_a_pending_transfer_with_its_nonce() {
+    let ports = ports().await;
+
+    let without_open_transfer = SendCancellationCommand {
+        cancellation: alice().sign_cancellation(0),
+    };
+
+    assert!(matches!(
+        run(&ports, without_open_transfer).await,
+        Err(Error::Application(cerne::ApplicationError::NotFound(
+            "open transfer"
+        )))
+    ));
+
+    let tx_hash = create_transfer(&ports, &alice(), &bob(), 100).await;
+
+    let with_another_nonce = SendCancellationCommand {
+        cancellation: alice().sign_cancellation(7),
+    };
+
+    assert_eq!(
+        violations(run(&ports, with_another_nonce).await),
+        vec!["cancellation has the nonce of the transfer"]
+    );
+
+    let accept_transfer = AcceptTransferCommand {
+        tx_hash,
+        recipient: bob().address().clone(),
+    };
+
+    run(&ports, accept_transfer).await.unwrap();
+
+    let after_the_recipient_accepted = SendCancellationCommand {
+        cancellation: alice().sign_cancellation(0),
+    };
+
+    assert_eq!(
+        violations(run(&ports, after_the_recipient_accepted).await),
+        vec!["transfer is still pending"]
     );
 }

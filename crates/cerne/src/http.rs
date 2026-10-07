@@ -5,7 +5,7 @@
 //!
 //! | Error | REST | JSON-RPC |
 //! |---|---|---|
-//! | `DomainError` | 422, with the violations | `-32001`, with the violations in `data` |
+//! | `DomainError` | 422, with the violations | `-32001`, with the violations in `message` and in `data` |
 //! | `ApplicationError::NotFound` | 404 | `-32004` |
 //! | `InfrastructureError` | 500, without details | `-32603` (internal error), without details |
 
@@ -35,7 +35,16 @@ impl IntoResponse for Error {
     }
 }
 
-/// JSON-RPC 2.0 over a single `POST`: the method is the snake_case of the command or query (`create_transfer`).
+/// JSON-RPC 2.0 over a single `POST`: the method is the snake_case of the command or query (`accept_transfer`).
+///
+/// The handler reads the raw body with [`Request::from_body`], so a body that is not JSON-RPC 2.0 still gets a
+/// JSON-RPC answer (D36):
+///
+/// | Body | Error |
+/// |---|---|
+/// | not JSON | `-32700` (parse error) |
+/// | JSON without `method`, or `jsonrpc` other than `"2.0"` | `-32600` (invalid request) |
+/// | `params` that is neither an array nor an object, or does not fit the command | `-32602` (invalid params) |
 pub mod jsonrpc {
     use super::*;
     use crate::application::{Command, Query, TransactionalPorts};
@@ -44,11 +53,37 @@ pub mod jsonrpc {
 
     #[derive(Debug, Deserialize)]
     pub struct Request {
+        pub jsonrpc: String,
         pub method: String,
         #[serde(default)]
         pub params: Value,
         #[serde(default)]
         pub id: Value,
+    }
+
+    impl Request {
+        /// Reads the raw body of the `POST`. On error, the answer goes back with `"id": null` (and HTTP 200).
+        pub fn from_body(body: &[u8]) -> Result<Self, ErrorObject> {
+            let json: Value = serde_json::from_slice(body).map_err(ErrorObject::parse_error)?;
+
+            let request: Request =
+                serde_json::from_value(json).map_err(ErrorObject::invalid_request)?;
+
+            let speaks_jsonrpc_2 = request.jsonrpc == "2.0";
+
+            if !speaks_jsonrpc_2 {
+                return Err(ErrorObject {
+                    code: -32600,
+                    message: format!(
+                        "invalid request: jsonrpc must be \"2.0\", not {:?}",
+                        request.jsonrpc
+                    ),
+                    data: None,
+                });
+            }
+
+            Ok(request)
+        }
     }
 
     #[derive(Debug, Serialize)]
@@ -94,8 +129,26 @@ pub mod jsonrpc {
             }
         }
 
+        /// The body is not JSON.
+        pub fn parse_error(error: serde_json::Error) -> Self {
+            Self {
+                code: -32700,
+                message: format!("parse error: {error}"),
+                data: None,
+            }
+        }
+
+        /// The body is JSON, but not a JSON-RPC request: no `method`, or no `jsonrpc`.
+        pub fn invalid_request(error: serde_json::Error) -> Self {
+            Self {
+                code: -32600,
+                message: format!("invalid request: {error}"),
+                data: None,
+            }
+        }
+
         /// The params do not fit what the method reads.
-        pub fn invalid_params(error: serde_json::Error) -> Self {
+        pub fn invalid_params(error: impl std::fmt::Display) -> Self {
             Self {
                 code: -32602,
                 message: format!("invalid params: {error}"),
@@ -109,7 +162,8 @@ pub mod jsonrpc {
             match error {
                 Error::Domain(DomainError::Violations(violations)) => Self {
                     code: -32001,
-                    message: "the domain refused the request".into(),
+                    // A wallet like MetaMask shows only the message: the violations go in it too.
+                    message: format!("the domain refused the request: {}", violations.join(", ")),
                     data: Some(json!({ "violations": violations })),
                 },
                 Error::Application(ApplicationError::NotFound(what)) => Self {
@@ -132,11 +186,15 @@ pub mod jsonrpc {
     /// let methods = Methods::new(&ports);
     ///
     /// let result = match request.method.as_str() {
-    ///     "create_transfer" => methods.command::<CreateTransferCommand>(request.params).await,
+    ///     "accept_transfer" => methods.command::<AcceptTransferCommand>(request.params).await,
     ///     "pending_transfers" => methods.query::<PendingTransfersQuery>(request.params).await,
     ///     method => methods.not_found(method),
     /// };
     /// ```
+    ///
+    /// The `params` come by name (an object) or by position (an array, like MetaMask sends them), as JSON-RPC 2.0
+    /// allows (D36). By position, the array follows the order of the fields of the command: that order is part of
+    /// the API, and swapping two fields of the same type breaks the clients without a compilation error.
     pub struct Methods<'p, Ports> {
         ports: &'p Ports,
     }
@@ -157,7 +215,7 @@ pub mod jsonrpc {
             C: Command<Ports> + DeserializeOwned + 'static,
             C::Output: Serialize,
         {
-            let command: C = serde_json::from_value(params).map_err(ErrorObject::invalid_params)?;
+            let command: C = read_params(params)?;
 
             let output = self.ports.execute_in_transaction(command).await?;
 
@@ -170,12 +228,26 @@ pub mod jsonrpc {
             Q: Query<Ports> + DeserializeOwned,
             Q::ReadModel: Serialize,
         {
-            let query: Q = serde_json::from_value(params).map_err(ErrorObject::invalid_params)?;
+            let query: Q = read_params(params)?;
 
             let read_model = query.execute(self.ports).await?;
 
             serde_json::to_value(read_model).map_err(|error| infrastructure(error).into())
         }
+    }
+
+    /// By name (an object), by position (an array, in the order of the fields) or absent; anything else is `-32602`.
+    fn read_params<T: DeserializeOwned>(params: Value) -> Result<T, ErrorObject> {
+        let params_are_by_name_or_by_position =
+            matches!(params, Value::Object(_) | Value::Array(_) | Value::Null);
+
+        if !params_are_by_name_or_by_position {
+            return Err(ErrorObject::invalid_params(
+                "params must be an array (by position) or an object (by name)",
+            ));
+        }
+
+        serde_json::from_value(params).map_err(ErrorObject::invalid_params)
     }
 
     fn infrastructure(error: serde_json::Error) -> Error {

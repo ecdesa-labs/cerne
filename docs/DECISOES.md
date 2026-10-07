@@ -11,7 +11,7 @@ Legenda de impacto:
 
 ## Resumo
 
-Todas as decisões, uma linha cada. O texto completo das decisões tomadas (a pergunta, as opções e a discussão) saiu deste arquivo e está no histórico do git: `git show 67cf4c7:docs/DECISOES.md` (D1–D35) e `git show d291f8b:docs/DECISOES.md` (D36). O que foi decidido na D37 está na Fase 5 do [ROADMAP](./ROADMAP.md), e o da D38, na Fase 3.5. Abaixo da tabela, só o texto das decisões em aberto.
+Todas as decisões, uma linha cada. O texto completo das decisões tomadas (a pergunta, as opções e a discussão) saiu deste arquivo e está no histórico do git: `git show 67cf4c7:docs/DECISOES.md` (D1–D35) e `git show d291f8b:docs/DECISOES.md` (D36). O que foi decidido na D37 está na Fase 5 do [ROADMAP](./ROADMAP.md), e o da D38, da D39 e da D40, na Fase 3.5. Abaixo da tabela, só o texto das decisões em aberto.
 
 | # | Decisão | Impacto | Status | Decidido |
 |---|---|---|---|---|
@@ -53,6 +53,8 @@ Todas as decisões, uma linha cada. O texto completo das decisões tomadas (a pe
 | D36 | O formato da chamada JSON-RPC | 🔴 | ✅ | `params` por posição (array) e por nome (objeto); `"jsonrpc": "2.0"` conferido (`-32600`); JSON malformado volta `-32700`. Base: a captura da MetaMask ([METAMASK.md](./METAMASK.md)) |
 | D37 | O domínio em outras linguagens (TypeScript, Elixir) | 🟡 | ✅ | Vai tudo, menos o que recebe `Ports`; tipos nativos de cada alvo; crate gerada à parte; TypeScript via WebAssembly primeiro, Elixir via Rustler depois |
 | D38 | A rde é chamada pela MetaMask | 🔴 | ✅ | `eth_sendRawTransaction` é o `CreateTransferCommand`; valores em wei (`u128`); gas da transação + 1% de descarbonização; um envio em aberto por remetente; rejeitada ou cancelada entra na chain como falha, sem cobrar nada; blocos e recibos no port `Blockchain` |
+| D39 | Como a Fase 3.5 foi feita | 🟢 | ✅ | `Request::from_body` na lib; o `-32001` põe as violações no `message`; `cerne g http rest\|jsonrpc` reescreve o `main.rs` só se ele ainda é o do `cerne new`, e em JSON-RPC dá método aos commands de ator e às queries que já existem; o e2e roda o Postgres num banco próprio, criado no `DATABASE_URL`; no SQLite, a transação abre com `BEGIN IMMEDIATE` |
+| D40 | O "Cancelar" da MetaMask na rde | 🟡 | ✅ | Valor 0 para a própria conta é cancelamento (`SendCancellationCommand`); "pendente" vale como "em nenhuma proposta de bloco"; o cancelamento entra na chain com o hash novo, `status: "0x1"`, sem taxa, e a transferência fica sem recibo; transação repetida volta com o mesmo hash; "Acelerar" de transferência recusado; chain em SQLite próprio (`rde-chain.db`), apagado com o `rde.db` a cada subida |
 
 ---
 

@@ -27,6 +27,100 @@ async fn the_generated_repository_inserts_loads_and_updates() {
 }
 "#;
 
+/// What the e2e test writes into the Postgres project: the generated repository, on a database of its own created in
+/// the Postgres of `DATABASE_URL` (the CI starts one).
+const POSTGRES_REPOSITORY_TEST: &str = r#"
+use cerne::application::TransactionalPorts;
+use cerne::domain::Entity;
+use cerne::postgres::PostgresDatabase;
+use vitrine::domain::entities::product::{Product, ProductKind, ProductProps};
+use vitrine::ports::Ports;
+
+#[tokio::test]
+async fn the_generated_repository_inserts_loads_and_updates_on_postgres() {
+    let database_url = std::env::var("DATABASE_URL").unwrap();
+    let server = PostgresDatabase::connect(&database_url, 1).await.unwrap();
+    let database_name = format!("cerne_e2e_{}", std::process::id());
+
+    server.execute(sqlx::query(&format!("DROP DATABASE IF EXISTS {database_name}"))).await.unwrap();
+    server.execute(sqlx::query(&format!("CREATE DATABASE {database_name}"))).await.unwrap();
+
+    let (server_url, _) = database_url.rsplit_once('/').unwrap();
+    let database = PostgresDatabase::connect(&format!("{server_url}/{database_name}"), 2).await.unwrap();
+    database.migrate(&sqlx::migrate!()).await.unwrap();
+    let ports = Ports::new(database);
+
+    let product = Product::new(ProductProps {
+        name: "Mug".into(),
+        price: 30,
+        kind: ProductKind::Physical,
+        weight: 0.4,
+        available: true,
+    })
+    .unwrap();
+
+    let transaction = ports.begin().await.unwrap();
+    let product_id = transaction.products.save(product).await.unwrap();
+    transaction.commit().await.unwrap();
+
+    let product = ports.products.load(&product_id).await.unwrap();
+    ports.products.save(Product { price: 35, kind: ProductKind::Digital, available: false, ..product }).await.unwrap();
+
+    let product = ports.products.load(&product_id).await.unwrap();
+
+    assert_eq!((product.name.as_str(), product.price, product.weight), ("Mug", 35, 0.4));
+    assert!(matches!(product.kind, ProductKind::Digital));
+    assert!(!product.available);
+
+    drop(ports);
+    server.execute(sqlx::query(&format!("DROP DATABASE {database_name} WITH (FORCE)"))).await.unwrap();
+}
+"#;
+
+/// What the e2e test writes into the REST project: a `POST` and a `GET` straight to the generated router.
+const REST_TEST: &str = r##"
+use axum::body::Body;
+use axum::http::Request;
+use caixa::infrastructure::http::router;
+use caixa::ports::Ports;
+use cerne::sqlite::SqliteDatabase;
+use std::sync::Arc;
+use tower::ServiceExt;
+
+async fn send(request: Request<Body>) -> (u16, String) {
+    let database = SqliteDatabase::in_memory().await.unwrap();
+    database.migrate(&sqlx::migrate!()).await.unwrap();
+    let router = router(Arc::new(Ports::new(database)));
+
+    let response = router.oneshot(request).await.unwrap();
+    let status = response.status().as_u16();
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+
+    (status, String::from_utf8(bytes.to_vec()).unwrap())
+}
+
+fn post(path: &str, body: &str) -> Request<Body> {
+    Request::post(path)
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
+#[tokio::test]
+async fn the_generated_post_executes_the_command() {
+    assert_eq!(send(post("/sales", r#"{"total": 30}"#)).await, (200, "null".into()));
+    assert_eq!(send(post("/sales", "{}")).await.0, 422, "the body is not a RegisterSaleCommand");
+}
+
+#[tokio::test]
+async fn the_generated_get_executes_the_query() {
+    let get = |uri: &str| Request::get(uri).body(Body::empty()).unwrap();
+
+    assert_eq!(send(get("/till?total=30")).await, (200, r#"{"total":30}"#.into()));
+    assert_eq!(send(get("/till?total=abc")).await.0, 400, "the query string is not a TillQuery");
+}
+"##;
+
 fn cerne(args: &[&str], dir: &Path) -> bool {
     Command::new(env!("CARGO_BIN_EXE_cerne"))
         .args(args)
@@ -55,6 +149,11 @@ fn generated_project_passes_clippy_without_touching_anything() {
     );
 
     let project = tmp.join("loja");
+
+    assert!(
+        !cerne(&["g", "http", "rest"], &project),
+        "the project already speaks jsonrpc"
+    );
 
     // --- cerne g -------------------------------------------------------------
 
@@ -197,7 +296,7 @@ fn generated_project_passes_clippy_without_touching_anything() {
         &["clippy", "--all-targets", "--", "-D", "warnings"],
     ) && cargo(&project, &workspace, &["test"]);
 
-    // --- Postgres and REST: cargo clippy -------------------------------------
+    // --- Postgres and REST: cargo clippy, and cargo test with DATABASE_URL ---
 
     assert!(cerne(
         &["new", "vitrine", "--db", "postgres", "--http", "rest"],
@@ -214,6 +313,9 @@ fn generated_project_passes_clippy_without_touching_anything() {
             "Product",
             "name:String",
             "price:u64",
+            "kind:Physical,Digital",
+            "weight:f64",
+            "available:bool",
             "--aggregate"
         ],
         &vitrine
@@ -240,11 +342,18 @@ fn generated_project_passes_clippy_without_touching_anything() {
         &vitrine
     ));
 
+    fs::write(
+        vitrine.join("tests/repository.rs"),
+        POSTGRES_REPOSITORY_TEST,
+    )
+    .unwrap();
+
     let postgres_and_rest_passed = cargo(
         &vitrine,
         &workspace,
         &["clippy", "--all-targets", "--", "-D", "warnings"],
-    );
+    ) && (env::var("DATABASE_URL").is_err()
+        || cargo(&vitrine, &workspace, &["test"]));
 
     // --- SQLite file, no HTTP: cargo run runs the generated migrations ------
 
@@ -256,6 +365,12 @@ fn generated_project_passes_clippy_without_touching_anything() {
         &["g", "entity", "Sale", "total:u64", "--aggregate"],
         &caixa
     ));
+    assert!(cerne(
+        &["g", "command", "RegisterSale", "total:u64"],
+        &caixa
+    ));
+    assert!(cerne(&["g", "read_model", "Till", "total:u64"], &caixa));
+    assert!(cerne(&["g", "query", "Till", "total:u64"], &caixa));
 
     let sqlite_passed = cargo(
         &caixa,
@@ -263,11 +378,90 @@ fn generated_project_passes_clippy_without_touching_anything() {
         &["clippy", "--all-targets", "--", "-D", "warnings"],
     ) && cargo(&caixa, &workspace, &["run"]);
 
+    // --- cerne g http rest: the same project, now with REST -----------------
+
+    assert!(!cerne(&["g", "http", "soap"], &caixa));
+    assert!(cerne(&["g", "http", "rest"], &caixa));
+    assert!(
+        !cerne(&["g", "http", "rest"], &caixa),
+        "the project already speaks rest"
+    );
+    assert!(cerne(
+        &["g", "endpoint", "RegisterSale", "POST", "/sales"],
+        &caixa
+    ));
+    assert!(cerne(&["g", "endpoint", "Till", "GET", "/till"], &caixa));
+
+    let caixa_cargo_toml = fs::read_to_string(caixa.join("Cargo.toml")).unwrap();
+
+    assert!(caixa_cargo_toml.contains(r#"http = "rest""#));
+    assert!(caixa_cargo_toml.contains(r#"features = ["axum"]"#));
+    assert!(
+        fs::read_to_string(caixa.join("src/main.rs"))
+            .unwrap()
+            .contains("axum::serve(listener, router(ports))")
+    );
+
+    // The query is the one part the actor's developer writes: here, it echoes the query string.
+    let till_query = caixa.join("src/application/queries/till.rs");
+    let till_query_written = fs::read_to_string(&till_query).unwrap().replace(
+        r#"todo!("read the ports and build the Till read model")"#,
+        "Ok(Till { total: self.total })",
+    );
+
+    fs::write(&till_query, till_query_written).unwrap();
+    fs::write(caixa.join("tests/rest.rs"), REST_TEST).unwrap();
+    fs::write(
+        caixa.join("Cargo.toml"),
+        caixa_cargo_toml
+            + "\n[dev-dependencies]\ntower = { version = \"0.5\", features = [\"util\"] }\n",
+    )
+    .unwrap();
+
+    let rest_passed = cargo(
+        &caixa,
+        &workspace,
+        &["clippy", "--all-targets", "--", "-D", "warnings"],
+    ) && cargo(&caixa, &workspace, &["test"]);
+
+    // --- cerne g http jsonrpc: the commands and queries already there get their method
+
+    assert!(cerne(&["new", "balcao"], &tmp));
+
+    let balcao = tmp.join("balcao");
+
+    assert!(cerne(&["g", "command", "OpenTab", "table:u32"], &balcao));
+    assert!(cerne(
+        &["g", "command", "PrintBill", "table:u32", "--policy"],
+        &balcao
+    ));
+    assert!(cerne(&["g", "read_model", "Tab", "total:u64"], &balcao));
+    assert!(cerne(&["g", "query", "Tab", "table:u32"], &balcao));
+    assert!(cerne(&["g", "http", "jsonrpc"], &balcao));
+
+    let balcao_rpc = fs::read_to_string(balcao.join("src/infrastructure/http/rpc.rs")).unwrap();
+
+    assert!(
+        balcao_rpc
+            .contains(r#""open_tab" => methods.command::<OpenTabCommand>(request.params).await,"#)
+    );
+    assert!(balcao_rpc.contains(r#""tab" => methods.query::<TabQuery>(request.params).await,"#));
+    assert!(
+        !balcao_rpc.contains("print_bill"),
+        "a policy command has no actor to call it"
+    );
+    assert!(
+        fs::read_to_string(balcao.join("src/infrastructure/mod.rs"))
+            .unwrap()
+            .starts_with("pub mod http;")
+    );
+
     fs::remove_dir_all(&tmp).unwrap();
 
     assert!(memory_and_jsonrpc_passed);
     assert!(postgres_and_rest_passed);
     assert!(sqlite_passed);
+    assert!(rest_passed);
 }
 
 /// Runs cargo in a generated project, with the repository's own crate standing in for the Git dependency.

@@ -17,6 +17,7 @@ macro_rules! sql_adapters {
         pool: $pool:ty,
         pool_options: $pool_options:ty,
         row: $row:ty,
+        begin: $begin:literal,
         lock_next_pending: $lock_next_pending:literal,
     ) => {
         use crate::errors::Error;
@@ -73,7 +74,7 @@ macro_rules! sql_adapters {
                     return Err(infrastructure(anyhow::anyhow!("a transaction is already open")));
                 };
 
-                let transaction = pool.begin().await.map_err(infrastructure)?;
+                let transaction = pool.begin_with($begin).await.map_err(infrastructure)?;
 
                 Ok(Self(Connection::Transaction(Arc::new(Mutex::new(Some(transaction))))))
             }

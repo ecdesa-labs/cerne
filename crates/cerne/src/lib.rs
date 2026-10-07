@@ -79,6 +79,9 @@ pub mod sqlite {
         pool: sqlx::SqlitePool,
         pool_options: sqlx::sqlite::SqlitePoolOptions,
         row: sqlx::sqlite::SqliteRow,
+        // Takes the write lock at the start: a transaction that reads and then writes waits for the other writers,
+        // instead of failing with "database is locked" when one of them commits in between.
+        begin: "BEGIN IMMEDIATE",
         lock_next_pending: "",
     }
 
@@ -111,6 +114,7 @@ pub mod postgres {
         pool: sqlx::PgPool,
         pool_options: sqlx::postgres::PgPoolOptions,
         row: sqlx::postgres::PgRow,
+        begin: "BEGIN",
         lock_next_pending: " FOR UPDATE SKIP LOCKED",
     }
 }
