@@ -352,8 +352,11 @@ fn generated_project_passes_clippy_without_touching_anything() {
         &vitrine,
         &workspace,
         &["clippy", "--all-targets", "--", "-D", "warnings"],
-    ) && (env::var("DATABASE_URL").is_err()
-        || cargo(&vitrine, &workspace, &["test"]));
+    ) && match env::var("DATABASE_URL") {
+        // Without a Postgres (the CI job postgres starts one), the repository only goes through clippy.
+        Err(_) => true,
+        Ok(database_url) => cargo_on_postgres(&vitrine, &workspace, &["test"], &database_url),
+    };
 
     // --- SQLite file, no HTTP: cargo run runs the generated migrations ------
 
@@ -464,8 +467,26 @@ fn generated_project_passes_clippy_without_touching_anything() {
     assert!(rest_passed);
 }
 
-/// Runs cargo in a generated project, with the repository's own crate standing in for the Git dependency.
+/// Runs cargo in a generated project, with the repository's own crate standing in for the Git dependency. Without
+/// `DATABASE_URL`: a SQLite project would read the Postgres of the CI job as its database.
 fn cargo(project: &Path, workspace: &Path, args: &[&str]) -> bool {
+    cargo_command(project, workspace, args)
+        .env_remove("DATABASE_URL")
+        .status()
+        .unwrap()
+        .success()
+}
+
+/// The same, with `DATABASE_URL` pointing at a Postgres.
+fn cargo_on_postgres(project: &Path, workspace: &Path, args: &[&str], database_url: &str) -> bool {
+    cargo_command(project, workspace, args)
+        .env("DATABASE_URL", database_url)
+        .status()
+        .unwrap()
+        .success()
+}
+
+fn cargo_command(project: &Path, workspace: &Path, args: &[&str]) -> Command {
     let manifest = project.join("Cargo.toml");
     let cerne_path = workspace.join("crates/cerne");
     let cargo_toml = fs::read_to_string(&manifest).unwrap().replace(
@@ -476,11 +497,12 @@ fn cargo(project: &Path, workspace: &Path, args: &[&str]) -> bool {
     fs::write(&manifest, cargo_toml).unwrap();
     fs::copy(workspace.join("Cargo.lock"), project.join("Cargo.lock")).unwrap();
 
-    Command::new(env::var("CARGO").unwrap_or("cargo".into()))
+    let mut command = Command::new(env::var("CARGO").unwrap_or("cargo".into()));
+
+    command
         .args(args)
         .current_dir(project)
-        .env("CARGO_TARGET_DIR", workspace.join("target/e2e"))
-        .status()
-        .unwrap()
-        .success()
+        .env("CARGO_TARGET_DIR", workspace.join("target/e2e"));
+
+    command
 }
