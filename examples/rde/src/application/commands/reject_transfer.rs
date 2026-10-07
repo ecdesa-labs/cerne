@@ -1,5 +1,6 @@
 use crate::domain::entities::transfer::TransferStatus;
 use crate::domain::events::transfer_rejected_by_recipient::TransferRejectedByRecipient;
+use crate::domain::value_objects::tx_hash::TxHash;
 use crate::ports::Ports;
 use cerne::application::{Command, Executed};
 use cerne::domain::{BusinessRule, BusinessRules};
@@ -7,7 +8,7 @@ use cerne::{Error, async_trait};
 
 /// Actor: the recipient.
 pub struct RejectTransferCommand {
-    pub tx_hash: String,
+    pub tx_hash: TxHash,
     pub recipient: String,
 }
 

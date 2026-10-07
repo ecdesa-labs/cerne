@@ -1,10 +1,11 @@
 use crate::application::commands::notify_recipient::NotifyRecipientCommand;
 use crate::domain::services::fees::Fees;
+use crate::domain::value_objects::tx_hash::TxHash;
 use crate::ports::Ports;
 use cerne::domain::{DomainEvent, EnforcementResult, FiredPolicy, Policies, Policy};
 
 pub struct TransferCreated {
-    pub tx_hash: String,
+    pub tx_hash: TxHash,
     pub sender: String,
     pub recipient: String,
     pub amount: u64,

@@ -1,6 +1,7 @@
 use crate::domain::entities::transfer::{Transfer, TransferProps};
 use crate::domain::events::transfer_created::TransferCreated;
 use crate::domain::services::fees::estimate_fees;
+use crate::domain::value_objects::tx_hash::TxHash;
 use crate::ports::Ports;
 use cerne::application::{Command, Executed};
 use cerne::domain::{BusinessRule, BusinessRules, Entity};
@@ -15,9 +16,9 @@ pub struct CreateTransferCommand {
 
 #[async_trait]
 impl Command<Ports> for CreateTransferCommand {
-    type Output = String; // the tx_hash of the new transfer
+    type Output = TxHash; // the id of the new transfer
 
-    async fn execute(&self, ports: &Ports) -> Result<Executed<String, Ports>, Error> {
+    async fn execute(&self, ports: &Ports) -> Result<Executed<TxHash, Ports>, Error> {
         // --- Domain service --------------------------------------------------
 
         let fees = estimate_fees(self.amount);
@@ -51,9 +52,7 @@ impl Command<Ports> for CreateTransferCommand {
             nonce,
         })?;
 
-        let tx_hash = transfer.tx_hash.clone();
-
-        ports.transfers.save(transfer).await?;
+        let tx_hash = ports.transfers.save(transfer).await?;
 
         // --- Domain events ---------------------------------------------------
 

@@ -1,8 +1,9 @@
+use crate::domain::value_objects::tx_hash::TxHash;
 use crate::ports::Ports;
 use cerne::domain::{DomainEvent, EnforcementResult, FiredPolicy};
 
 pub struct RecipientNotified {
-    pub tx_hash: String,
+    pub tx_hash: TxHash,
     pub recipient: String,
 }
 

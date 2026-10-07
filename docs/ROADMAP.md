@@ -13,11 +13,12 @@ O que já existe no código, comparado com os elementos do Event Storming:
 | Post-it | Conceito | Status | Onde |
 |---|---|---|---|
 | 🟦 Azul | Command | ✅ Pronto (trait `Command<Ports>`, async, `Executed { output, events }`) | `crates/cerne/src/commands.rs` |
-| 🟨 Amarelo | Aggregate / Entity | ✅ Pronto (traits `Entity` com `id` e `Aggregate`) | `crates/cerne/src/entities.rs` |
+| 🟨 Amarelo | Aggregate / Entity | ✅ Pronto (traits `Entity` com `id` opcional até o primeiro `save` e `Aggregate`) | `crates/cerne/src/entities.rs` |
+| — | Value Object | ✅ Pronto (trait `ValueObject`, também o tipo do id de toda entidade) | `crates/cerne/src/value_objects.rs` |
 | 🟧 Laranja | Domain Event | ✅ Pronto (trait `DomainEvent<Ports>`) | `crates/cerne/src/domain_events.rs` |
 | 🟪 Lilás | Policy | ✅ Pronto (`Policy` + `Policies`, o `then` retorna o command) | `crates/cerne/src/policies.rs` |
 | — | Policy Processor | ✅ Pronto (trait `PolicyProcessor`; `InlinePolicyProcessor` padrão e `TokioPolicyProcessor`) | `crates/cerne/src/policy_processors.rs` |
-| 🩷 Rosa | External System (Ports) | ✅ `Repository<A>` + composition root `Ports`; outros ports na Fase 3 | `crates/cerne/src/repositories.rs` |
+| 🩷 Rosa | External System (Ports) | ✅ `Repository<A>` (o `save` devolve o id) + composition root `Ports`; outros ports na Fase 3 | `crates/cerne/src/repositories.rs` |
 | — | Invariants | ✅ Pronto | `crates/cerne/src/invariants.rs` |
 | — | Business Rules | ✅ Pronto | `crates/cerne/src/business_rules.rs` |
 | — | Erros | ✅ Pronto (`Error` → `DomainError` / `ApplicationError` / `InfrastructureError`) | `crates/cerne/src/errors.rs` |
@@ -68,14 +69,33 @@ O que já existe no código, comparado com os elementos do Event Storming:
 
 ---
 
+## Fase 1.5 — Value Objects e identidade ✅
+
+**Meta:** o id de toda entidade é um value object, e o repositório decide o id no `save`, como no Rails. Os generators da Fase 2 dependem disso.
+
+- [x] Trait `ValueObject` (só `new`, imutável), no molde das demais: struct própria + trait da lib, com invariantes (**D27** ✅).
+- [x] `Entity::Id: ValueObject`; `Entity::id()` devolve `Option<&Id>` (`None` até o primeiro `save`) e `Entity::with_id` recebe o id decidido pelo repositório (**D28** ✅).
+- [x] `Repository::save` devolve `A::Id`: insere quando o id é `None`, atualiza quando é `Some` (**D28** ✅). Resolve o ponto em aberto da D23.
+- [x] `examples/rde`: o id da `Transfer` virou o value object `TxHash` (em `domain/value_objects/`), e o `CreateTransferCommand` pega o `tx_hash` do `save`.
+- [x] README: seção do value object `TxHash`, com a comparação Entity × Value Object, e o `save` que devolve o id.
+- [x] Decisões do CLI tomadas antes da Fase 2 registradas na **D29**.
+
+**Decisões novas:** D27, D28 e D29.
+
+**Pronto quando:** a lib e a rde compilam com ids como value objects, e o `save` devolve o id.
+
+---
+
 ## Fase 2 — CLI e generators
 
 **Meta:** `cerne new loja` cria um projeto que compila, e `cerne g ...` adiciona blocos que compilam na hora.
 
 - [ ] Crate `crates/cerne-cli` com o binário `cerne`.
+- [ ] O `Cargo.toml` gerado depende do `cerne` pelo Git do GitHub até a publicação (Fase 4) (**D29** ✅).
 - [ ] `cerne new <nome>`: o boilerplate **por camada** (**D11** ✅) com `domain/`, `application/`, `infrastructure/` e `ports.rs`.
 - [ ] Engine de template (ex.: `minijinja`) com parser de campos `nome:tipo` (**D13** ✅).
-- [ ] `cerne g entity Order qty:i32 id:u64`
+- [ ] `cerne g entity Order qty:i32 id:u64`: o id vira o value object `OrderId` em `domain/value_objects/`; sem `id:<tipo>`, o generator usa `u64`. Com `--aggregate`, gera também o `impl Aggregate` (**D29** ✅).
+- [ ] `cerne g value_object Amount value:u64`
 - [ ] `cerne g event OrderPlaced order_id:u64`
 - [ ] O `cerne new` gera `lib.rs` (domínio, aplicação, infraestrutura e ports, tudo `pub`) + `main.rs` + `tests/`, como os exemplos. Assim, um evento que nenhuma policy lê não gera aviso de `dead_code` (D24).
 - [ ] `cerne g command PlaceOrder order_id:u64 qty:i32`
@@ -93,7 +113,7 @@ O que já existe no código, comparado com os elementos do Event Storming:
 - [ ] Trait `Query<Ports>` retornando um `ReadModel`, o post-it verde (**D14** ✅).
 - [ ] `cerne g query <Nome>` e `cerne g read_model <Nome> campo:tipo`.
 - [ ] Outbox Pattern, para que um command disparado por policy não se perca se o processo cair (**D17**).
-- [ ] Adapter em memória para `Repository` (para testes e protótipos).
+- [ ] Adapter em memória para `Repository` (para testes e protótipos), que decide o id no `save` (D28). O da rde só guarda agregados que já têm id.
 - [ ] Adapter de banco `sqlx` + Postgres, como feature opcional (**D15** ✅).
 - [ ] Integração HTTP: generator de endpoint que recebe JSON e dispara um Command (**D15**).
 - [ ] `cerne g port <Nome>` e `cerne g adapter <Nome>`.
@@ -105,6 +125,7 @@ O que já existe no código, comparado com os elementos do Event Storming:
 ## Fase 4 — Publicação
 
 - [ ] Publicar (nomes livres, D1 ✅) `cerne` e `cerne-cli` (0.1.0).
+- [ ] Trocar a dependência Git do `cerne new` pela versão publicada (D29).
 - [x] Guia "do Event Storming ao código": o README é um tutorial que percorre o `main.rs` do `examples/rde` (D26).
 - [ ] Política de versionamento: enquanto estiver em 0.x, mudanças que quebram compatibilidade são permitidas e registradas no CHANGELOG.
 - [ ] Definir a MSRV (versão mínima do Rust suportada).
@@ -114,4 +135,4 @@ O que já existe no código, comparado com os elementos do Event Storming:
 
 ## Decisões pendentes
 
-Nenhuma: as 26 decisões estão tomadas. Em aberto dentro da D23: como fica o id gerado pelo repositório. Ver o resumo em [DECISOES.md](./DECISOES.md).
+Nenhuma: as 29 decisões estão tomadas. O ponto em aberto da D23 (id gerado pelo repositório) foi resolvido na D28. Ver o resumo em [DECISOES.md](./DECISOES.md).

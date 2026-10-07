@@ -7,6 +7,7 @@
 //! |---|---|---|
 //! | 🟦 | Command | [`application::Command`], que devolve [`application::Executed`] |
 //! | 🟨 | Aggregate / Entity | [`domain::Entity`] e [`domain::Aggregate`] |
+//! | — | Value Object | [`domain::ValueObject`], que também é o tipo do id de toda entidade |
 //! | 🟧 | Domain Event | [`domain::DomainEvent`] |
 //! | 🟪 | Policy | [`domain::Policy`] + [`domain::Policies`], executadas por um [`application::PolicyProcessor`] |
 //! | 🩷 | External System (Port) | [`application::Repository`] e os ports da aplicação |
@@ -28,11 +29,12 @@ mod invariants;
 mod policies;
 mod policy_processors;
 mod repositories;
+mod value_objects;
 
 pub use async_trait::async_trait;
 pub use errors::{ApplicationError, DomainError, Error, InfrastructureError};
 
-/// Pure and synchronous: entities, events, invariants, business rules and policies. No IO happens here.
+/// Pure and synchronous: entities, value objects, events, invariants, business rules and policies. No IO happens here.
 pub mod domain {
     use super::*;
 
@@ -42,6 +44,7 @@ pub mod domain {
     pub use errors::{DomainError, EnforcementResult};
     pub use invariants::*;
     pub use policies::*;
+    pub use value_objects::*;
 }
 
 /// Asynchronous: commands, the ports they use and the processor that runs the commands policies return.

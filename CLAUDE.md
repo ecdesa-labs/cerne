@@ -5,14 +5,14 @@ Framework Rust, no espírito do Rails, em que cada post-it do Event Storming vir
 ## Onde está o contexto
 
 - `docs/ROADMAP.md`: fases, o que está feito ([x]) e o que falta. **Cada fase é feita num chat próprio.**
-- `docs/DECISOES.md`: decisões D1–D26, todas tomadas. São a fonte da verdade: siga-as e não reabra uma decisão sem perguntar.
+- `docs/DECISOES.md`: decisões D1–D29, todas tomadas. São a fonte da verdade: siga-as e não reabra uma decisão sem perguntar.
 - `README.md`: não é incluído na documentação da crate (o `lib.rs` tem a própria, com a tabela post-it → código). É um tutorial que percorre o `main.rs` do `examples/rde` (D26). Cada bloco marcado com `<!-- snippet: <arquivo> -->` é uma cópia literal do arquivo, e o `examples/rde/tests/readme.rs` falha se a cópia ficar desatualizada. Ao mudar um trecho da rde que aparece no README, atualize o bloco também.
 
 ## Estilo de código (o mais importante)
 
 - **Simples e explícito:** quem bate o olho sabe em que parte do Event Storming está. Na dúvida, a versão com menos conceitos vence.
 - **Coleção nomeada:** `Invariant`/`Invariants`, `BusinessRule`/`BusinessRules` e `Policy`/`Policies` seguem o mesmo molde. Cada item tem `name: &'static str` + closure, e a coleção tem um método que roda tudo e devolve nomes. Exceção: `Policies::trigger` devolve `FiredPolicy` (nome + command), ver D20.
-- **Conceito do usuário = struct própria + trait da lib:** `Entity`, `Aggregate`, `DomainEvent<Ports>`, `Command<Ports>` e, na Fase 3, `Query<Ports>`. Nada de struct genérica com `name` + `payload`.
+- **Conceito do usuário = struct própria + trait da lib:** `ValueObject`, `Entity`, `Aggregate`, `DomainEvent<Ports>`, `Command<Ports>` e, na Fase 3, `Query<Ports>`. Nada de struct genérica com `name` + `payload`.
 - **Variáveis com nome descritivo:** o `impl` lê de cima para baixo, e cada nome diz o que significa no domínio.
   - A condição é calculada antes da closure, numa variável que se lê como frase: `let sender_is_not_recipient = self.sender != self.recipient;` e depois `Invariant::new("...", move || sender_is_not_recipient)`. Nada de `let qty = self.qty;` com a comparação escondida na closure.
   - Cada evento ganha uma variável antes do retorno: `let transfer_created = TransferCreated { .. };` e depois `Ok(vec![Box::new(transfer_created)])`.

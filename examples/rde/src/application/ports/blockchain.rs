@@ -1,4 +1,5 @@
 use crate::domain::services::fees::Fees;
+use crate::domain::value_objects::tx_hash::TxHash;
 use cerne::{Error, async_trait};
 
 /// External system "Blockchain": holds the RDEC balances and records the transactions.
@@ -17,5 +18,5 @@ pub trait Blockchain: Send + Sync {
         amount: u64,
         fees: Fees,
         nonce: u64,
-    ) -> Result<String, Error>;
+    ) -> Result<TxHash, Error>;
 }

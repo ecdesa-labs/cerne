@@ -5,6 +5,7 @@ use rde::application::commands::cancel_transfer::CancelTransferCommand;
 use rde::application::commands::create_transfer::CreateTransferCommand;
 use rde::application::commands::reject_transfer::RejectTransferCommand;
 use rde::domain::entities::transfer::TransferStatus;
+use rde::domain::value_objects::tx_hash::TxHash;
 use rde::infrastructure::in_memory_blockchain::InMemoryBlockchain;
 use rde::infrastructure::in_memory_kyc_registry::InMemoryKycRegistry;
 use rde::infrastructure::in_memory_notifier::{InMemoryNotifier, Notification};
@@ -46,7 +47,7 @@ async fn run<Output>(
 }
 
 /// Creates a transfer and returns its tx_hash.
-async fn create_transfer(ports: &Arc<Ports>, sender: &str, recipient: &str, amount: u64) -> String {
+async fn create_transfer(ports: &Arc<Ports>, sender: &str, recipient: &str, amount: u64) -> TxHash {
     let create_transfer = CreateTransferCommand {
         sender: sender.into(),
         recipient: recipient.into(),
@@ -66,9 +67,9 @@ fn create(sender: &str, recipient: &str, amount: u64) -> CreateTransferCommand {
     }
 }
 
-fn accept(tx_hash: &str, recipient: &str) -> AcceptTransferCommand {
+fn accept(tx_hash: &TxHash, recipient: &str) -> AcceptTransferCommand {
     AcceptTransferCommand {
-        tx_hash: tx_hash.into(),
+        tx_hash: tx_hash.clone(),
         recipient: recipient.into(),
     }
 }

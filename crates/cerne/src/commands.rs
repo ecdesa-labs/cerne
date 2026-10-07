@@ -9,24 +9,41 @@ use async_trait::async_trait;
 ///
 /// ```
 /// use cerne::application::{Command, Executed, Repository};
-/// use cerne::domain::{Aggregate, BusinessRule, BusinessRules, DomainEvent, EnforcementResult, Entity, FiredPolicy};
+/// use cerne::domain::{
+///     Aggregate, BusinessRule, BusinessRules, DomainEvent, EnforcementResult, Entity, FiredPolicy, ValueObject,
+/// };
 /// use cerne::{Error, async_trait};
+///
+/// #[derive(Clone, PartialEq)]
+/// struct ProductId(u64);
+///
+/// impl ValueObject for ProductId {
+///     type Props = u64;
+///
+///     fn new(value: u64) -> EnforcementResult<Self> {
+///         Ok(Self(value))
+///     }
+/// }
 ///
 /// #[derive(Clone)]
 /// struct Stock {
-///     product_id: u64,
+///     product_id: ProductId,
 ///     available: i32,
 /// }
 ///
 /// impl Entity for Stock {
-///     type Id = u64;
-///     type Props = (u64, i32);
+///     type Id = ProductId;
+///     type Props = (ProductId, i32);
 ///
-///     fn id(&self) -> &u64 {
-///         &self.product_id
+///     fn id(&self) -> Option<&ProductId> {
+///         Some(&self.product_id) // the stock of a product is known by the product: it always has an id
 ///     }
 ///
-///     fn new((product_id, available): (u64, i32)) -> EnforcementResult<Self> {
+///     fn with_id(self, product_id: ProductId) -> Self {
+///         Self { product_id, ..self }
+///     }
+///
+///     fn new((product_id, available): (ProductId, i32)) -> EnforcementResult<Self> {
 ///         Self { product_id, available }.validate()
 ///     }
 ///
@@ -38,7 +55,7 @@ use async_trait::async_trait;
 /// impl Aggregate for Stock {}
 ///
 /// struct StockReserved {
-///     product_id: u64,
+///     product_id: ProductId,
 ///     qty: i32,
 /// }
 ///
@@ -53,7 +70,7 @@ use async_trait::async_trait;
 /// }
 ///
 /// struct ReserveStockCommand {
-///     product_id: u64,
+///     product_id: ProductId,
 ///     qty: i32,
 /// }
 ///
@@ -81,7 +98,7 @@ use async_trait::async_trait;
 ///
 ///         // --- Domain events ---------------------------------------------------
 ///
-///         let stock_reserved = StockReserved { product_id: self.product_id, qty: self.qty };
+///         let stock_reserved = StockReserved { product_id: self.product_id.clone(), qty: self.qty };
 ///
 ///         Ok(Executed {
 ///             output: units_left,
@@ -112,24 +129,43 @@ mod tests {
     use crate::errors::{DomainError, EnforcementResult};
     use crate::invariants::{Invariant, Invariants};
     use crate::policies::FiredPolicy;
+    use crate::value_objects::ValueObject;
     use std::sync::Mutex;
 
     #[derive(Debug, Clone, PartialEq)]
+    struct OrderId(u64);
+
+    impl ValueObject for OrderId {
+        type Props = u64;
+
+        fn new(value: u64) -> EnforcementResult<Self> {
+            Ok(Self(value))
+        }
+    }
+
+    #[derive(Debug, Clone, PartialEq)]
     struct Order {
-        id: u64,
+        id: Option<OrderId>,
         qty: i32,
     }
 
     impl Entity for Order {
-        type Id = u64;
-        type Props = (u64, i32);
+        type Id = OrderId;
+        type Props = i32;
 
-        fn id(&self) -> &u64 {
-            &self.id
+        fn id(&self) -> Option<&OrderId> {
+            self.id.as_ref()
         }
 
-        fn new((id, qty): Self::Props) -> EnforcementResult<Self> {
-            Self { id, qty }.validate()
+        fn with_id(self, id: OrderId) -> Self {
+            Self {
+                id: Some(id),
+                ..self
+            }
+        }
+
+        fn new(qty: i32) -> EnforcementResult<Self> {
+            Self { id: None, qty }.validate()
         }
 
         fn validate(self) -> EnforcementResult<Self> {
@@ -173,7 +209,11 @@ mod tests {
             .check()?;
 
             let mut order = ports.order.lock().unwrap();
-            *order = Order::new((order.id, self.qty))?;
+            *order = Order {
+                qty: self.qty,
+                ..order.clone()
+            }
+            .validate()?;
 
             let order_placed = OrderPlaced;
 
@@ -186,7 +226,10 @@ mod tests {
 
     fn ports() -> Ports {
         Ports {
-            order: Mutex::new(Order { id: 1, qty: 0 }),
+            order: Mutex::new(Order {
+                id: Some(OrderId(1)),
+                qty: 0,
+            }),
         }
     }
 
@@ -204,7 +247,13 @@ mod tests {
         let place_order_execution = PlaceOrderCommand { qty: 3 }.execute(&ports).await.unwrap();
 
         assert_eq!(place_order_execution.events.len(), 1);
-        assert_eq!(*ports.order.lock().unwrap(), Order { id: 1, qty: 3 });
+        assert_eq!(
+            *ports.order.lock().unwrap(),
+            Order {
+                id: Some(OrderId(1)),
+                qty: 3
+            }
+        );
     }
 
     #[tokio::test]
@@ -214,7 +263,13 @@ mod tests {
         let result = PlaceOrderCommand { qty: -1 }.execute(&ports).await;
 
         assert_eq!(violations(result), vec!["positive quantity"]);
-        assert_eq!(*ports.order.lock().unwrap(), Order { id: 1, qty: 0 });
+        assert_eq!(
+            *ports.order.lock().unwrap(),
+            Order {
+                id: Some(OrderId(1)),
+                qty: 0
+            }
+        );
     }
 
     #[tokio::test]
@@ -224,6 +279,12 @@ mod tests {
         let result = PlaceOrderCommand { qty: 2000 }.execute(&ports).await;
 
         assert_eq!(violations(result), vec!["at most 1000 items"]);
-        assert_eq!(*ports.order.lock().unwrap(), Order { id: 1, qty: 0 });
+        assert_eq!(
+            *ports.order.lock().unwrap(),
+            Order {
+                id: Some(OrderId(1)),
+                qty: 0
+            }
+        );
     }
 }

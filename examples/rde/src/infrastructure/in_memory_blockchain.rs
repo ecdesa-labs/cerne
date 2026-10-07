@@ -1,6 +1,8 @@
 use crate::application::ports::blockchain::Blockchain;
 use crate::domain::services::fees::Fees;
 use crate::domain::services::transaction_hash::transaction_hash;
+use crate::domain::value_objects::tx_hash::TxHash;
+use cerne::domain::ValueObject;
 use cerne::{Error, InfrastructureError, async_trait};
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -47,7 +49,7 @@ impl Blockchain for InMemoryBlockchain {
         amount: u64,
         fees: Fees,
         nonce: u64,
-    ) -> Result<String, Error> {
+    ) -> Result<TxHash, Error> {
         let mut balances = self.balances.lock().unwrap();
         let mut nonces = self.nonces.lock().unwrap();
 
@@ -75,6 +77,8 @@ impl Blockchain for InMemoryBlockchain {
 
         // --- Hash: like a node, recomputed from the transaction it received ----
 
-        Ok(transaction_hash(sender, recipient, amount, fees, nonce))
+        let tx_hash = TxHash::new(transaction_hash(sender, recipient, amount, fees, nonce))?;
+
+        Ok(tx_hash)
     }
 }

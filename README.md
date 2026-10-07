@@ -12,6 +12,7 @@
 |---|---|---|
 | 🟦 | Command | trait `Command<Ports>`, que devolve `Executed { output, events }` |
 | 🟨 | Aggregate / Entity | traits `Entity` e `Aggregate` |
+| — | Value Object | trait `ValueObject`, que também é o tipo do id de toda entidade |
 | 🟧 | Domain Event | trait `DomainEvent<Ports>` |
 | 🟪 | Policy | `Policy` + `Policies`, executadas por um `PolicyProcessor` |
 | 🩷 | External System (Port) | trait `Repository<A>`, os ports da aplicação e o composition root `Ports` |
@@ -80,7 +81,8 @@ examples/rde/src/
 ├── domain/           síncrono e puro: nenhum IO acontece aqui
 │   ├── entities/     agregados e entidades (Transfer)
 │   ├── events/       domain events e as policies de cada um
-│   └── services/     domain services (estimate_fees, transaction_hash)
+│   ├── services/     domain services (estimate_fees, transaction_hash)
+│   └── value_objects/ valores sem identidade (TxHash)
 ├── application/      assíncrono: os commands e os ports que eles usam
 │   ├── commands/
 │   └── ports/        os sistemas externos (Blockchain, KycRegistry)
@@ -143,7 +145,7 @@ pub trait Blockchain: Send + Sync {
         amount: u64,
         fees: Fees,
         nonce: u64,
-    ) -> Result<String, Error>;
+    ) -> Result<TxHash, Error>;
 }
 ```
 
@@ -225,9 +227,9 @@ O `execute` é dividido nas partes do Event Storming, sempre nesta ordem: domain
 ```rust
 #[async_trait]
 impl Command<Ports> for CreateTransferCommand {
-    type Output = String; // the tx_hash of the new transfer
+    type Output = TxHash; // the id of the new transfer
 
-    async fn execute(&self, ports: &Ports) -> Result<Executed<String, Ports>, Error> {
+    async fn execute(&self, ports: &Ports) -> Result<Executed<TxHash, Ports>, Error> {
         // --- Domain service --------------------------------------------------
 
         let fees = estimate_fees(self.amount);
@@ -261,9 +263,7 @@ impl Command<Ports> for CreateTransferCommand {
             nonce,
         })?;
 
-        let tx_hash = transfer.tx_hash.clone();
-
-        ports.transfers.save(transfer).await?;
+        let tx_hash = ports.transfers.save(transfer).await?;
 
         // --- Domain events ---------------------------------------------------
 
@@ -306,6 +306,10 @@ pub fn estimate_fees(amount: u64) -> Fees {
 
 O command primeiro lê os fatos de que precisa nos ports (saldo e KYC), cada um numa variável que se lê como frase. Só depois aplica as regras de negócio. O `check()` roda **todas** as regras e devolve `DomainError::Violations` com o nome de cada uma que falhou, e o `?` interrompe o command antes de qualquer mudança.
 
+#### Aggregate e `save`
+
+O `save` funciona como no Rails: um agregado sem id é inserido, e o repositório decide o id; um agregado com id é atualizado. Nos dois casos, o `save` devolve o id. É esse id que o command devolve no `output` e coloca no evento. A `Transfer` já nasce com id (o hash), então o repositório só o devolve.
+
 #### O agregado `Transfer` 🟨
 
 Uma Entity ou Aggregate (neste caso, a `Transfer`) só existe se as invariantes dela valem. Ninguém escolhe o id da `Transfer`: ele é o hash da transação, como na Polygon.
@@ -313,22 +317,27 @@ Uma Entity ou Aggregate (neste caso, a `Transfer`) só existe se as invariantes 
 <!-- snippet: examples/rde/src/domain/entities/transfer.rs -->
 ```rust
 impl Entity for Transfer {
-    type Id = String;
+    type Id = TxHash;
     type Props = TransferProps;
 
-    fn id(&self) -> &String {
-        &self.tx_hash
+    /// Always `Some`: the hash exists before the first save, so the repository has no id to decide.
+    fn id(&self) -> Option<&TxHash> {
+        Some(&self.tx_hash)
+    }
+
+    fn with_id(self, tx_hash: TxHash) -> Self {
+        Self { tx_hash, ..self }
     }
 
     /// A transfer is born pending, identified by the hash of its transaction.
     fn new(props: TransferProps) -> EnforcementResult<Self> {
-        let tx_hash = transaction_hash(
+        let tx_hash = TxHash::new(transaction_hash(
             &props.sender,
             &props.recipient,
             props.amount,
             props.fees,
             props.nonce,
-        );
+        ))?;
 
         Self {
             tx_hash,
@@ -364,6 +373,11 @@ impl Entity for Transfer {
     }
 }
 ```
+
+O id é sempre um value object (veja o `TxHash` logo abaixo), e o `id()` devolve um `Option`:
+
+- **`None`:** a entidade ainda não foi salva. É o caso comum, em que o repositório decide o id no primeiro `save` e o entrega à entidade com `with_id`. Só o repositório chama o `with_id`.
+- **`Some`:** a entidade já foi salva, ou o id vem do próprio conteúdo. A `Transfer` é desse segundo tipo: o hash existe antes de qualquer `save`, então o `id()` sempre devolve `Some`.
 
 Se alguma invariante for violada no `<Entity ou Aggregate>::new()` (aqui, `Transfer::new()`), nada é criado. O `new` devolve `Err(DomainError::Violations(..))` com o nome de **todas** as invariantes violadas, não só da primeira. Assim, quem chamou recebe a lista completa do que corrigir.
 
@@ -405,6 +419,42 @@ Só a raiz da consistência é marcada como `Aggregate`. É isso que permite um 
 impl Aggregate for Transfer {}
 ```
 
+#### O value object `TxHash`
+
+Um value object é um valor sem identidade: dois `TxHash` com os mesmos dígitos são o mesmo hash, quem quer que o tenha calculado. Por isso a trait `ValueObject` exige `Clone + PartialEq`, e a igualdade compara os campos.
+
+<!-- snippet: examples/rde/src/domain/value_objects/tx_hash.rs -->
+```rust
+impl ValueObject for TxHash {
+    type Props = String;
+
+    fn new(hash: String) -> EnforcementResult<Self> {
+        let digits = hash.strip_prefix("0x").unwrap_or_default();
+
+        let starts_with_0x = hash.starts_with("0x");
+        let has_64_digits = digits.len() == 64;
+        let digits_are_hex = digits.chars().all(|digit| digit.is_ascii_hexdigit());
+
+        Invariants::new(vec![
+            Invariant::new("tx hash starts with 0x", move || starts_with_0x),
+            Invariant::new("tx hash has 64 digits", move || has_64_digits),
+            Invariant::new("tx hash digits are hex", move || digits_are_hex),
+        ])
+        .enforce()?;
+
+        Ok(Self(hash))
+    }
+}
+```
+
+Como a entidade, o value object só nasce se as invariantes dele valem: `TxHash::new("hash".into())` devolve `Err(DomainError::Violations(["tx hash starts with 0x", "tx hash has 64 digits"]))`. Diferente da entidade, ele não tem `validate` nem mudanças de estado: um value object nunca muda. Outro valor é outro value object, criado com `new`.
+
+| | Entity / Aggregate | Value Object |
+|---|---|---|
+| Igualdade | pelo id | por todos os campos |
+| Muda? | sim, e cada mudança termina em `validate()` | não; outro valor é outro `new` |
+| Exemplo na rde | `Transfer` | `TxHash` |
+
 Invariante e regra de negócio são coisas diferentes:
 
 - **Invariante:** vale para qualquer `Transfer`, em qualquer momento. Por isso fica no agregado ("sender is not the recipient").
@@ -420,7 +470,7 @@ Um domain event registra um fato que já aconteceu no domínio. Por isso o nome 
 <!-- snippet: examples/rde/src/domain/events/transfer_created.rs -->
 ```rust
 pub struct TransferCreated {
-    pub tx_hash: String,
+    pub tx_hash: TxHash,
     pub sender: String,
     pub recipient: String,
     pub amount: u64,
@@ -510,7 +560,7 @@ async fn execute(&self, ports: &Ports) -> Result<Executed<(), Ports>, Error> {
 
 Todo command devolve um `Executed` com duas partes:
 
-- **`output`:** volta para quem enviou a requisição. Aqui, é o `tx_hash` que a Alice recebe (`type Output = String`). Um command sem nada a devolver usa `type Output = ()`.
+- **`output`:** volta para quem enviou a requisição. Aqui, é o `tx_hash` que a Alice recebe (`type Output = TxHash`). Um command sem nada a devolver usa `type Output = ()`.
 - **`events`:** vão para o processador, que dispara as policies de cada evento.
 
 ### 3. O Bob aceita, e a policy encadeia a transação 🟦 → 🟧 → 🟪 → 🟦

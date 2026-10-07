@@ -1,6 +1,7 @@
 use crate::domain::services::fees::Fees;
 use crate::domain::services::transaction_hash::transaction_hash;
-use cerne::domain::{Aggregate, EnforcementResult, Entity, Invariant, Invariants};
+use crate::domain::value_objects::tx_hash::TxHash;
+use cerne::domain::{Aggregate, EnforcementResult, Entity, Invariant, Invariants, ValueObject};
 
 // --- Status ------------------------------------------------------------------
 
@@ -18,7 +19,7 @@ pub enum TransferStatus {
 /// Once accepted, its transaction is sent to the chain.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Transfer {
-    pub tx_hash: String,
+    pub tx_hash: TxHash,
     pub sender: String,
     pub recipient: String,
     pub amount: u64,
@@ -42,22 +43,27 @@ impl Aggregate for Transfer {}
 // --- Entity: identity and invariants -----------------------------------------
 
 impl Entity for Transfer {
-    type Id = String;
+    type Id = TxHash;
     type Props = TransferProps;
 
-    fn id(&self) -> &String {
-        &self.tx_hash
+    /// Always `Some`: the hash exists before the first save, so the repository has no id to decide.
+    fn id(&self) -> Option<&TxHash> {
+        Some(&self.tx_hash)
+    }
+
+    fn with_id(self, tx_hash: TxHash) -> Self {
+        Self { tx_hash, ..self }
     }
 
     /// A transfer is born pending, identified by the hash of its transaction.
     fn new(props: TransferProps) -> EnforcementResult<Self> {
-        let tx_hash = transaction_hash(
+        let tx_hash = TxHash::new(transaction_hash(
             &props.sender,
             &props.recipient,
             props.amount,
             props.fees,
             props.nonce,
-        );
+        ))?;
 
         Self {
             tx_hash,

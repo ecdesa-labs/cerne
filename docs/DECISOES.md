@@ -39,6 +39,9 @@ Legenda de impacto:
 | D24 | Processador padrão síncrono | 🔴 | ✅ | `InlinePolicyProcessor` padrão; `TokioPolicyProcessor` com `shutdown()`; exemplos lib + bin |
 | D25 | O command devolve um `Output` | 🔴 | ✅ | `type Output` + `Executed { output, events }`; policy só dispara `Output = ()` |
 | D26 | O README é um tutorial da rde | 🟢 | ✅ | Walkthrough do `main.rs`; trechos verificados por `tests/readme.rs` |
+| D27 | Value Objects | 🔴 | ✅ | Trait `ValueObject` só com `new` (imutável); o id de toda entidade é um value object |
+| D28 | Quem decide o id | 🔴 | ✅ | O `save` devolve o id, como no Rails: `Entity::id()` é `Option` até o primeiro `save` |
+| D29 | Decisões do CLI antes da Fase 2 | 🟢 | ✅ | id como value object `u64` por padrão, `--aggregate`, dependência Git |
 
 ---
 
@@ -486,7 +489,7 @@ A dúvida é só **o que** fica atrás do `processor`.
 - **Um command de criação não recebe id.** Na maioria dos casos, quem decide o id é o repositório, no insert. A exceção é um id determinístico, calculado a partir do conteúdo: no `examples/rde`, a `Transfer` é identificada pelo `tx_hash`, o Keccak-256 da transação (ver `HOW_TX_HASH_IS_GENERATED.md`), e o `Transfer::new` o calcula.
 - **Variáveis com nome descritivo:** condições viram variáveis que se leem como frase (`sender_is_not_recipient`), cada evento ganha uma variável antes do `Ok(vec![...])`, e o resultado de um `execute` vai para uma variável `*_events`. As regras estão no `CLAUDE.md`.
 
-**Em aberto:** o caso comum, com id gerado pelo repositório, ainda não tem forma na lib. Hoje `Entity::new` devolve a entidade com id, e `Repository::save` não devolve nada. Isso precisa ser resolvido antes dos generators (Fase 2).
+~~**Em aberto:** o caso comum, com id gerado pelo repositório, ainda não tem forma na lib. Hoje `Entity::new` devolve a entidade com id, e `Repository::save` não devolve nada. Isso precisa ser resolvido antes dos generators (Fase 2).~~ Resolvido na D28.
 
 ---
 
@@ -541,3 +544,79 @@ pub struct Executed<Output, Ports> {
 Os exemplos que testam a API da lib continuam como doctests, nos doc comments de cada trait.
 
 **Complemento:** o `lib.rs` deixou de incluir o README (`include_str!`) e ganhou documentação própria, com a tabela post-it → código e links para cada trait. Com isso, os blocos do README podem usar ` ```rust ` puro, que o GitHub colore; com ` ```rust,ignore `, o GitHub mostrava o código sem cores. Isso também resolve a pendência da Fase 4: o caminho `../../../README.md` não existiria no pacote publicado.
+
+---
+
+## D27 — Value Objects 🔴 (Fase 1.5)
+
+**Problema:** a Fase 1 criou Entity, Aggregate, Event, Policy e Command, mas pulou o Value Object. Sem ele, o id de toda entidade era um tipo primitivo (`u64`, `String`), e os generators da Fase 2 espalhariam isso por todo projeto gerado.
+
+**Decisão:**
+
+```rust
+pub trait ValueObject: Sized + Clone + PartialEq + Send + Sync {
+    type Props;
+
+    fn new(props: Self::Props) -> EnforcementResult<Self>;
+}
+```
+
+- **Só `new`, sem `validate`:** um value object nunca muda, então não há transição de estado para validar. Outro valor é outro value object, criado com `new`.
+- **`Clone + PartialEq` na trait:** a igualdade é por valor, e o compilador garante que dá para comparar e copiar.
+- As invariantes ficam no `new`, com `Invariants`, como na entidade: o erro lista todas as violadas.
+- **O id de toda entidade é um value object:** `Entity::Id: ValueObject`. Na rde, o `tx_hash` virou `TxHash`, que confere o `0x` e os 64 dígitos hexadecimais.
+- No projeto, os value objects ficam em `domain/value_objects/`.
+
+---
+
+## D28 — O `save` devolve o id 🔴 (Fase 1.5, resolve o ponto em aberto da D23)
+
+**Pergunta:** no caso comum, em que o repositório decide o id, como o command de criação descobre o id?
+
+| Opção | A favor | Contra |
+|---|---|---|
+| `next_id()` no `Repository` | A entidade nunca existe sem id | Uma chamada a mais antes de criar; não é o que o Rails faz |
+| **O `save` devolve o id, e o id é opcional até lá** | Como `Order.new` + `save` no Rails; o command lê o id do `save` | Um `Option` em toda entidade e um `with_id` para o repositório |
+| `insert(props)` no `Repository` | O id nunca é opcional | A entidade nasce dentro do adapter |
+
+**Decisão:** o `save` devolve o id, como no Rails.
+
+```rust
+pub trait Entity: Sized + Send + Sync {
+    type Id: ValueObject;
+    type Props;
+
+    fn id(&self) -> Option<&Self::Id>;      // None até o primeiro save
+    fn with_id(self, id: Self::Id) -> Self; // só o repositório chama
+    fn new(props: Self::Props) -> EnforcementResult<Self>;
+    fn validate(self) -> EnforcementResult<Self>;
+}
+
+pub trait Repository<A: Aggregate>: Send + Sync {
+    async fn load(&self, id: &A::Id) -> Result<A, Error>;
+    async fn save(&self, aggregate: A) -> Result<A::Id, Error>; // insere se o id é None, atualiza se é Some
+}
+```
+
+No command:
+
+```rust
+// --- Aggregate ---------------------------------------------------------------
+
+let order = Order::new(OrderProps { qty: self.qty })?; // id: None
+
+let order_id = ports.orders.save(order).await?;
+```
+
+- Uma entidade cujo id vem do próprio conteúdo (a `Transfer`, com o `tx_hash`) devolve sempre `Some` no `id()`, e o repositório só devolve esse id.
+- O `InMemoryRepository` da rde só guarda agregados que já têm id. O adapter em memória da lib (Fase 3) decide o id quando ele é `None`.
+
+---
+
+## D29 — Decisões do CLI tomadas antes da Fase 2 🟢
+
+Tomadas no mesmo chat da Fase 1.5, para a Fase 2 começar sem perguntas em aberto:
+
+- **Id padrão:** `cerne g entity Order qty:i32` gera o value object `OrderId` (em `domain/value_objects/order_id.rs`) com um `u64` dentro. `id:<tipo>` nos campos troca o tipo de dentro (`id:String`).
+- **`--aggregate`:** sem a flag, o generator cria só a `Entity`; com ela, também o `impl Aggregate` e as seções do molde da `Transfer`.
+- **Dependência do `cerne`:** enquanto a crate não está no crates.io, o `Cargo.toml` gerado usa `cerne = { git = "https://github.com/ecdesa-labs/cerne" }`. Na Fase 4, isso vira a versão publicada.

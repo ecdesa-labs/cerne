@@ -1,5 +1,6 @@
 use crate::domain::entities::transfer::TransferStatus;
 use crate::domain::events::transaction_chained::TransactionChained;
+use crate::domain::value_objects::tx_hash::TxHash;
 use crate::ports::Ports;
 use cerne::application::{Command, Executed};
 use cerne::domain::{BusinessRule, BusinessRules};
@@ -7,7 +8,7 @@ use cerne::{Error, async_trait};
 
 /// No actor: the policy "whenever a transfer is accepted, chain it" sends this command.
 pub struct ChainAcceptedTransferCommand {
-    pub tx_hash: String,
+    pub tx_hash: TxHash,
 }
 
 #[async_trait]

@@ -1,45 +1,74 @@
 use crate::errors::EnforcementResult;
+use crate::value_objects::ValueObject;
 
 /// The yellow post-it: something with an identity that only exists while its invariants hold.
 ///
+/// Like a record in Rails, an entity is born without an id: the repository decides it on the first `save`.
+///
 /// ```
-/// use cerne::domain::{EnforcementResult, Entity, Invariant, Invariants};
+/// use cerne::domain::{EnforcementResult, Entity, Invariant, Invariants, ValueObject};
+///
+/// #[derive(Debug, Clone, PartialEq)]
+/// struct OrderItemId(u64);
+///
+/// impl ValueObject for OrderItemId {
+///     type Props = u64;
+///
+///     fn new(value: u64) -> EnforcementResult<Self> {
+///         Ok(Self(value))
+///     }
+/// }
 ///
 /// struct OrderItem {
-///     id: u64,
+///     id: Option<OrderItemId>,
 ///     qty: i32,
 /// }
 ///
 /// impl Entity for OrderItem {
-///     type Id = u64;
-///     type Props = (u64, i32);
+///     type Id = OrderItemId;
+///     type Props = i32;
 ///
-///     fn id(&self) -> &u64 {
-///         &self.id
+///     fn id(&self) -> Option<&OrderItemId> {
+///         self.id.as_ref()
 ///     }
 ///
-///     fn new((id, qty): (u64, i32)) -> EnforcementResult<Self> {
-///         Self { id, qty }.validate()
+///     fn with_id(self, id: OrderItemId) -> Self {
+///         Self { id: Some(id), ..self }
+///     }
+///
+///     fn new(qty: i32) -> EnforcementResult<Self> {
+///         Self { id: None, qty }.validate()
 ///     }
 ///
 ///     fn validate(self) -> EnforcementResult<Self> {
-///         let qty = self.qty;
+///         let quantity_is_positive = self.qty > 0;
 ///
-///         Invariants::new(vec![Invariant::new("positive quantity", move || qty > 0)]).enforce()?;
+///         Invariants::new(vec![Invariant::new("positive quantity", move || {
+///             quantity_is_positive
+///         })])
+///         .enforce()?;
 ///
 ///         Ok(self)
 ///     }
 /// }
 ///
-/// assert!(OrderItem::new((1, 3)).is_ok());
-/// assert!(OrderItem::new((1, 0)).is_err());
+/// let order_item = OrderItem::new(3).unwrap();
+///
+/// assert!(order_item.id().is_none()); // not saved yet
+/// assert!(OrderItem::new(0).is_err());
 /// ```
 pub trait Entity: Sized + Send + Sync {
-    type Id: PartialEq + Send + Sync;
+    type Id: ValueObject;
     type Props;
 
     /// The identity: two entities with the same id are the same entity, whatever their other fields.
-    fn id(&self) -> &Self::Id;
+    ///
+    /// `None` until the repository saves the entity for the first time. An entity whose id comes from its own content
+    /// (a hash, a document number) always returns `Some`.
+    fn id(&self) -> Option<&Self::Id>;
+
+    /// Gives the entity the id its repository decided. Only a `Repository` calls it, on the first `save`.
+    fn with_id(self, id: Self::Id) -> Self;
 
     /// An entity is born valid: it only exists if its invariants hold.
     ///
@@ -55,13 +84,20 @@ pub trait Entity: Sized + Send + Sync {
 /// Marks the root of a consistency boundary: the only kind of entity a `Repository` can load and save.
 ///
 /// ```
-/// # use cerne::domain::{EnforcementResult, Entity};
-/// # struct Order { id: u64 }
-/// # impl Entity for Order {
-/// #     type Id = u64;
+/// # use cerne::domain::{EnforcementResult, Entity, ValueObject};
+/// # #[derive(Clone, PartialEq)]
+/// # struct OrderId(u64);
+/// # impl ValueObject for OrderId {
 /// #     type Props = u64;
-/// #     fn id(&self) -> &u64 { &self.id }
-/// #     fn new(id: u64) -> EnforcementResult<Self> { Ok(Self { id }) }
+/// #     fn new(value: u64) -> EnforcementResult<Self> { Ok(Self(value)) }
+/// # }
+/// # struct Order { id: Option<OrderId> }
+/// # impl Entity for Order {
+/// #     type Id = OrderId;
+/// #     type Props = ();
+/// #     fn id(&self) -> Option<&OrderId> { self.id.as_ref() }
+/// #     fn with_id(self, id: OrderId) -> Self { Self { id: Some(id) } }
+/// #     fn new(_: ()) -> EnforcementResult<Self> { Ok(Self { id: None }) }
 /// #     fn validate(self) -> EnforcementResult<Self> { Ok(self) }
 /// # }
 /// use cerne::domain::Aggregate;
@@ -77,28 +113,46 @@ mod tests {
     use crate::invariants::{Invariant, Invariants};
 
     #[derive(Debug, Clone, PartialEq)]
+    struct OrderId(u64);
+
+    impl ValueObject for OrderId {
+        type Props = u64;
+
+        fn new(value: u64) -> EnforcementResult<Self> {
+            Ok(Self(value))
+        }
+    }
+
+    #[derive(Debug, Clone, PartialEq)]
     struct Order {
-        id: u64,
+        id: Option<OrderId>,
         qty: i32,
     }
 
     impl Entity for Order {
-        type Id = u64;
-        type Props = (u64, i32);
+        type Id = OrderId;
+        type Props = i32;
 
-        fn id(&self) -> &u64 {
-            &self.id
+        fn id(&self) -> Option<&OrderId> {
+            self.id.as_ref()
         }
 
-        fn new((id, qty): Self::Props) -> EnforcementResult<Self> {
-            Self { id, qty }.validate()
+        fn with_id(self, id: OrderId) -> Self {
+            Self {
+                id: Some(id),
+                ..self
+            }
+        }
+
+        fn new(qty: i32) -> EnforcementResult<Self> {
+            Self { id: None, qty }.validate()
         }
 
         fn validate(self) -> EnforcementResult<Self> {
-            let qty = self.qty;
+            let quantity_is_not_negative = self.qty >= 0;
 
             Invariants::new(vec![Invariant::new("non negative quantity", move || {
-                qty >= 0
+                quantity_is_not_negative
             })])
             .enforce()?;
 
@@ -107,22 +161,22 @@ mod tests {
     }
 
     #[test]
-    fn entity_is_born_when_invariants_hold() {
-        assert_eq!(Order::new((1, 3)), Ok(Order { id: 1, qty: 3 }));
+    fn entity_is_born_without_an_id_when_invariants_hold() {
+        assert_eq!(Order::new(3), Ok(Order { id: None, qty: 3 }));
     }
 
     #[test]
     fn entity_cannot_be_born_invalid() {
         assert_eq!(
-            Order::new((1, -1)),
+            Order::new(-1),
             Err(DomainError::Violations(vec!["non negative quantity"]))
         );
     }
 
     #[test]
-    fn entity_is_known_by_its_id() {
-        let order = Order::new((7, 3)).unwrap();
+    fn entity_is_known_by_the_id_its_repository_gave() {
+        let order = Order::new(3).unwrap().with_id(OrderId(7));
 
-        assert_eq!(order.id(), &7);
+        assert_eq!(order.id(), Some(&OrderId(7)));
     }
 }

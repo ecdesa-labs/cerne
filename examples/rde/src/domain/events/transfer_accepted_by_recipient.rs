@@ -1,9 +1,10 @@
 use crate::application::commands::chain_accepted_transfer::ChainAcceptedTransferCommand;
+use crate::domain::value_objects::tx_hash::TxHash;
 use crate::ports::Ports;
 use cerne::domain::{DomainEvent, EnforcementResult, FiredPolicy, Policies, Policy};
 
 pub struct TransferAcceptedByRecipient {
-    pub tx_hash: String,
+    pub tx_hash: TxHash,
 }
 
 impl DomainEvent<Ports> for TransferAcceptedByRecipient {
