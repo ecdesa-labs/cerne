@@ -1,4 +1,4 @@
-use crate::domain::entities::transfer::TransferStatus;
+use crate::domain::entities::transfer::{Transfer, TransferStatus};
 use crate::domain::events::transfer_accepted_by_recipient::TransferAcceptedByRecipient;
 use crate::domain::value_objects::tx_hash::TxHash;
 use crate::ports::Ports;
@@ -14,6 +14,19 @@ pub struct AcceptTransferCommand {
     pub recipient: String,
 }
 
+impl AcceptTransferCommand {
+    /// Sync and without ports, so it goes with the command wherever the command goes (D37).
+    pub fn business_rules(&self, transfer: &Transfer) -> BusinessRules {
+        let actor_is_the_recipient = transfer.recipient == self.recipient;
+        let is_still_pending = transfer.status == TransferStatus::Pending;
+
+        BusinessRules::new(vec![
+            BusinessRule::new("only the recipient accepts", move || actor_is_the_recipient),
+            BusinessRule::new("transfer is still pending", move || is_still_pending),
+        ])
+    }
+}
+
 #[async_trait]
 impl Command<Ports> for AcceptTransferCommand {
     type Output = ();
@@ -25,14 +38,7 @@ impl Command<Ports> for AcceptTransferCommand {
 
         // --- Business rules --------------------------------------------------
 
-        let actor_is_the_recipient = transfer.recipient == self.recipient;
-        let is_still_pending = transfer.status == TransferStatus::Pending;
-
-        BusinessRules::new(vec![
-            BusinessRule::new("only the recipient accepts", move || actor_is_the_recipient),
-            BusinessRule::new("transfer is still pending", move || is_still_pending),
-        ])
-        .check()?;
+        self.business_rules(&transfer).check()?;
 
         // --- Aggregate -------------------------------------------------------
 

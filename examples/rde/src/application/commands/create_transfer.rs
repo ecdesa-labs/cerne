@@ -16,6 +16,25 @@ pub struct CreateTransferCommand {
     pub amount: u64,
 }
 
+impl CreateTransferCommand {
+    /// Sync and without ports, so it goes with the command wherever the command goes (D37).
+    pub fn business_rules(
+        &self,
+        available_rdec: u64,
+        sender_has_kyc: bool,
+        recipient_has_kyc: bool,
+    ) -> BusinessRules {
+        let cost = self.amount + estimate_fees(self.amount).total();
+        let sender_can_pay = available_rdec >= cost;
+
+        BusinessRules::new(vec![
+            BusinessRule::new("sender has RDEC available", move || sender_can_pay),
+            BusinessRule::new("sender has KYC", move || sender_has_kyc),
+            BusinessRule::new("recipient has KYC", move || recipient_has_kyc),
+        ])
+    }
+}
+
 #[async_trait]
 impl Command<Ports> for CreateTransferCommand {
     type Output = TxHash; // the id of the new transfer
@@ -24,7 +43,6 @@ impl Command<Ports> for CreateTransferCommand {
         // --- Domain service --------------------------------------------------
 
         let fees = estimate_fees(self.amount);
-        let cost = self.amount + fees.total();
 
         // --- Ports -----------------------------------------------------------
 
@@ -35,14 +53,8 @@ impl Command<Ports> for CreateTransferCommand {
 
         // --- Business rules --------------------------------------------------
 
-        let sender_can_pay = available_rdec >= cost;
-
-        BusinessRules::new(vec![
-            BusinessRule::new("sender has RDEC available", move || sender_can_pay),
-            BusinessRule::new("sender has KYC", move || sender_has_kyc),
-            BusinessRule::new("recipient has KYC", move || recipient_has_kyc),
-        ])
-        .check()?;
+        self.business_rules(available_rdec, sender_has_kyc, recipient_has_kyc)
+            .check()?;
 
         // --- Aggregate -------------------------------------------------------
 

@@ -289,7 +289,6 @@ impl Command<Ports> for CreateTransferCommand {
         // --- Domain service --------------------------------------------------
 
         let fees = estimate_fees(self.amount);
-        let cost = self.amount + fees.total();
 
         // --- Ports -----------------------------------------------------------
 
@@ -300,14 +299,8 @@ impl Command<Ports> for CreateTransferCommand {
 
         // --- Business rules --------------------------------------------------
 
-        let sender_can_pay = available_rdec >= cost;
-
-        BusinessRules::new(vec![
-            BusinessRule::new("sender has RDEC available", move || sender_can_pay),
-            BusinessRule::new("sender has KYC", move || sender_has_kyc),
-            BusinessRule::new("recipient has KYC", move || recipient_has_kyc),
-        ])
-        .check()?;
+        self.business_rules(available_rdec, sender_has_kyc, recipient_has_kyc)
+            .check()?;
 
         // --- Aggregate -------------------------------------------------------
 
@@ -360,7 +353,33 @@ pub fn estimate_fees(amount: u64) -> Fees {
 
 #### Business rules
 
-O command primeiro lê os fatos de que precisa nos ports (saldo e KYC), cada um numa variável que se lê como frase. Só depois aplica as regras de negócio. O `check()` roda **todas** as regras e devolve `DomainError::Violations` com o nome de cada uma que falhou, e o `?` interrompe o command antes de qualquer mudança.
+O `execute` primeiro lê nos ports o que precisa (saldo e KYC), cada valor numa variável que se lê como frase. Depois passa esses valores para o método `business_rules` do command, que monta as regras:
+
+<!-- snippet: examples/rde/src/application/commands/create_transfer.rs -->
+```rust
+impl CreateTransferCommand {
+    /// Sync and without ports, so it goes with the command wherever the command goes (D37).
+    pub fn business_rules(
+        &self,
+        available_rdec: u64,
+        sender_has_kyc: bool,
+        recipient_has_kyc: bool,
+    ) -> BusinessRules {
+        let cost = self.amount + estimate_fees(self.amount).total();
+        let sender_can_pay = available_rdec >= cost;
+
+        BusinessRules::new(vec![
+            BusinessRule::new("sender has RDEC available", move || sender_can_pay),
+            BusinessRule::new("sender has KYC", move || sender_has_kyc),
+            BusinessRule::new("recipient has KYC", move || recipient_has_kyc),
+        ])
+    }
+}
+```
+
+O método é síncrono e não recebe os ports, só os valores já lidos. Por isso as regras podem ser testadas sem banco e vão junto com a struct do command quando o domínio for exportado para outras linguagens (D37). A chamada passa variáveis com o mesmo nome dos parâmetros. Assim, trocar `sender_has_kyc` com `recipient_has_kyc`, que são dois `bool` e não dão erro de compilação, fica visível na leitura.
+
+O `check()` roda **todas** as regras e devolve `DomainError::Violations` com o nome de cada uma que falhou. O `?` interrompe o command antes de qualquer mudança.
 
 #### Aggregate e `save`
 
@@ -774,7 +793,22 @@ let command_runs = outbox_policy_processor.run_pending().await?;
 println!("the outbox ran {command_runs:?}");
 ```
 
-O aceite segue o mesmo molde da criação. As regras de negócio dizem quem pode aceitar e em que estado, e a mudança de estado acontece no agregado:
+O aceite segue o mesmo molde da criação. Aqui o `business_rules` recebe o agregado carregado, e as regras dizem quem pode aceitar e em que estado:
+
+<!-- snippet: examples/rde/src/application/commands/accept_transfer.rs -->
+```rust
+pub fn business_rules(&self, transfer: &Transfer) -> BusinessRules {
+    let actor_is_the_recipient = transfer.recipient == self.recipient;
+    let is_still_pending = transfer.status == TransferStatus::Pending;
+
+    BusinessRules::new(vec![
+        BusinessRule::new("only the recipient accepts", move || actor_is_the_recipient),
+        BusinessRule::new("transfer is still pending", move || is_still_pending),
+    ])
+}
+```
+
+O `execute` lê o agregado, confere as regras e faz a mudança de estado no agregado:
 
 <!-- snippet: examples/rde/src/application/commands/accept_transfer.rs -->
 ```rust
@@ -785,14 +819,7 @@ async fn execute(&self, ports: &Ports) -> Result<Executed<(), Ports>, Error> {
 
     // --- Business rules --------------------------------------------------
 
-    let actor_is_the_recipient = transfer.recipient == self.recipient;
-    let is_still_pending = transfer.status == TransferStatus::Pending;
-
-    BusinessRules::new(vec![
-        BusinessRule::new("only the recipient accepts", move || actor_is_the_recipient),
-        BusinessRule::new("transfer is still pending", move || is_still_pending),
-    ])
-    .check()?;
+    self.business_rules(&transfer).check()?;
 
     // --- Aggregate -------------------------------------------------------
 
@@ -849,14 +876,7 @@ async fn execute(&self, ports: &Ports) -> Result<Executed<(), Ports>, Error> {
 
     // --- Business rules --------------------------------------------------
 
-    let was_accepted = transfer.status == TransferStatus::Accepted;
-    let not_chained_yet = !transfer.chained;
-
-    BusinessRules::new(vec![
-        BusinessRule::new("transfer was accepted", move || was_accepted),
-        BusinessRule::new("transfer is not chained yet", move || not_chained_yet),
-    ])
-    .check()?;
+    self.business_rules(&transfer).check()?;
 
     // --- External system: Blockchain -------------------------------------
 

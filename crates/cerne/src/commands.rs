@@ -74,6 +74,15 @@ use async_trait::async_trait;
 ///     qty: i32,
 /// }
 ///
+/// impl ReserveStockCommand {
+///     /// Sync and without ports: it receives what the `Ports` section read.
+///     fn business_rules(&self, stock: &Stock) -> BusinessRules {
+///         let enough_stock = stock.available >= self.qty;
+///
+///         BusinessRules::new(vec![BusinessRule::new("enough stock", move || enough_stock)])
+///     }
+/// }
+///
 /// #[async_trait]
 /// impl Command<Ports> for ReserveStockCommand {
 ///     type Output = i32; // units left in stock
@@ -85,9 +94,7 @@ use async_trait::async_trait;
 ///
 ///         // --- Business rules --------------------------------------------------
 ///
-///         let enough_stock = stock.available >= self.qty;
-///
-///         BusinessRules::new(vec![BusinessRule::new("enough stock", move || enough_stock)]).check()?;
+///         self.business_rules(&stock).check()?;
 ///
 ///         // --- Aggregate -------------------------------------------------------
 ///

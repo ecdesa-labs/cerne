@@ -1,5 +1,6 @@
 use crate::ports::Ports;
 use cerne::application::{Command, Executed};
+use cerne::domain::BusinessRules;
 use cerne::{Error, async_trait};
 use serde::{Deserialize, Serialize};
 
@@ -15,6 +16,14 @@ pub struct {{ name }}Command {
 {% endfor %}
 }
 
+impl {{ name }}Command {
+    /// Sync and without ports, so it goes with the command wherever the command goes (D37).
+    /// Receives what the `Ports` section read, or the loaded aggregate.
+    pub fn business_rules(&self) -> BusinessRules {
+        BusinessRules::new(vec![])
+    }
+}
+
 #[async_trait]
 impl Command<Ports> for {{ name }}Command {
     type Output = ();
@@ -23,6 +32,8 @@ impl Command<Ports> for {{ name }}Command {
         // --- Ports -----------------------------------------------------------
 
         // --- Business rules --------------------------------------------------
+
+        self.business_rules().check()?;
 
         // --- Aggregate -------------------------------------------------------
 
