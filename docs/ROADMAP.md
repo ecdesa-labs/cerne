@@ -24,8 +24,9 @@ O que já existe no código, comparado com os elementos do Event Storming:
 | — | Erros | ✅ Pronto (`Error` → `DomainError` / `ApplicationError` / `InfrastructureError`) | `crates/cerne/src/errors.rs` |
 | 🟩 Verde | Read Model / Query | ❌ Fase 3 | — |
 | 🟨 Amarelo pequeno | Actor | ❌ Não existe | — |
+| — | CLI (`cerne new`, `cerne g`) | ✅ Pronto (entity, value_object, event, command) | `crates/cerne-cli/` |
 
-**Próximo passo:** a Fase 2, o CLI `cerne` e os generators.
+**Próximo passo:** a Fase 3, do domínio ao mundo real (Query, Outbox, banco e HTTP).
 
 ---
 
@@ -86,21 +87,23 @@ O que já existe no código, comparado com os elementos do Event Storming:
 
 ---
 
-## Fase 2 — CLI e generators
+## Fase 2 — CLI e generators ✅
 
 **Meta:** `cerne new loja` cria um projeto que compila, e `cerne g ...` adiciona blocos que compilam na hora.
 
-- [ ] Crate `crates/cerne-cli` com o binário `cerne`.
-- [ ] O `Cargo.toml` gerado depende do `cerne` pelo Git do GitHub até a publicação (Fase 4) (**D29** ✅).
-- [ ] `cerne new <nome>`: o boilerplate **por camada** (**D11** ✅) com `domain/`, `application/`, `infrastructure/` e `ports.rs`.
-- [ ] Engine de template (ex.: `minijinja`) com parser de campos `nome:tipo` (**D13** ✅).
-- [ ] `cerne g entity Order qty:i32 id:u64`: o id vira o value object `OrderId` em `domain/value_objects/`; sem `id:<tipo>`, o generator usa `u64`. Com `--aggregate`, gera também o `impl Aggregate` (**D29** ✅).
-- [ ] `cerne g value_object Amount value:u64`
-- [ ] `cerne g event OrderPlaced order_id:u64`
-- [ ] O `cerne new` gera `lib.rs` (domínio, aplicação, infraestrutura e ports, tudo `pub`) + `main.rs` + `tests/`, como os exemplos. Assim, um evento que nenhuma policy lê não gera aviso de `dead_code` (D24).
-- [ ] `cerne g command PlaceOrder order_id:u64 qty:i32`
-- [ ] Registro automático do `mod` no `mod.rs` correspondente (**D12** ✅).
-- [ ] Teste end-to-end: gera um projeto num diretório temporário, roda os generators e executa `cargo check`.
+- [x] Crate `crates/cerne-cli` com o binário `cerne`.
+- [x] O `Cargo.toml` gerado depende do `cerne` pelo Git do GitHub até a publicação (Fase 4) (**D29** ✅).
+- [x] `cerne new <nome>`: o boilerplate **por camada** (**D11** ✅) com `domain/`, `application/`, `infrastructure/` e `ports.rs`.
+- [x] Engine de template (ex.: `minijinja`) com parser de campos `nome:tipo` (**D13** ✅).
+- [x] `cerne g entity Order qty:i32 id:u64`: o id vira o value object `OrderId` em `domain/value_objects/`; sem `id:<tipo>`, o generator usa `u64`. Com `--aggregate`, gera também o `impl Aggregate` (**D29** ✅).
+- [x] `cerne g value_object Amount value:u64`
+- [x] `cerne g event OrderPlaced order_id:u64`
+- [x] O `cerne new` gera `lib.rs` (domínio, aplicação, infraestrutura e ports, tudo `pub`) + `main.rs` + `tests/`, como os exemplos. Assim, um evento que nenhuma policy lê não gera aviso de `dead_code` (D24).
+- [x] `cerne g command PlaceOrder order_id:u64 qty:i32`
+- [x] Registro automático do `mod` no `mod.rs` correspondente (**D12** ✅).
+- [x] Teste end-to-end: gera um projeto num diretório temporário, roda os generators e executa `cargo check`.
+
+**Decisões novas:** D30.
 
 **Pronto quando:** `cerne new loja && cd loja && cerne g entity Order qty:i32 && cargo check` passa sem tocar em nada.
 
@@ -135,4 +138,4 @@ O que já existe no código, comparado com os elementos do Event Storming:
 
 ## Decisões pendentes
 
-Nenhuma: as 29 decisões estão tomadas. O ponto em aberto da D23 (id gerado pelo repositório) foi resolvido na D28. Ver o resumo em [DECISOES.md](./DECISOES.md).
+Nenhuma: as 30 decisões estão tomadas. O ponto em aberto da D23 (id gerado pelo repositório) foi resolvido na D28. Ver o resumo em [DECISOES.md](./DECISOES.md).

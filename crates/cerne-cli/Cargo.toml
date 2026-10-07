@@ -1,0 +1,13 @@
+[package]
+name = "cerne-cli"
+description = "The cerne command: creates a project laid out like the Event Storming board and generates its post-its"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "cerne"
+path = "src/main.rs"
+
+[dependencies]
+minijinja = "2"

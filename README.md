@@ -813,10 +813,35 @@ cargo test -p rde
 
 Os testes estão organizados por raia do board: criação, resposta e encadeamento, e hotspots.
 
+## CLI
+
+O binário `cerne` cria um projeto com as camadas do board e gera um post-it por vez. Cada arquivo gerado compila na hora, porque o generator registra o `mod` no `mod.rs` da pasta.
+
+```bash
+cargo install --git https://github.com/ecdesa-labs/cerne cerne-cli
+```
+
+```bash
+cerne new loja
+```
+
+Dentro de `loja/`:
+
+| Comando | Gera |
+|---|---|
+| `cerne g entity Order qty:i32` | `domain/entities/order.rs` e o id `OrderId(u64)` em `domain/value_objects/order_id.rs` |
+| `cerne g entity Order qty:i32 id:String --aggregate` | o mesmo, com o id `OrderId(String)` e o `impl Aggregate` |
+| `cerne g value_object Amount value:u64` | `domain/value_objects/amount.rs` |
+| `cerne g event OrderPlaced order_id:u64` | `domain/events/order_placed.rs` |
+| `cerne g command PlaceOrder order_id:u64 qty:i32` | `application/commands/place_order.rs` com `PlaceOrderCommand` |
+
+Os campos seguem o formato `nome:tipo`. Nenhum comando sobrescreve um arquivo que já existe.
+
 ## Estrutura do repositório
 
 ```text
 crates/cerne/     a biblioteca
+crates/cerne-cli/ o binário cerne: cerne new e cerne g
 examples/rde/     projeto de exemplo: as transferências de RDEC do Event Storming da Blockchain RDE
 docs/             roadmap, decisões e licenças
 ```

@@ -42,6 +42,7 @@ Legenda de impacto:
 | D27 | Value Objects | 🔴 | ✅ | Trait `ValueObject` só com `new` (imutável); o id de toda entidade é um value object |
 | D28 | Quem decide o id | 🔴 | ✅ | O `save` devolve o id, como no Rails: `Entity::id()` é `Option` até o primeiro `save` |
 | D29 | Decisões do CLI antes da Fase 2 | 🟢 | ✅ | id como value object `u64` por padrão, `--aggregate`, dependência Git |
+| D30 | Como o CLI foi feito | 🟢 | ✅ | Sem `clap`; `minijinja`; `rustfmt` opcional; e2e com `clippy -D warnings` |
 
 ---
 
@@ -620,3 +621,20 @@ Tomadas no mesmo chat da Fase 1.5, para a Fase 2 começar sem perguntas em abert
 - **Id padrão:** `cerne g entity Order qty:i32` gera o value object `OrderId` (em `domain/value_objects/order_id.rs`) com um `u64` dentro. `id:<tipo>` nos campos troca o tipo de dentro (`id:String`).
 - **`--aggregate`:** sem a flag, o generator cria só a `Entity`; com ela, também o `impl Aggregate` e as seções do molde da `Transfer`.
 - **Dependência do `cerne`:** enquanto a crate não está no crates.io, o `Cargo.toml` gerado usa `cerne = { git = "https://github.com/ecdesa-labs/cerne" }`. Na Fase 4, isso vira a versão publicada.
+
+---
+
+## D30 — Como o CLI foi feito 🟢 (Fase 2)
+
+Escolhas tomadas durante a Fase 2, todas na linha "a versão com menos conceitos vence":
+
+- **Argumentos sem `clap`:** o `cerne` tem dois comandos (`new` e `g`), e um `match` sobre `env::args()` resolve. O `clap` entra quando surgirem flags com valor, ajuda por subcomando ou autocompletar.
+- **Uma dependência só:** `minijinja` (D13). O `snake_case` dos nomes de arquivo são cinco linhas, então o `heck` ficou de fora.
+- **Templates em `crates/cerne-cli/templates/`**, embutidos no binário com `include_str!`. O `cerne` instalado não lê nada do disco além do projeto do usuário.
+- **`rustfmt` opcional:** depois de gerar um arquivo, o `cerne g` roda `rustfmt` nele. Sem `rustfmt` no PATH, o arquivo continua válido, só menos arrumado.
+- **Nada é sobrescrito:** o `cerne new` falha se a pasta existe, e o `cerne g` falha se o arquivo existe ou se não acha o `mod.rs` (fora de um projeto do Cerne). O `mod.rs` só ganha `pub mod <arquivo>;` no final (D12).
+- **Formato do value object:** com um campo, vira tupla com `Props` igual ao tipo do campo (`OrderId(u64)`, `OrderId::new(7)`), como o `TxHash`. Com dois ou mais, vira struct com campos privados e uma `<Nome>Props`. Sem campos, o generator recusa.
+- **`--aggregate` sem `Status`:** a entidade ganha `impl Aggregate`, a seção `Aggregate` e a seção `State transitions` (um `impl` vazio). O enum de status da `Transfer` não é gerado, porque nem todo agregado tem status; quem precisa passa `status:OrderStatus` e escreve o enum.
+- **Lugares marcados, não código inventado:** o `validate` gerado traz `Invariants::new(vec![])`, o evento traz `Policies::new(vec![])`, e o `execute` traz as seções do Event Storming vazias. O usuário preenche cada lugar.
+- **Teste end-to-end:** `crates/cerne-cli/tests/new_and_generate.rs` cria um projeto num diretório temporário, roda os generators, troca a dependência Git pelo caminho de `crates/cerne` e passa `cargo clippy --all-targets -- -D warnings`. É mais rígido que o `cargo check` do roadmap: o código gerado não pode ter nenhum aviso.
+- **Tipos dos campos não são importados:** `amount:Amount` gera `pub amount: Amount`, e o `use` fica com o usuário.

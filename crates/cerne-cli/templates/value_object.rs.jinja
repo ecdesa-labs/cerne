@@ -1,0 +1,44 @@
+use cerne::domain::{EnforcementResult, Invariants, ValueObject};
+
+{% if fields|length == 1 %}
+{% set field = fields[0] %}
+#[derive(Debug, Clone, PartialEq)]
+pub struct {{ name }}({{ field.ty }});
+
+impl ValueObject for {{ name }} {
+    type Props = {{ field.ty }};
+
+    fn new({{ field.name }}: {{ field.ty }}) -> EnforcementResult<Self> {
+        Invariants::new(vec![]).enforce()?;
+
+        Ok(Self({{ field.name }}))
+    }
+}
+{% else %}
+#[derive(Debug, Clone, PartialEq)]
+pub struct {{ name }} {
+{% for field in fields %}
+    {{ field.name }}: {{ field.ty }},
+{% endfor %}
+}
+
+pub struct {{ name }}Props {
+{% for field in fields %}
+    pub {{ field.name }}: {{ field.ty }},
+{% endfor %}
+}
+
+impl ValueObject for {{ name }} {
+    type Props = {{ name }}Props;
+
+    fn new(props: {{ name }}Props) -> EnforcementResult<Self> {
+        Invariants::new(vec![]).enforce()?;
+
+        Ok(Self {
+{% for field in fields %}
+            {{ field.name }}: props.{{ field.name }},
+{% endfor %}
+        })
+    }
+}
+{% endif %}

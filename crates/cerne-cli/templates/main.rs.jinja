@@ -1,0 +1,16 @@
+use cerne::application::InlinePolicyProcessor;
+use {{ crate_name }}::ports::Ports;
+use std::sync::Arc;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    // --- Composition root ----------------------------------------------------
+
+    let ports = Arc::new(Ports {});
+
+    let _sync_policy_processor = InlinePolicyProcessor::new(Arc::clone(&ports));
+
+    // One block per actor: the actor sends a command, and its events go to the policy processor.
+
+    Ok(())
+}

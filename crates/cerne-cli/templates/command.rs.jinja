@@ -1,0 +1,29 @@
+use crate::ports::Ports;
+use cerne::application::{Command, Executed};
+use cerne::{Error, async_trait};
+
+pub struct {{ name }}Command {
+{% for field in fields %}
+    pub {{ field.name }}: {{ field.ty }},
+{% endfor %}
+}
+
+#[async_trait]
+impl Command<Ports> for {{ name }}Command {
+    type Output = ();
+
+    async fn execute(&self, _ports: &Ports) -> Result<Executed<(), Ports>, Error> {
+        // --- Ports -----------------------------------------------------------
+
+        // --- Business rules --------------------------------------------------
+
+        // --- Aggregate -------------------------------------------------------
+
+        // --- Domain events ---------------------------------------------------
+
+        Ok(Executed {
+            output: (),
+            events: vec![],
+        })
+    }
+}
