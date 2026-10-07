@@ -5,8 +5,10 @@ use crate::ports::Ports;
 use cerne::application::{Command, Executed};
 use cerne::domain::{BusinessRule, BusinessRules};
 use cerne::{Error, async_trait};
+use serde::{Deserialize, Serialize};
 
 /// No actor: the policy "whenever a transfer is accepted, chain it" sends this command.
+#[derive(Serialize, Deserialize)]
 pub struct ChainAcceptedTransferCommand {
     pub tx_hash: TxHash,
 }

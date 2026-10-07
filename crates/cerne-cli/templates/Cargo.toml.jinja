@@ -3,7 +3,18 @@ name = "{{ name }}"
 version = "0.1.0"
 edition = "2024"
 
+# Read by `cerne g`: what `cerne new` chose.
+[package.metadata.cerne]
+db = "{{ db }}"
+http = "{{ http }}"
+
 [dependencies]
 anyhow = "1"
-cerne = { git = "https://github.com/ecdesa-labs/cerne" }
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+{% if http %}
+axum = "0.8"
+{% endif %}
+cerne = { git = "https://github.com/ecdesa-labs/cerne"{% if module == "postgres" %}, default-features = false{% endif %}, features = [{{ cerne_features }}] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "{{ module }}", "macros", "migrate"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "time"] }

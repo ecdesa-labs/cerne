@@ -1,0 +1,25 @@
+use crate::application::read_models::{{ file }}::{{ name }};
+use crate::ports::Ports;
+use cerne::application::Query;
+use cerne::{Error, async_trait};
+use serde::Deserialize;
+
+#[derive(Deserialize)]
+pub struct {{ name }}Query {
+{% for field in fields %}
+    pub {{ field.name }}: {{ field.ty }},
+{% endfor %}
+}
+
+#[async_trait]
+impl Query<Ports> for {{ name }}Query {
+    type ReadModel = {{ name }};
+
+    async fn execute(&self, _ports: &Ports) -> Result<{{ name }}, Error> {
+        // --- Ports -----------------------------------------------------------
+
+        // --- Read model ------------------------------------------------------
+
+        todo!("read the ports and build the {{ name }} read model")
+    }
+}

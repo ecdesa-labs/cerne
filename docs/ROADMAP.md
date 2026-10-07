@@ -16,17 +16,20 @@ O que já existe no código, comparado com os elementos do Event Storming:
 | 🟨 Amarelo | Aggregate / Entity | ✅ Pronto (traits `Entity` com `id` opcional até o primeiro `save` e `Aggregate`) | `crates/cerne/src/entities.rs` |
 | — | Value Object | ✅ Pronto (trait `ValueObject`, também o tipo do id de toda entidade) | `crates/cerne/src/value_objects.rs` |
 | 🟧 Laranja | Domain Event | ✅ Pronto (trait `DomainEvent<Ports>`) | `crates/cerne/src/domain_events.rs` |
-| 🟪 Lilás | Policy | ✅ Pronto (`Policy` + `Policies`, o `then` retorna o command) | `crates/cerne/src/policies.rs` |
-| — | Policy Processor | ✅ Pronto (trait `PolicyProcessor`; `InlinePolicyProcessor` padrão e `TokioPolicyProcessor`) | `crates/cerne/src/policy_processors.rs` |
-| 🩷 Rosa | External System (Ports) | ✅ `Repository<A>` (o `save` devolve o id) + composition root `Ports`; outros ports na Fase 3 | `crates/cerne/src/repositories.rs` |
+| 🟪 Lilás | Policy | ✅ Pronto (`Policy` + `Policies`, o `then` retorna o command, já serializado para a outbox) | `crates/cerne/src/policies.rs` |
+| — | Policy Processor | ✅ Pronto (`OutboxPolicyProcessor`, o padrão dos projetos gerados; `InlinePolicyProcessor` e `TokioPolicyProcessor` continuam) | `crates/cerne/src/outbox.rs`, `policy_processors.rs` |
+| — | Outbox e transação | ✅ Pronto (`Outbox`, `TransactionalPorts`, `CommandRegistry`) | `crates/cerne/src/outbox.rs` |
+| — | Banco | ✅ Pronto (`cerne::sqlite`, também em memória, e `cerne::postgres`) | `crates/cerne/src/sql.rs` |
+| — | HTTP | ✅ Pronto (feature `axum`: REST e JSON-RPC) | `crates/cerne/src/http.rs` |
+| 🩷 Rosa | External System (Ports) | ✅ `Repository<A>` (o `save` devolve o id) + composition root `Ports`; o repositório SQL de cada agregado é gerado no projeto | `crates/cerne/src/repositories.rs` |
 | — | Invariants | ✅ Pronto | `crates/cerne/src/invariants.rs` |
 | — | Business Rules | ✅ Pronto | `crates/cerne/src/business_rules.rs` |
 | — | Erros | ✅ Pronto (`Error` → `DomainError` / `ApplicationError` / `InfrastructureError`) | `crates/cerne/src/errors.rs` |
-| 🟩 Verde | Read Model / Query | ❌ Fase 3 | — |
+| 🟩 Verde | Read Model / Query | ✅ Pronto (trait `Query<Ports>` que devolve um `ReadModel`) | `crates/cerne/src/queries.rs` |
 | 🟨 Amarelo pequeno | Actor | ❌ Não existe | — |
-| — | CLI (`cerne new`, `cerne g`) | ✅ Pronto (entity, value_object, event, command) | `crates/cerne-cli/` |
+| — | CLI (`cerne new`, `cerne g`) | ✅ Pronto (`--db`, `--http`; entity com repositório, value_object, event, command, read_model, query, endpoint, port, adapter) | `crates/cerne-cli/` |
 
-**Próximo passo:** a Fase 3, do domínio ao mundo real (Query, Outbox, banco e HTTP).
+**Próximo passo:** a Fase 3.5, que roda de verdade o que a Fase 3 só compilou (Postgres e REST); depois, a Fase 4, publicação.
 
 ---
 
@@ -109,19 +112,40 @@ O que já existe no código, comparado com os elementos do Event Storming:
 
 ---
 
-## Fase 3 — Do domínio ao mundo real
+## Fase 3 — Do domínio ao mundo real ✅
 
 **Meta:** dá para construir uma aplicação de verdade, com banco e HTTP.
 
-- [ ] Trait `Query<Ports>` retornando um `ReadModel`, o post-it verde (**D14** ✅).
-- [ ] `cerne g query <Nome>` e `cerne g read_model <Nome> campo:tipo`.
-- [ ] Outbox Pattern, para que um command disparado por policy não se perca se o processo cair (**D17**).
-- [ ] Adapter em memória para `Repository` (para testes e protótipos), que decide o id no `save` (D28). O da rde só guarda agregados que já têm id.
-- [ ] Adapter de banco `sqlx` + Postgres, como feature opcional (**D15** ✅).
-- [ ] Integração HTTP: generator de endpoint que recebe JSON e dispara um Command (**D15**).
-- [ ] `cerne g port <Nome>` e `cerne g adapter <Nome>`.
+- [x] Trait `Query<Ports>` retornando um `ReadModel`, o post-it verde (**D14** ✅). Na rde, a `PendingTransfersQuery` é como o Bob acha a transferência da Alice (D25).
+- [x] `cerne g query <Nome>` e `cerne g read_model <Nome> campo:tipo`.
+- [x] Outbox Pattern, para que um command disparado por policy não se perca se o processo cair (**D17**, **D32**): o command vai para a tabela `cerne_outbox` na mesma transação do agregado (**D34**), e o `OutboxPolicyProcessor` o executa.
+- [x] Repositório em memória para testes e protótipos, que decide o id no `save` (D28): é o SQLite em memória (`SqliteDatabase::in_memory()`), com o mesmo adapter SQL de produção (**D31**). Nunca um `Vec`.
+- [x] Adapters de banco `sqlx`: SQLite (feature padrão) e Postgres (feature `postgres`), com a mesma API e o mesmo SQL (**D15**, **D31**).
+- [x] Integração HTTP (feature `axum`, **D33**): REST com `cerne g endpoint`, ou JSON-RPC, em que `cerne g command` e `cerne g query` acrescentam o método.
+- [x] `cerne g port <Nome>` e `cerne g adapter <Nome> <Port>`.
+- [x] `cerne new --db memory|sqlite|postgres --http rest|jsonrpc`, e o `cerne g entity --aggregate` gera o repositório SQL, a migração e o campo nos `Ports` (**D35**).
 
-**Pronto quando:** o `examples/rde` expõe uma API HTTP que persiste transferências num banco.
+**Decisões novas:** D31 a D35.
+
+**Pronto quando:** o `examples/rde` expõe uma API HTTP que persiste transferências num banco. ✅ O binário `server` da rde atende JSON-RPC em `POST /rpc` e grava num SQLite em arquivo; a transferência sobrevive a um reinício.
+
+---
+
+## Fase 3.5 — Verificar o que a Fase 3 só compilou
+
+**Meta:** tudo o que a Fase 3 entregou roda de verdade, não só passa no `clippy`.
+
+- [ ] Ver o job `postgres` do CI passar. O adapter Postgres (`cerne::postgres`) compila e passa no `clippy`, mas nunca rodou contra um Postgres de verdade: a máquina da Fase 3 não tinha Postgres nem Docker. O teste `crates/cerne/tests/postgres.rs` só roda com `DATABASE_URL`; localmente, com um Postgres no ar:
+
+  ```bash
+  DATABASE_URL=postgres://postgres:cerne@localhost:5432/postgres cargo test -p cerne --no-default-features --features postgres --test postgres
+  ```
+
+  Ele cobre a outbox (`FOR UPDATE SKIP LOCKED`, rollback e commit).
+- [ ] Executar o repositório que o `cerne g entity --aggregate` gera para Postgres. Hoje ele só passa pelo `clippy` no e2e.
+- [ ] Executar o REST gerado: no e2e, mandar um `POST` e um `GET` ao projeto `--http rest`, como o teste de ida e volta que já existe para o repositório. Hoje o handler gerado pelo `cerne g endpoint` só passa pelo `clippy`; a rde usa JSON-RPC.
+
+**Pronto quando:** o CI roda o Postgres e o e2e executa os handlers REST gerados.
 
 ---
 
@@ -138,4 +162,4 @@ O que já existe no código, comparado com os elementos do Event Storming:
 
 ## Decisões pendentes
 
-Nenhuma: as 30 decisões estão tomadas. O ponto em aberto da D23 (id gerado pelo repositório) foi resolvido na D28. Ver o resumo em [DECISOES.md](./DECISOES.md).
+Nenhuma: as 35 decisões estão tomadas. O ponto em aberto da D23 (id gerado pelo repositório) foi resolvido na D28. Ver o resumo em [DECISOES.md](./DECISOES.md).

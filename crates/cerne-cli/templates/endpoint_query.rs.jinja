@@ -1,0 +1,18 @@
+use crate::application::queries::{{ file }}::{{ name }}Query;
+use crate::application::read_models::{{ file }}::{{ name }};
+use crate::ports::Ports;
+use axum::Json;
+use axum::extract::State;
+use cerne::Error;
+use cerne::application::Query;
+use std::sync::Arc;
+
+/// `{{ method }} {{ path }}`: the query string is the `{{ name }}Query`; the answer is the `{{ name }}` read model.
+pub async fn {{ file }}(
+    State(ports): State<Arc<Ports>>,
+    axum::extract::Query({{ file }}): axum::extract::Query<{{ name }}Query>,
+) -> Result<Json<{{ name }}>, Error> {
+    let read_model = {{ file }}.execute(ports.as_ref()).await?;
+
+    Ok(Json(read_model))
+}

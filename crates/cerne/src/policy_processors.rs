@@ -49,6 +49,7 @@ pub trait PolicyProcessor<Ports: 'static>: Send + Sync {
 /// # use cerne::domain::{DomainEvent, EnforcementResult, FiredPolicy, Policies, Policy};
 /// # use cerne::{Error, async_trait};
 /// # struct Ports;
+/// # #[derive(serde::Serialize)]
 /// # struct ReserveStockCommand;
 /// # #[async_trait]
 /// # impl Command<Ports> for ReserveStockCommand {
@@ -111,6 +112,7 @@ impl<Ports: Send + Sync + 'static> PolicyProcessor<Ports> for InlinePolicyProces
 /// # use cerne::domain::{DomainEvent, EnforcementResult, FiredPolicy, Policies, Policy};
 /// # use cerne::{Error, async_trait};
 /// # struct Ports;
+/// # #[derive(serde::Serialize)]
 /// # struct ReserveStockCommand;
 /// # #[async_trait]
 /// # impl Command<Ports> for ReserveStockCommand {
@@ -223,7 +225,9 @@ mod tests {
 
     /// Place order → OrderPlaced → "reserve stock" → reserve stock → StockReserved → "ship order" → ship order.
     struct PlaceOrderCommand;
+    #[derive(serde::Serialize)]
     struct ReserveStockCommand;
+    #[derive(serde::Serialize)]
     struct ShipOrderCommand;
     struct FailingCommand;
 

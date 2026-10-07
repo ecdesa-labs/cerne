@@ -43,6 +43,11 @@ Legenda de impacto:
 | D28 | Quem decide o id | 🔴 | ✅ | O `save` devolve o id, como no Rails: `Entity::id()` é `Option` até o primeiro `save` |
 | D29 | Decisões do CLI antes da Fase 2 | 🟢 | ✅ | id como value object `u64` por padrão, `--aggregate`, dependência Git |
 | D30 | Como o CLI foi feito | 🟢 | ✅ | Sem `clap`; `minijinja`; `rustfmt` opcional; enum por `kind:A,B`, estado inicial por `status=A:A,B`; e2e com `clippy -D warnings` |
+| D31 | Banco: o que o Cerne entrega | 🔴 | ✅ | Adapters SQLite e Postgres (sqlx); "em memória" é o SQLite em memória; `cerne new --db memory\|sqlite\|postgres`; sem MySQL |
+| D32 | Outbox: o que vai para a tabela | 🔴 | ✅ | O command, serializado (serde) e registrado por nome, na mesma transação do `save` |
+| D33 | HTTP: REST ou JSON-RPC | 🔴 | ✅ | Feature `axum`; `cerne new --http rest\|jsonrpc`; método `create_transfer`; ator no corpo até a fase de autenticação |
+| D34 | A transação entre o agregado e a outbox | 🔴 | ✅ | `TransactionalPorts` (`begin`, `commit`, `outbox`); os sistemas externos ficam fora da transação |
+| D35 | Como o CLI da Fase 3 foi feito | 🟢 | ✅ | `--policy`; repositório SQL gerado com `--aggregate`; linhas inseridas ao lado de âncoras do `cerne new` |
 
 ---
 
@@ -642,3 +647,132 @@ Escolhas tomadas durante a Fase 2, todas na linha "a versão com menos conceitos
 - **Lugares marcados, não código inventado:** o `validate` gerado traz `Invariants::new(vec![])`, o evento traz `Policies::new(vec![])`, e o `execute` traz as seções do Event Storming vazias. O usuário preenche cada lugar.
 - **Teste end-to-end:** `crates/cerne-cli/tests/new_and_generate.rs` cria um projeto num diretório temporário, roda os generators, troca a dependência Git pelo caminho de `crates/cerne` e passa `cargo clippy --all-targets -- -D warnings`. É mais rígido que o `cargo check` do roadmap: o código gerado não pode ter nenhum aviso.
 - **Tipos dos campos não são importados:** `amount:Amount` gera `pub amount: Amount`, e o `use` fica com o usuário.
+
+---
+
+## D31 — Banco: o que o Cerne entrega 🔴 (Fase 3, revê o "sqlx + Postgres" da D15)
+
+**Pergunta:** a D15 previa um adapter `sqlx` + Postgres. Mas quem usa o Cerne pode não querer SQL (SurrealDB, Turso, MongoDB), ou querer SQL com outro banco. O que a lib entrega, e o que fica com a aplicação?
+
+**Por que importa:** o banco aparece em três lugares: o `Repository` de cada agregado, o read model de cada query e a tabela do Outbox (D32). Se a lib amarrar um banco, quem usa outro reescreve os três.
+
+**Um fato que limita as opções:** o `sqlx` não é um banco, é uma crate com um driver por banco (Postgres, MySQL, SQLite). SQL muda entre eles (`$1` × `?`, tipos, `RETURNING`). Turso (`libsql`) e SurrealDB têm crates próprias, fora do `sqlx`. Então "ter só o `sqlx`" não serve para Turso nem SurrealDB: para esses, o que existe em comum é a trait `Repository`.
+
+**Proposta em três camadas:**
+
+| Camada | O que é | Dependência | Para quem |
+|---|---|---|---|
+| 0. Núcleo | Os ports (`Repository<A>`, `Outbox`) e adapters em memória (`InMemoryRepository`, `InMemoryOutbox`) | nenhuma | testes, protótipos, e a base de todo o resto |
+| 1. Adapter próprio | `cerne g adapter OrderRepository --port Repository<Order>` gera o esqueleto do `impl`, e o usuário escreve as queries do banco dele | a crate do banco, no projeto do usuário | SurrealDB, Turso, MongoDB, `sqlx` com qualquer driver |
+| 2. Adapters prontos | features `sqlite` e `postgres` no `cerne`: a lib traz o Outbox desses bancos (`SqliteOutbox`, `PostgresOutbox`), e o generator gera o repositório SQL de cada agregado, explícito, com a migração | `sqlx` com o driver escolhido | quem quer o caminho do Rails: `cerne new loja --db postgres` |
+
+Na camada 2, o repositório é **código gerado no projeto**, não um tipo genérico da lib: o SQL de cada agregado fica visível e editável, como o resto do Cerne.
+
+| Opção para a camada 2 | A favor | Contra |
+|---|---|---|
+| A. Repositório SQL gerado por agregado (proposta) | Explícito; colunas de verdade; o usuário edita a query | Mais código no projeto; mudar a entidade pede mudar o SQL |
+| B. `JsonRepository<A>` genérico na lib: uma tabela `aggregates(kind, id, data)` com o agregado em JSON | Zero SQL para o usuário | Não dá para consultar por coluna; os read models sofrem; esconde o banco |
+| C. Sem camada 2 | Lib menor | Foge do "Rails para Rust" da D15 |
+
+**Recomendação:** as três camadas, com **A** na camada 2. A rde usa SQLite (roda em qualquer máquina e no CI, sem servidor). O adapter Postgres tem testes que rodam só com `DATABASE_URL` definida.
+
+**Pontos para discutir:**
+1. `cerne new` pergunta o banco (`--db memory|sqlite|postgres`, com `memory` como padrão) ou sempre gera em memória e o `--db` entra depois?
+2. MySQL entra na camada 2 agora ou só quando alguém pedir?
+
+**Resposta:**
+1. O `cerne new` pergunta o banco: `--db memory|sqlite|postgres`, com `memory` como padrão.
+2. MySQL fica de fora.
+3. A transação entre o `save` e a outbox entra já (D32). Se a camada 1 (SurrealDB, Turso) atrapalhar a transação, o Cerne fica só com SQLite e Postgres.
+4. **Nunca um repositório em memória feito de `Vec` ou `HashMap`.** "Em memória" é sempre o SQLite em memória, com o mesmo adapter SQL de produção. O `InMemoryRepository` que chegou a entrar na lib saiu.
+
+**Como ficou:**
+- A camada 0 não tem adapter em memória próprio: o núcleo traz os ports (`Repository`, `Outbox`), e o "em memória" é o `SqliteDatabase::in_memory()`, uma conexão única que nunca fecha.
+- A camada 1 ficou com o `cerne g port` e o `cerne g adapter`, que geram a trait e o esqueleto do `impl`. A transação (D34) só existe com SQLite e Postgres.
+- A camada 2 são os módulos `cerne::sqlite` (feature padrão) e `cerne::postgres` (feature `postgres`), escritos uma vez só por um `macro_rules!`: `SqliteDatabase`/`PostgresDatabase` (o pool ou uma transação aberta, com `execute`, `fetch_one`, `fetch_optional`, `fetch_all` e `migrate`), `SqliteOutbox`/`PostgresOutbox` e a função `column`. O SQL é o mesmo nos dois bancos: `$1` e `RETURNING` funcionam no SQLite. Só as migrações mudam.
+- O repositório de cada agregado é código gerado no projeto (opção A), com a migração. A rde escreve o dela à mão (`SqliteTransferRepository`).
+- O teste do adapter Postgres (`crates/cerne/tests/postgres.rs`) roda no CI, com um serviço Postgres, e não faz nada sem `DATABASE_URL`.
+
+---
+
+## D32 — Outbox: o que vai para a tabela 🔴 (Fase 3, a partir da D17)
+
+**Pergunta:** para um command disparado por policy sobreviver a uma queda do processo, ele precisa ser gravado numa tabela. Gravar o quê?
+
+| Opção | A favor | Contra |
+|---|---|---|
+| **A. O command, serializado** | O que a tabela guarda é exatamente o que vai rodar | Todo command disparado por policy ganha `Serialize` + `Deserialize` e um nome registrado |
+| B. O evento, e as policies rodam de novo ao ler | Os commands não mudam | Os eventos ganham serde; o `trigger_policies` roda duas vezes |
+| C. Adiar | Fase 3 menor | O risco da D17 continua |
+
+**Resposta:** A.
+
+**Como ficou:**
+- **A API da policy não mudou:** `Policy::new(nome, when, then)` continua igual, e o `then` continua devolvendo `Box::new(UmCommand { .. })`. Uma trait nova (`PolicyCommand`, com um `NAME`) chegou a ser proposta e foi recusada: "por que mexer no que já funciona?". O que mudou é só o limite do tipo: o command que a policy dispara precisa ser `Serialize`. A `FiredPolicy` já leva o command serializado (`outbox_entry()`).
+- **O nome vem do tipo:** `ChainAcceptedTransferCommand` → `chain_accepted_transfer` (`command_name`), o mesmo nome do método JSON-RPC (D33).
+- A aplicação registra cada command de policy no `CommandRegistry` (`.register::<ChainAcceptedTransferCommand>()`), que lê a linha da tabela de volta (`Deserialize`). Um command fora do registro é marcado como falho, com o erro.
+- A trait `Outbox` tem `store`, `next_pending`, `mark_done`, `mark_failed` e o `send_events` (o mesmo nome do `PolicyProcessor`), que dispara as policies dos eventos e guarda os commands delas.
+- O `OutboxPolicyProcessor` roda cada command numa transação própria: begin, execute, guarda os commands que os eventos dele disparam, marca a linha como feita, commit. Se falhar, a transação volta atrás e a linha fica `failed`, com o erro, sem rodar de novo sozinha. `run_pending()` roda até a outbox esvaziar (testes, o `main` da rde); `run_every(intervalo, on_error)` roda para sempre numa task (servidor).
+- **Garantia:** o command roda pelo menos uma vez; por isso, um command de policy precisa ser idempotente, como o `ChainAcceptedTransferCommand`, que confere `not_chained_yet`. O intervalo entre o `save` e a outbox está coberto pela transação da D34.
+- O `InlinePolicyProcessor` e o `TokioPolicyProcessor` continuam na lib, sem mudança, mas os projetos gerados e a rde usam a outbox.
+
+---
+
+## D33 — HTTP: REST ou JSON-RPC 🔴 (Fase 3, a partir da D15)
+
+**Pergunta:** como um command chega por HTTP?
+
+**Resposta inicial:** uma feature HTTP no `cerne`, e o usuário escolhe entre REST e JSON-RPC. No JSON-RPC, o `cerne g command` já registra o command para ser aceito.
+
+**Proposta:**
+- **Feature `axum`** no `cerne`: `Error` vira resposta HTTP (`DomainError` → 422 com as violações, `ApplicationError::NotFound` → 404, `InfrastructureError` → 500 sem detalhes). No JSON-RPC, as mesmas categorias viram códigos de erro JSON-RPC.
+- **O command é o corpo da requisição:** o command passa a derivar `Deserialize` (que a D32 já pede para os commands de policy), e o `Output` deriva `Serialize`. Um value object desserializa com `#[serde(try_from = "String")]` chamando o `new`, então as invariantes valem também na borda HTTP.
+- **REST:** `cerne g endpoint CreateTransfer POST /transfers` gera o handler em `infrastructure/http/` e uma linha em `routes.rs`.
+- **JSON-RPC:** `cerne new loja --http jsonrpc` gera `infrastructure/http/rpc.rs` com um `match` por método. A partir daí, cada `cerne g command CreateTransfer` acrescenta o braço `"create_transfer" => ...` ao `match`, como o D12 faz com o `mod.rs`.
+- **Queries** seguem o mesmo caminho: `GET` no REST, método no JSON-RPC.
+
+**Pontos para discutir:**
+1. A escolha é no `cerne new` (`--http rest|jsonrpc`), ou um projeto pode ter os dois?
+2. O nome do método JSON-RPC: `create_transfer` (snake_case do command) ou `transfers.create`?
+3. O ator (quem é o remetente) vem do corpo da requisição na Fase 3, e a autenticação fica para uma fase própria?
+
+**Resposta:**
+1. A escolha é no `cerne new`: `--http rest|jsonrpc`. Um projeto não tem os dois.
+2. O método JSON-RPC é o snake_case do command: `create_transfer`.
+3. Na Fase 3, o ator vem no corpo da requisição. A autenticação fica para uma fase própria.
+
+---
+
+## D34 — A transação entre o agregado e a outbox 🔴 (Fase 3, a partir da D32)
+
+**Pergunta:** como o `save` do agregado e a gravação dos commands na outbox entram na mesma transação, se o `Repository` e a `Outbox` são ports separados?
+
+**Decisão:** os `Ports` da aplicação implementam `TransactionalPorts`:
+
+```rust
+#[async_trait]
+pub trait TransactionalPorts: Sized + Send + Sync + 'static {
+    async fn begin(&self) -> Result<Self, Error>; // os mesmos ports, escrevendo numa transação nova
+    async fn commit(self) -> Result<(), Error>;   // descartar sem commit volta tudo atrás
+    fn outbox(&self) -> &dyn Outbox<Self>;
+}
+```
+
+- O `begin` devolve **os mesmos `Ports`**, com o repositório, as leituras e a outbox construídos sobre a transação. O command não muda: ele continua chamando `ports.transfers.save(..)`, sem saber se está numa transação.
+- O fluxo fica explícito, como no Rails: `let transaction = ports.begin().await?;`, `execute(&transaction)`, `transaction.outbox.send_events(..)`, `transaction.commit().await?`. O `execute_in_transaction(command)` faz os quatro passos e é o que os handlers HTTP usam.
+- **"E os outros ports?"** Os sistemas externos (blockchain, notificador, KYC) não entram na transação: não há como desfazer uma notificação enviada. O `begin` passa a eles os mesmos adapters (`Arc`). Por isso, a chamada a um sistema externo deve morar num command disparado por policy: ele roda pela outbox, pelo menos uma vez, depois que a transação do ator fez o commit.
+- Uma query não abre transação: ela só lê.
+- Com o SQLite em memória, o banco vive numa conexão só, e uma transação segura o banco inteiro até o commit. Dentro de uma transação, tudo precisa passar pelos ports dela, e não pelos de fora.
+
+---
+
+## D35 — Como o CLI da Fase 3 foi feito 🟢
+
+- **`cerne new --db memory|sqlite|postgres --http rest|jsonrpc`**, com `memory` e sem HTTP como padrão. A escolha fica em `[package.metadata.cerne]` no `Cargo.toml`, que o `cerne g` lê. O projeto nasce com a migração da outbox (`migrations/1_create_cerne_outbox.sql`), os `Ports` com `TransactionalPorts` e o `command_registry()`, e o `main` roda as migrações (`sqlx::migrate!()`).
+- **`cerne g command` × `cerne g command --policy`:** o registro da outbox só aceita commands com `Output = ()`, e um command de criação costuma devolver o id. Por isso o registro não é automático para todo command. O command de **ator** (sem flag) ganha o método no JSON-RPC; o command de **policy** (`--policy`) entra no `command_registry()` e não ganha método, porque não tem ator. É a mesma diferença do board.
+- **`cerne g entity --aggregate`** gera também o repositório SQL (`infrastructure/sqlite_order_repository.rs`), a migração da tabela (`orders`) e o campo `orders` nos `Ports`. Inteiros viram `BIGINT` (com `as i64`), `f32`/`f64` viram `DOUBLE PRECISION`, `bool` vira `BOOLEAN`, `String` e os enums viram `TEXT`, e qualquer outro tipo vira `TEXT` com JSON. O banco decide ids inteiros (`RETURNING id`); com `id:String`, o `save` marca onde decidir o id. Outros tipos de id são recusados com `--aggregate`.
+- **Value objects gerados derivam `Serialize`/`Deserialize`**, e o `Deserialize` passa pelo `new` (`#[serde(try_from = ..)]`): as invariantes valem na borda HTTP e na outbox. Commands derivam os dois; queries derivam `Deserialize`; read models derivam `Serialize`.
+- **Revê a D12 em um ponto:** além de acrescentar `pub mod` no fim do `mod.rs`, o `cerne g` acrescenta linhas ao lado de **âncoras**, linhas que o `cerne new` escreveu: o campo `outbox` e o `outbox: Box::new(` dos `Ports`, o `CommandRegistry::new()`, o último braço `method => methods.not_found(method),` do JSON-RPC e o `.with_state(ports)` do router REST. Nada é reescrito; sem a âncora, o generator diz o que acrescentar à mão.
+- **`cerne g endpoint <Nome> <MÉTODO> </caminho>`** (REST): `POST`/`PUT`/`PATCH`/`DELETE` apontam para o command `<Nome>Command`, que é o corpo; `GET` aponta para a query `<Nome>Query`, que é a query string. O handler do command é `ports.execute_in_transaction(command).await.map(Json)`.
+- **`cerne g port <Nome>`** gera a trait vazia em `application/ports/`; **`cerne g adapter <Nome> <Port>`** gera o `impl` em `infrastructure/`. A ligação nos `Ports` fica com o usuário, porque um sistema externo não segue um molde.
+- **Teste end-to-end:** três projetos. Memória + JSON-RPC passa no `clippy -D warnings` e roda um teste que salva, carrega e atualiza um agregado pelo repositório gerado. Postgres + REST passa no `clippy`. SQLite em arquivo, sem HTTP, passa no `clippy` e no `cargo run`, que roda as migrações geradas.

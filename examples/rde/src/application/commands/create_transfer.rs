@@ -6,8 +6,10 @@ use crate::ports::Ports;
 use cerne::application::{Command, Executed};
 use cerne::domain::{BusinessRule, BusinessRules, Entity};
 use cerne::{Error, async_trait};
+use serde::Deserialize;
 
 /// Actor: the sender. There is no id: the transfer is identified by the hash of its transaction.
+#[derive(Deserialize)]
 pub struct CreateTransferCommand {
     pub sender: String,
     pub recipient: String,

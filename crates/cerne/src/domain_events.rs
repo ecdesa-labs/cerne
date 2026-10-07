@@ -12,6 +12,7 @@ use crate::policies::FiredPolicy;
 ///
 /// struct Ports;
 ///
+/// #[derive(serde::Serialize, serde::Deserialize)]
 /// struct ReserveStockCommand {
 ///     order_id: u64,
 /// }
@@ -57,9 +58,11 @@ mod tests {
     use crate::invariants::{Invariant, Invariants};
     use crate::policies::{Policies, Policy};
     use async_trait::async_trait;
+    use serde::Serialize;
 
     struct Ports;
 
+    #[derive(Serialize)]
     struct NoopCommand;
 
     #[async_trait]

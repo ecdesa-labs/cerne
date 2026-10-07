@@ -2,6 +2,31 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::{env, fs};
 
+/// What the e2e test writes into the generated project: the generated repository, on SQLite in memory.
+const REPOSITORY_TEST: &str = r#"
+use cerne::application::TransactionalPorts;
+use cerne::domain::Entity;
+use cerne::sqlite::SqliteDatabase;
+use loja::domain::entities::order::{Order, OrderProps};
+use loja::ports::Ports;
+
+#[tokio::test]
+async fn the_generated_repository_inserts_loads_and_updates() {
+    let database = SqliteDatabase::in_memory().await.unwrap();
+    database.migrate(&sqlx::migrate!()).await.unwrap();
+    let ports = Ports::new(database);
+
+    let transaction = ports.begin().await.unwrap();
+    let order_id = transaction.orders.save(Order::new(OrderProps { qty: 3 }).unwrap()).await.unwrap();
+    transaction.commit().await.unwrap();
+
+    let order = ports.orders.load(&order_id).await.unwrap();
+    ports.orders.save(Order { qty: 5, ..order }).await.unwrap();
+
+    assert_eq!(ports.orders.load(&order_id).await.unwrap().qty, 5);
+}
+"#;
+
 fn cerne(args: &[&str], dir: &Path) -> bool {
     Command::new(env!("CARGO_BIN_EXE_cerne"))
         .args(args)
@@ -23,7 +48,7 @@ fn generated_project_passes_clippy_without_touching_anything() {
 
     // --- cerne new -----------------------------------------------------------
 
-    assert!(cerne(&["new", "loja"], &tmp));
+    assert!(cerne(&["new", "loja", "--http", "jsonrpc"], &tmp));
     assert!(
         !cerne(&["new", "loja"], &tmp),
         "new must not overwrite a project"
@@ -76,6 +101,42 @@ fn generated_project_passes_clippy_without_touching_anything() {
         &["g", "command", "PlaceOrder", "order_id:u64", "qty:i32"],
         &project
     ));
+    assert!(cerne(
+        &["g", "command", "ShipOrder", "order_id:u64", "--policy"],
+        &project
+    ));
+    assert!(cerne(&["g", "port", "Notifier"], &project));
+    assert!(cerne(
+        &["g", "adapter", "SmtpNotifier", "Notifier"],
+        &project
+    ));
+    assert!(!cerne(&["g", "adapter", "Smtp", "Mailer"], &project));
+    assert!(
+        !cerne(
+            &["g", "endpoint", "PlaceOrder", "POST", "/orders"],
+            &project
+        ),
+        "endpoint is for REST projects"
+    );
+
+    assert!(
+        !cerne(&["g", "query", "OrderSummary", "order_id:u64"], &project),
+        "a query needs its read model first"
+    );
+    assert!(cerne(
+        &[
+            "g",
+            "read_model",
+            "OrderSummary",
+            "order_id:u64",
+            "total:u64"
+        ],
+        &project
+    ));
+    assert!(cerne(
+        &["g", "query", "OrderSummary", "order_id:u64"],
+        &project
+    ));
 
     assert!(
         !cerne(&["g", "entity", "Order"], &project),
@@ -110,8 +171,107 @@ fn generated_project_passes_clippy_without_touching_anything() {
     assert!(payment.contains("method: props.method,"));
     assert!(payment.contains("pub struct PaymentProps {\n    pub method: PaymentMethod,\n}"));
 
-    // --- cargo clippy: the repository's own crate stands in for the Git dependency
+    let rpc = fs::read_to_string(project.join("src/infrastructure/http/rpc.rs")).unwrap();
 
+    assert!(rpc.contains(
+        r#""place_order" => methods.command::<PlaceOrderCommand>(request.params).await,"#
+    ));
+    assert!(
+        !rpc.contains("ship_order"),
+        "a policy command has no actor to call it"
+    );
+    assert!(!rpc.contains("match_single_binding"));
+
+    let ports = fs::read_to_string(project.join("src/ports.rs")).unwrap();
+
+    assert!(ports.contains("pub orders: Box<dyn Repository<Order>>,"));
+    assert!(ports.contains("register::<ShipOrderCommand>()"));
+
+    // --- cargo clippy and cargo test, with the generated repository on SQLite in memory
+
+    fs::write(project.join("tests/repository.rs"), REPOSITORY_TEST).unwrap();
+
+    let memory_and_jsonrpc_passed = cargo(
+        &project,
+        &workspace,
+        &["clippy", "--all-targets", "--", "-D", "warnings"],
+    ) && cargo(&project, &workspace, &["test"]);
+
+    // --- Postgres and REST: cargo clippy -------------------------------------
+
+    assert!(cerne(
+        &["new", "vitrine", "--db", "postgres", "--http", "rest"],
+        &tmp
+    ));
+    assert!(!cerne(&["new", "bad", "--db", "mysql"], &tmp));
+
+    let vitrine = tmp.join("vitrine");
+
+    assert!(cerne(
+        &[
+            "g",
+            "entity",
+            "Product",
+            "name:String",
+            "price:u64",
+            "--aggregate"
+        ],
+        &vitrine
+    ));
+    assert!(cerne(
+        &["g", "command", "AddProduct", "name:String", "price:u64"],
+        &vitrine
+    ));
+    assert!(cerne(
+        &["g", "endpoint", "AddProduct", "POST", "/products"],
+        &vitrine
+    ));
+    assert!(cerne(
+        &["g", "read_model", "Catalog", "total:u64"],
+        &vitrine
+    ));
+    assert!(cerne(&["g", "query", "Catalog", "page:u32"], &vitrine));
+    assert!(cerne(
+        &["g", "endpoint", "Catalog", "GET", "/catalog"],
+        &vitrine
+    ));
+    assert!(!cerne(
+        &["g", "endpoint", "Missing", "POST", "/missing"],
+        &vitrine
+    ));
+
+    let postgres_and_rest_passed = cargo(
+        &vitrine,
+        &workspace,
+        &["clippy", "--all-targets", "--", "-D", "warnings"],
+    );
+
+    // --- SQLite file, no HTTP: cargo run runs the generated migrations ------
+
+    assert!(cerne(&["new", "caixa", "--db", "sqlite"], &tmp));
+
+    let caixa = tmp.join("caixa");
+
+    assert!(cerne(
+        &["g", "entity", "Sale", "total:u64", "--aggregate"],
+        &caixa
+    ));
+
+    let sqlite_passed = cargo(
+        &caixa,
+        &workspace,
+        &["clippy", "--all-targets", "--", "-D", "warnings"],
+    ) && cargo(&caixa, &workspace, &["run"]);
+
+    fs::remove_dir_all(&tmp).unwrap();
+
+    assert!(memory_and_jsonrpc_passed);
+    assert!(postgres_and_rest_passed);
+    assert!(sqlite_passed);
+}
+
+/// Runs cargo in a generated project, with the repository's own crate standing in for the Git dependency.
+fn cargo(project: &Path, workspace: &Path, args: &[&str]) -> bool {
     let manifest = project.join("Cargo.toml");
     let cerne_path = workspace.join("crates/cerne");
     let cargo_toml = fs::read_to_string(&manifest).unwrap().replace(
@@ -122,15 +282,11 @@ fn generated_project_passes_clippy_without_touching_anything() {
     fs::write(&manifest, cargo_toml).unwrap();
     fs::copy(workspace.join("Cargo.lock"), project.join("Cargo.lock")).unwrap();
 
-    let clippy_passed = Command::new(env::var("CARGO").unwrap_or("cargo".into()))
-        .args(["clippy", "--all-targets", "--", "-D", "warnings"])
-        .current_dir(&project)
+    Command::new(env::var("CARGO").unwrap_or("cargo".into()))
+        .args(args)
+        .current_dir(project)
         .env("CARGO_TARGET_DIR", workspace.join("target/e2e"))
         .status()
         .unwrap()
-        .success();
-
-    fs::remove_dir_all(&tmp).unwrap();
-
-    assert!(clippy_passed);
+        .success()
 }

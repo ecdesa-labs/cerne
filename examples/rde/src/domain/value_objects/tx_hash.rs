@@ -1,10 +1,13 @@
-use cerne::domain::{EnforcementResult, Invariant, Invariants, ValueObject};
+use cerne::domain::{DomainError, EnforcementResult, Invariant, Invariants, ValueObject};
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// The id of a transfer: the Keccak-256 of its transaction, written as `0x` + 64 hex digits.
 ///
 /// Two transfers with the same hash are the same transaction, whoever computed it.
-#[derive(Debug, Clone, PartialEq)]
+/// In JSON it is the string, and reading it back goes through `new`: the invariants hold there too.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
 pub struct TxHash(String);
 
 impl ValueObject for TxHash {
@@ -25,6 +28,20 @@ impl ValueObject for TxHash {
         .enforce()?;
 
         Ok(Self(hash))
+    }
+}
+
+impl TryFrom<String> for TxHash {
+    type Error = DomainError;
+
+    fn try_from(hash: String) -> EnforcementResult<Self> {
+        Self::new(hash)
+    }
+}
+
+impl From<TxHash> for String {
+    fn from(tx_hash: TxHash) -> String {
+        tx_hash.0
     }
 }
 

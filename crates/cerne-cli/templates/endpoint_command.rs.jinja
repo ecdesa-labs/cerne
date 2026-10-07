@@ -1,0 +1,15 @@
+use crate::application::commands::{{ file }}::{{ name }}Command;
+use crate::ports::Ports;
+use axum::Json;
+use axum::extract::State;
+use cerne::Error;
+use cerne::application::{Command, TransactionalPorts};
+use std::sync::Arc;
+
+/// `{{ method }} {{ path }}`: the body is the `{{ name }}Command`, executed in a transaction; the answer is its output.
+pub async fn {{ file }}(
+    State(ports): State<Arc<Ports>>,
+    Json({{ file }}): Json<{{ name }}Command>,
+) -> Result<Json<<{{ name }}Command as Command<Ports>>::Output>, Error> {
+    ports.execute_in_transaction({{ file }}).await.map(Json)
+}

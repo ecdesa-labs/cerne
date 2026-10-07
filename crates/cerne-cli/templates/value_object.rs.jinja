@@ -1,8 +1,11 @@
-use cerne::domain::{EnforcementResult, Invariants, ValueObject};
+use cerne::domain::{DomainError, EnforcementResult, Invariants, ValueObject};
+use serde::{Deserialize, Serialize};
 
 {% if fields|length == 1 %}
 {% set field = fields[0] %}
-#[derive(Debug, Clone, PartialEq)]
+/// In JSON it is the `{{ field.ty }}` itself, and reading it back goes through `new`: the invariants hold there too.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "{{ field.ty }}", into = "{{ field.ty }}")]
 pub struct {{ name }}({{ field.ty }});
 
 impl ValueObject for {{ name }} {
@@ -14,14 +17,31 @@ impl ValueObject for {{ name }} {
         Ok(Self({{ field.name }}))
     }
 }
+
+impl TryFrom<{{ field.ty }}> for {{ name }} {
+    type Error = DomainError;
+
+    fn try_from({{ field.name }}: {{ field.ty }}) -> EnforcementResult<Self> {
+        Self::new({{ field.name }})
+    }
+}
+
+impl From<{{ name }}> for {{ field.ty }} {
+    fn from({{ field.name }}: {{ name }}) -> {{ field.ty }} {
+        {{ field.name }}.0
+    }
+}
 {% else %}
-#[derive(Debug, Clone, PartialEq)]
+/// Reading it from JSON goes through `new`: the invariants hold there too.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "{{ name }}Props")]
 pub struct {{ name }} {
 {% for field in fields %}
     {{ field.name }}: {{ field.ty }},
 {% endfor %}
 }
 
+#[derive(Deserialize)]
 pub struct {{ name }}Props {
 {% for field in fields %}
     pub {{ field.name }}: {{ field.ty }},
@@ -39,6 +59,14 @@ impl ValueObject for {{ name }} {
             {{ field.name }}: props.{{ field.name }},
 {% endfor %}
         })
+    }
+}
+
+impl TryFrom<{{ name }}Props> for {{ name }} {
+    type Error = DomainError;
+
+    fn try_from(props: {{ name }}Props) -> EnforcementResult<Self> {
+        Self::new(props)
     }
 }
 {% endif %}

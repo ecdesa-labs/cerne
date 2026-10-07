@@ -1,0 +1,5 @@
+CREATE TABLE {{ table }} (
+    {{ id_column }}{% for field in fields %},
+    {{ field.name }} {{ field.sql }} NOT NULL{% endfor %}
+
+);

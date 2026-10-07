@@ -5,8 +5,10 @@ use crate::ports::Ports;
 use cerne::application::{Command, Executed};
 use cerne::domain::{BusinessRule, BusinessRules};
 use cerne::{Error, async_trait};
+use serde::Deserialize;
 
 /// Actor: the recipient.
+#[derive(Deserialize)]
 pub struct AcceptTransferCommand {
     pub tx_hash: TxHash,
     pub recipient: String,

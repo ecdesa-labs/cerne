@@ -1,16 +1,57 @@
-use cerne::application::InlinePolicyProcessor;
-use {{ crate_name }}::ports::Ports;
+use cerne::application::OutboxPolicyProcessor;
+use cerne::{{ module }}::{{ database }};
+{% if http %}
+use {{ crate_name }}::infrastructure::http::router;
+{% endif %}
+use {{ crate_name }}::ports::{Ports, command_registry};
 use std::sync::Arc;
+{% if http %}
+use std::time::Duration;
+{% endif %}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // --- Composition root ----------------------------------------------------
 
-    let ports = Arc::new(Ports {});
+{% if db == "memory" %}
+    let database = {{ database }}::in_memory().await?;
+{% elif db == "sqlite" %}
+    let database_url = std::env::var("DATABASE_URL").unwrap_or("sqlite://{{ crate_name }}.db?mode=rwc".into());
 
-    let _sync_policy_processor = InlinePolicyProcessor::new(Arc::clone(&ports));
+    let database = {{ database }}::connect(&database_url, 5).await?;
+{% else %}
+    let database = {{ database }}::connect(&std::env::var("DATABASE_URL")?, 5).await?;
+{% endif %}
 
-    // One block per actor: the actor sends a command, and its events go to the policy processor.
+    database.migrate(&sqlx::migrate!()).await?;
+
+    let ports = Arc::new(Ports::new(database));
+
+    // --- Outbox: the commands of the policies --------------------------------
+
+    let outbox_policy_processor = OutboxPolicyProcessor::new(Arc::clone(&ports), command_registry());
+{% if http %}
+
+    tokio::spawn(async move {
+        outbox_policy_processor
+            .run_every(Duration::from_millis(200), |error| eprintln!("outbox: {error}"))
+            .await
+    });
+
+    // --- HTTP: {% if http == "jsonrpc" %}JSON-RPC on POST /rpc{% else %}REST{% endif %} ---------------------------------------------
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:3000").await?;
+
+    println!("listening on http://127.0.0.1:3000");
+
+    axum::serve(listener, router(ports)).await?;
+{% else %}
+
+    // One block per actor: `ports.execute_in_transaction(command)` runs the command and stores the commands of its
+    // policies, and the outbox runs them.
+
+    outbox_policy_processor.run_pending().await?;
+{% endif %}
 
     Ok(())
 }

@@ -3,8 +3,10 @@ use crate::domain::value_objects::tx_hash::TxHash;
 use crate::ports::Ports;
 use cerne::application::{Command, Executed};
 use cerne::{Error, async_trait};
+use serde::{Deserialize, Serialize};
 
 /// No actor: the policy "whenever a transfer is created, notify the recipient" sends this command.
+#[derive(Serialize, Deserialize)]
 pub struct NotifyRecipientCommand {
     pub tx_hash: TxHash,
     pub sender: String,

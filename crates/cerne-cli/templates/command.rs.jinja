@@ -1,7 +1,14 @@
 use crate::ports::Ports;
 use cerne::application::{Command, Executed};
 use cerne::{Error, async_trait};
+use serde::{Deserialize, Serialize};
 
+{% if policy %}
+/// No actor: a policy fires this command, and the outbox stores it (that is why it is `Serialize`).
+{% else %}
+/// Actor: who sends it? The body of the request is this command (that is why it is `Deserialize`).
+{% endif %}
+#[derive(Serialize, Deserialize)]
 pub struct {{ name }}Command {
 {% for field in fields %}
     pub {{ field.name }}: {{ field.ty }},

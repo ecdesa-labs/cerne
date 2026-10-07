@@ -1,0 +1,96 @@
+use crate::domain::entities::{{ file }}::{ {{ name }}{% for field in enums %}, {{ field.ty }}{% endfor %} };
+use crate::domain::value_objects::{{ file }}_id::{{ name }}Id;
+use cerne::application::Repository;
+use cerne::domain::{Entity, ValueObject};
+use cerne::{{ module }}::{ {{ database }}, column };
+use cerne::{ApplicationError, Error, {% if uses_infrastructure_error %}InfrastructureError, {% endif %}async_trait};
+
+/// The `{{ name }}` aggregates in the table `{{ table }}` (`migrations/{{ migration }}`).
+pub struct {{ prefix }}{{ name }}Repository {
+    database: {{ database }},
+}
+
+impl {{ prefix }}{{ name }}Repository {
+    pub fn new(database: {{ database }}) -> Self {
+        Self { database }
+    }
+}
+
+#[async_trait]
+impl Repository<{{ name }}> for {{ prefix }}{{ name }}Repository {
+    async fn load(&self, id: &{{ name }}Id) -> Result<{{ name }}, Error> {
+        let select = sqlx::query("SELECT * FROM {{ table }} WHERE id = $1").bind({{ id_bind }});
+
+        let row = self
+            .database
+            .fetch_optional(select)
+            .await?
+            .ok_or(ApplicationError::NotFound("{{ file }}"))?;
+
+        // Back through `validate`: a row that breaks an invariant is an error, not an aggregate.
+        let {{ file }} = {{ name }} {
+            id: Some({{ name }}Id::new({{ id_read }})?),
+{% for field in fields %}
+            {{ field.name }}: {{ field.read }},
+{% endfor %}
+        };
+
+        Ok({{ file }}.validate()?)
+    }
+
+    /// Without an id, inserts and the database decides it; with one, updates.
+    async fn save(&self, {{ file }}: {{ name }}) -> Result<{{ name }}Id, Error> {
+        let Some(id) = {{ file }}.id().cloned() else {
+{% if id_integer %}
+            let insert = sqlx::query("{{ insert_sql }}"){% if not fields %};{% endif %}
+
+{% for field in fields %}
+                .bind({{ field.bind }}){% if loop.last %};{% endif %}
+
+{% endfor %}
+
+            let row = self.database.fetch_one(insert).await?;
+
+            return Ok({{ name }}Id::new({{ id_read }})?);
+{% else %}
+            // The database only decides integer ids: decide a {{ id_ty }} id here.
+            return Err(InfrastructureError::from(anyhow::anyhow!("no id for the new {{ name }}")).into());
+{% endif %}
+        };
+{% if fields %}
+
+        let update = sqlx::query("{{ update_sql }}")
+            .bind({{ id_bind }})
+{% for field in fields %}
+            .bind({{ field.bind }}){% if loop.last %};{% endif %}
+
+{% endfor %}
+
+        self.database.execute(update).await?;
+{% else %}
+
+        let _ = {{ file }}; // nothing to update besides the id
+{% endif %}
+
+        Ok(id)
+    }
+}
+{% for field in enums %}
+
+fn {{ field.function }}_name({{ field.name }}: {{ field.ty }}) -> &'static str {
+    match {{ field.name }} {
+{% for variant in field.variants %}
+        {{ field.ty }}::{{ variant }} => "{{ variant }}",
+{% endfor %}
+    }
+}
+
+fn {{ field.function }}_from(name: &str) -> Result<{{ field.ty }}, Error> {
+    match name {
+{% for variant in field.variants %}
+        "{{ variant }}" => Ok({{ field.ty }}::{{ variant }}),
+{% endfor %}
+        _ => Err(InfrastructureError::from(anyhow::anyhow!("unknown {{ field.ty }} {name}")))?,
+    }
+}
+{% endfor %}

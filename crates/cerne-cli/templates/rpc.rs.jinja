@@ -1,0 +1,18 @@
+use crate::ports::Ports;
+use axum::Json;
+use axum::extract::State;
+use cerne::http::jsonrpc::{Methods, Request, Response};
+use std::sync::Arc;
+
+/// One method per command or query an actor sends, named in snake_case: `place_order` reads its params into a
+/// `PlaceOrderCommand` and executes it in a transaction. `cerne g command` and `cerne g query` add the arms.
+pub async fn rpc(State(ports): State<Arc<Ports>>, Json(request): Json<Request>) -> Json<Response> {
+    let methods = Methods::new(ports.as_ref());
+
+    #[allow(clippy::match_single_binding)] // until the first command
+    let result = match request.method.as_str() {
+        method => methods.not_found(method),
+    };
+
+    Json(Response::new(request.id, result))
+}

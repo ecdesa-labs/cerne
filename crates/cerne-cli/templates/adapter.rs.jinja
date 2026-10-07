@@ -1,0 +1,8 @@
+use crate::application::ports::{{ port_file }}::{{ port }};
+use cerne::async_trait;
+
+/// An adapter of the port `{{ port }}`.
+pub struct {{ name }};
+
+#[async_trait]
+impl {{ port }} for {{ name }} {}
