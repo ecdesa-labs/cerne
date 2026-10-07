@@ -321,6 +321,7 @@ impl Command<Ports> for CreateTransferCommand {
         // --- Domain service --------------------------------------------------
 
         let fees = estimate_fees(&self.signed_transaction);
+        let cost = self.signed_transaction.amount() + fees.total();
 
         // --- Ports -----------------------------------------------------------
 
@@ -341,13 +342,20 @@ impl Command<Ports> for CreateTransferCommand {
 
         // --- Business rules --------------------------------------------------
 
-        self.business_rules(
-            available_rdec,
-            next_nonce,
-            sender_has_an_open_transfer,
-            sender_has_kyc,
-            recipient_has_kyc,
-        )
+        let sender_can_pay = available_rdec >= cost;
+        let nonce_is_the_next_one = self.signed_transaction.nonce() == next_nonce;
+
+        BusinessRules::new(vec![
+            BusinessRule::new("sender has RDEC available", move || sender_can_pay),
+            BusinessRule::new("nonce is the next one of the sender", move || {
+                nonce_is_the_next_one
+            }),
+            BusinessRule::new("sender has no open transfer", move || {
+                !sender_has_an_open_transfer
+            }),
+            BusinessRule::new("sender has KYC", move || sender_has_kyc),
+            BusinessRule::new("recipient has KYC", move || recipient_has_kyc),
+        ])
         .check()?;
 
         // --- Aggregate -------------------------------------------------------
@@ -420,41 +428,42 @@ pub fn estimate_fees(signed_transaction: &SignedTransaction) -> Fees {
 
 #### Business rules
 
-O `execute` primeiro lê nos ports o que precisa, cada valor numa variável que se lê como frase: o saldo e o nonce na chain, o KYC dos dois e se a Alice já tem uma transferência em aberto. Esse último vem de uma query, o `OpenTransfersQuery`, que o command executa como lê qualquer outro port. Depois o `execute` passa esses valores para o método `business_rules` do command, que monta as regras:
+O `execute` primeiro lê nos ports o que precisa, cada valor numa variável que se lê como frase: o saldo e o nonce na chain, o KYC dos dois e se a Alice já tem uma transferência em aberto. Esse último vem de uma query, o `OpenTransfersQuery`, que o command executa como lê qualquer outro port. Só depois aplica as regras de negócio, cada condição numa variável calculada antes da closure:
 
 <!-- snippet: examples/rde/src/application/commands/create_transfer.rs -->
 ```rust
-impl CreateTransferCommand {
-    /// Sync and without ports, so it goes with the command wherever the command goes (D37).
-    pub fn business_rules(
-        &self,
-        available_rdec: u128,
-        next_nonce: u64,
-        sender_has_an_open_transfer: bool,
-        sender_has_kyc: bool,
-        recipient_has_kyc: bool,
-    ) -> BusinessRules {
-        let cost =
-            self.signed_transaction.amount() + estimate_fees(&self.signed_transaction).total();
-        let sender_can_pay = available_rdec >= cost;
-        let nonce_is_the_next_one = self.signed_transaction.nonce() == next_nonce;
+let sender_can_pay = available_rdec >= cost;
+let nonce_is_the_next_one = self.signed_transaction.nonce() == next_nonce;
 
-        BusinessRules::new(vec![
-            BusinessRule::new("sender has RDEC available", move || sender_can_pay),
-            BusinessRule::new("nonce is the next one of the sender", move || {
-                nonce_is_the_next_one
-            }),
-            BusinessRule::new("sender has no open transfer", move || {
-                !sender_has_an_open_transfer
-            }),
-            BusinessRule::new("sender has KYC", move || sender_has_kyc),
-            BusinessRule::new("recipient has KYC", move || recipient_has_kyc),
-        ])
-    }
-}
+BusinessRules::new(vec![
+    BusinessRule::new("sender has RDEC available", move || sender_can_pay),
+    BusinessRule::new("nonce is the next one of the sender", move || {
+        nonce_is_the_next_one
+    }),
+    BusinessRule::new("sender has no open transfer", move || {
+        !sender_has_an_open_transfer
+    }),
+    BusinessRule::new("sender has KYC", move || sender_has_kyc),
+    BusinessRule::new("recipient has KYC", move || recipient_has_kyc),
+])
+.check()?;
 ```
 
-O método é síncrono e não recebe os ports, só os valores já lidos. Por isso as regras podem ser testadas sem banco e vão junto com a struct do command quando o domínio for exportado para outras linguagens (D37). A chamada passa variáveis com o mesmo nome dos parâmetros. Assim, trocar `sender_has_kyc` com `recipient_has_kyc`, que são dois `bool` e não dão erro de compilação, fica visível na leitura.
+> [!TIP]
+> **Regras num método, só para exportar o domínio.** Numa aplicação só em Rust, as regras ficam no `execute`, como acima. Quando o domínio é exportado para outras linguagens (D37), o front precisa rodar as mesmas regras sem os ports. Aí elas saem do `execute` para um método síncrono do command, que recebe os valores já lidos (ou o agregado carregado), e o `execute` só o chama:
+>
+> ```rust
+> impl CreateTransferCommand {
+>     pub fn business_rules(&self, available_rdec: u128, sender_has_kyc: bool, recipient_has_kyc: bool) -> BusinessRules {
+>         // the same rules as above
+>     }
+> }
+>
+> // in execute
+> self.business_rules(available_rdec, sender_has_kyc, recipient_has_kyc).check()?;
+> ```
+>
+> A chamada passa variáveis com o mesmo nome dos parâmetros. Assim, trocar `sender_has_kyc` com `recipient_has_kyc`, que são dois `bool` e não dão erro de compilação, fica visível na leitura.
 
 As duas regras do nonce vêm da chain. Uma transação só entra num bloco se o nonce dela for o próximo do remetente. E a Alice tem uma transferência em aberto por vez: duas abertas teriam o mesmo nonce, e a chain aceitaria só uma.
 
@@ -874,22 +883,7 @@ let command_runs = outbox_policy_processor.run_pending().await?;
 println!("the outbox ran {command_runs:?}");
 ```
 
-O aceite segue o mesmo molde da criação. Aqui o `business_rules` recebe o agregado carregado, e as regras dizem quem pode aceitar e em que estado:
-
-<!-- snippet: examples/rde/src/application/commands/accept_transfer.rs -->
-```rust
-pub fn business_rules(&self, transfer: &Transfer) -> BusinessRules {
-    let actor_is_the_recipient = transfer.recipient == self.recipient;
-    let is_still_pending = transfer.status == TransferStatus::Pending;
-
-    BusinessRules::new(vec![
-        BusinessRule::new("only the recipient accepts", move || actor_is_the_recipient),
-        BusinessRule::new("transfer is still pending", move || is_still_pending),
-    ])
-}
-```
-
-O `execute` lê o agregado, confere as regras e faz a mudança de estado no agregado:
+O aceite segue o mesmo molde da criação. As regras de negócio dizem quem pode aceitar e em que estado, e a mudança de estado acontece no agregado:
 
 <!-- snippet: examples/rde/src/application/commands/accept_transfer.rs -->
 ```rust
@@ -900,7 +894,14 @@ async fn execute(&self, ports: &Ports) -> Result<Executed<(), Ports>, Error> {
 
     // --- Business rules --------------------------------------------------
 
-    self.business_rules(&transfer).check()?;
+    let actor_is_the_recipient = transfer.recipient == self.recipient;
+    let is_still_pending = transfer.status == TransferStatus::Pending;
+
+    BusinessRules::new(vec![
+        BusinessRule::new("only the recipient accepts", move || actor_is_the_recipient),
+        BusinessRule::new("transfer is still pending", move || is_still_pending),
+    ])
+    .check()?;
 
     // --- Aggregate -------------------------------------------------------
 
@@ -957,7 +958,14 @@ async fn execute(&self, ports: &Ports) -> Result<Executed<(), Ports>, Error> {
 
     // --- Business rules --------------------------------------------------
 
-    self.business_rules(&transfer).check()?;
+    let was_accepted = transfer.status == TransferStatus::Accepted;
+    let not_chained_yet = !transfer.chained;
+
+    BusinessRules::new(vec![
+        BusinessRule::new("transfer was accepted", move || was_accepted),
+        BusinessRule::new("transfer is not chained yet", move || not_chained_yet),
+    ])
+    .check()?;
 
     // --- External system: Blockchain -------------------------------------
 

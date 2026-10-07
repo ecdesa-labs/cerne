@@ -1,4 +1,4 @@
-use crate::domain::entities::transfer::{Transfer, TransferStatus};
+use crate::domain::entities::transfer::TransferStatus;
 use crate::domain::events::transfer_canceled_by_sender::TransferCanceledBySender;
 use crate::domain::value_objects::address::Address;
 use crate::domain::value_objects::tx_hash::TxHash;
@@ -15,19 +15,6 @@ pub struct CancelTransferCommand {
     pub sender: Address,
 }
 
-impl CancelTransferCommand {
-    /// Sync and without ports, so it goes with the command wherever the command goes (D37).
-    pub fn business_rules(&self, transfer: &Transfer) -> BusinessRules {
-        let actor_is_the_sender = transfer.sender == self.sender;
-        let is_still_pending = transfer.status == TransferStatus::Pending;
-
-        BusinessRules::new(vec![
-            BusinessRule::new("only the sender cancels", move || actor_is_the_sender),
-            BusinessRule::new("transfer is still pending", move || is_still_pending),
-        ])
-    }
-}
-
 #[async_trait]
 impl Command<Ports> for CancelTransferCommand {
     type Output = ();
@@ -39,7 +26,14 @@ impl Command<Ports> for CancelTransferCommand {
 
         // --- Business rules --------------------------------------------------
 
-        self.business_rules(&transfer).check()?;
+        let actor_is_the_sender = transfer.sender == self.sender;
+        let is_still_pending = transfer.status == TransferStatus::Pending;
+
+        BusinessRules::new(vec![
+            BusinessRule::new("only the sender cancels", move || actor_is_the_sender),
+            BusinessRule::new("transfer is still pending", move || is_still_pending),
+        ])
+        .check()?;
 
         // --- Aggregate -------------------------------------------------------
 

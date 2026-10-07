@@ -190,13 +190,13 @@ Feito no começo da Fase 3.5. A rde fala o JSON-RPC da Ethereum ([METAMASK.md](.
 **Meta:** o domínio de um projeto Cerne (value objects, entidades, invariantes, regras de negócio) vira biblioteca para TypeScript e Elixir, com as mesmas invariantes nos dois lados (**D37**).
 
 **Decidido na D37:**
-- **O que é exportado:** tudo, menos o que recebe `Ports`. Value objects e entidades vão inteiros (struct, `new`, invariantes, transições). Dos commands vão a struct e o `business_rules`; dos eventos, a struct.
+- **O que é exportado:** tudo, menos o que recebe `Ports`. Value objects e entidades vão inteiros (struct, `new`, invariantes, transições). Dos commands vão a struct e as regras de negócio, que num projeto exportado saem do `execute` para um método `business_rules` do command; dos eventos, a struct.
 - **A fronteira:** tipos nativos de cada alvo (classes com `.d.ts` no TypeScript, structs no Elixir), não JSON. Quem chama recebe tipos de verdade, e a ordem dos campos do command, que é contrato desde a D36, vem do Rust.
 - **Onde mora:** uma crate separada e gerada, que embrulha o domínio. Os atributos de cada alvo (`#[wasm_bindgen]`, `NifStruct`) e o `serde` dos eventos ficam no wrapper; o domínio não ganha nenhum.
 - **Os alvos, em ordem:** TypeScript via WebAssembly (`wasm-bindgen` + `wasm-pack`, navegador e Node), depois Elixir via Rustler (NIFs). O Node nativo via `napi-rs` fica de fora.
 
 - [x] Decidir a **D37**.
-- [x] Regras de negócio num método síncrono `business_rules` do command, chamado pelo `execute`: nos commands da rde, no exemplo da doc do `Command` e no `command.rs.jinja` do CLI. Feito no começo da Fase 3.5.
+- [ ] Nos projetos que exportam, as regras de negócio saem do `execute` para um método síncrono `business_rules` do command, chamado pelo `execute`. Numa aplicação só em Rust, elas continuam no `execute`: a rde e o `command.rs.jinja` seguem assim. O generator da crate de bindings, ou uma flag do `cerne g command`, gera o método.
 - [ ] Generator da crate que embrulha o domínio (`cerne g bindings --wasm`, depois `--elixir`), com um tipo nativo por value object, entidade, command e evento.
 - [ ] TypeScript via WebAssembly: pacote npm com as classes e os `.d.ts`. As violações chegam como uma exceção com os nomes, como `["amount is positive"]`.
 - [ ] Elixir via Rustler: as violações chegam como `{:error, ["amount is positive"]}`.

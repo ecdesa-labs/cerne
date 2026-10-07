@@ -1,4 +1,4 @@
-use crate::domain::entities::transfer::{Transfer, TransferStatus};
+use crate::domain::entities::transfer::TransferStatus;
 use crate::domain::events::failed_transaction_chained::FailedTransactionChained;
 use crate::domain::value_objects::tx_hash::TxHash;
 use crate::ports::Ports;
@@ -15,9 +15,17 @@ pub struct ChainFailedTransferCommand {
     pub tx_hash: TxHash,
 }
 
-impl ChainFailedTransferCommand {
-    /// Sync and without ports, so it goes with the command wherever the command goes (D37).
-    pub fn business_rules(&self, transfer: &Transfer) -> BusinessRules {
+#[async_trait]
+impl Command<Ports> for ChainFailedTransferCommand {
+    type Output = ();
+
+    async fn execute(&self, ports: &Ports) -> Result<Executed<(), Ports>, Error> {
+        // --- Ports -----------------------------------------------------------
+
+        let transfer = ports.transfers.load(&self.tx_hash).await?;
+
+        // --- Business rules --------------------------------------------------
+
         let was_rejected_or_canceled = matches!(
             transfer.status,
             TransferStatus::Rejected | TransferStatus::Canceled
@@ -30,21 +38,7 @@ impl ChainFailedTransferCommand {
             }),
             BusinessRule::new("transfer is not chained yet", move || not_chained_yet),
         ])
-    }
-}
-
-#[async_trait]
-impl Command<Ports> for ChainFailedTransferCommand {
-    type Output = ();
-
-    async fn execute(&self, ports: &Ports) -> Result<Executed<(), Ports>, Error> {
-        // --- Ports -----------------------------------------------------------
-
-        let transfer = ports.transfers.load(&self.tx_hash).await?;
-
-        // --- Business rules --------------------------------------------------
-
-        self.business_rules(&transfer).check()?;
+        .check()?;
 
         // --- External system: Blockchain -------------------------------------
 

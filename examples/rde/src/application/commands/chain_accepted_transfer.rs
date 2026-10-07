@@ -1,4 +1,4 @@
-use crate::domain::entities::transfer::{Transfer, TransferStatus};
+use crate::domain::entities::transfer::TransferStatus;
 use crate::domain::events::transaction_chained::TransactionChained;
 use crate::domain::value_objects::tx_hash::TxHash;
 use crate::ports::Ports;
@@ -13,19 +13,6 @@ pub struct ChainAcceptedTransferCommand {
     pub tx_hash: TxHash,
 }
 
-impl ChainAcceptedTransferCommand {
-    /// Sync and without ports, so it goes with the command wherever the command goes (D37).
-    pub fn business_rules(&self, transfer: &Transfer) -> BusinessRules {
-        let was_accepted = transfer.status == TransferStatus::Accepted;
-        let not_chained_yet = !transfer.chained;
-
-        BusinessRules::new(vec![
-            BusinessRule::new("transfer was accepted", move || was_accepted),
-            BusinessRule::new("transfer is not chained yet", move || not_chained_yet),
-        ])
-    }
-}
-
 #[async_trait]
 impl Command<Ports> for ChainAcceptedTransferCommand {
     type Output = ();
@@ -37,7 +24,14 @@ impl Command<Ports> for ChainAcceptedTransferCommand {
 
         // --- Business rules --------------------------------------------------
 
-        self.business_rules(&transfer).check()?;
+        let was_accepted = transfer.status == TransferStatus::Accepted;
+        let not_chained_yet = !transfer.chained;
+
+        BusinessRules::new(vec![
+            BusinessRule::new("transfer was accepted", move || was_accepted),
+            BusinessRule::new("transfer is not chained yet", move || not_chained_yet),
+        ])
+        .check()?;
 
         // --- External system: Blockchain -------------------------------------
 

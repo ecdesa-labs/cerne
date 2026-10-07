@@ -17,35 +17,6 @@ pub struct CreateTransferCommand {
     pub signed_transaction: SignedTransaction,
 }
 
-impl CreateTransferCommand {
-    /// Sync and without ports, so it goes with the command wherever the command goes (D37).
-    pub fn business_rules(
-        &self,
-        available_rdec: u128,
-        next_nonce: u64,
-        sender_has_an_open_transfer: bool,
-        sender_has_kyc: bool,
-        recipient_has_kyc: bool,
-    ) -> BusinessRules {
-        let cost =
-            self.signed_transaction.amount() + estimate_fees(&self.signed_transaction).total();
-        let sender_can_pay = available_rdec >= cost;
-        let nonce_is_the_next_one = self.signed_transaction.nonce() == next_nonce;
-
-        BusinessRules::new(vec![
-            BusinessRule::new("sender has RDEC available", move || sender_can_pay),
-            BusinessRule::new("nonce is the next one of the sender", move || {
-                nonce_is_the_next_one
-            }),
-            BusinessRule::new("sender has no open transfer", move || {
-                !sender_has_an_open_transfer
-            }),
-            BusinessRule::new("sender has KYC", move || sender_has_kyc),
-            BusinessRule::new("recipient has KYC", move || recipient_has_kyc),
-        ])
-    }
-}
-
 #[async_trait]
 impl Command<Ports> for CreateTransferCommand {
     type Output = TxHash; // the id of the new transfer, which MetaMask follows
@@ -54,6 +25,7 @@ impl Command<Ports> for CreateTransferCommand {
         // --- Domain service --------------------------------------------------
 
         let fees = estimate_fees(&self.signed_transaction);
+        let cost = self.signed_transaction.amount() + fees.total();
 
         // --- Ports -----------------------------------------------------------
 
@@ -74,13 +46,20 @@ impl Command<Ports> for CreateTransferCommand {
 
         // --- Business rules --------------------------------------------------
 
-        self.business_rules(
-            available_rdec,
-            next_nonce,
-            sender_has_an_open_transfer,
-            sender_has_kyc,
-            recipient_has_kyc,
-        )
+        let sender_can_pay = available_rdec >= cost;
+        let nonce_is_the_next_one = self.signed_transaction.nonce() == next_nonce;
+
+        BusinessRules::new(vec![
+            BusinessRule::new("sender has RDEC available", move || sender_can_pay),
+            BusinessRule::new("nonce is the next one of the sender", move || {
+                nonce_is_the_next_one
+            }),
+            BusinessRule::new("sender has no open transfer", move || {
+                !sender_has_an_open_transfer
+            }),
+            BusinessRule::new("sender has KYC", move || sender_has_kyc),
+            BusinessRule::new("recipient has KYC", move || recipient_has_kyc),
+        ])
         .check()?;
 
         // --- Aggregate -------------------------------------------------------
