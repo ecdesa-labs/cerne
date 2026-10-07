@@ -1,5 +1,6 @@
 use crate::domain::entities::transfer::{Transfer, TransferStatus};
 use crate::domain::events::transfer_rejected_by_recipient::TransferRejectedByRecipient;
+use crate::domain::value_objects::address::Address;
 use crate::domain::value_objects::tx_hash::TxHash;
 use crate::ports::Ports;
 use cerne::application::{Command, Executed};
@@ -11,7 +12,7 @@ use serde::Deserialize;
 #[derive(Deserialize)]
 pub struct RejectTransferCommand {
     pub tx_hash: TxHash,
-    pub recipient: String,
+    pub recipient: Address,
 }
 
 impl RejectTransferCommand {

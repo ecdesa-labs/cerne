@@ -1,22 +1,26 @@
-/// What a transfer costs on top of its amount, in RDEC.
+use crate::domain::value_objects::signed_transaction::SignedTransaction;
+
+/// What a transfer costs on top of its amount, in wei.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Fees {
-    pub decarbonization: u64,
-    pub gas: u64,
+    pub decarbonization: u128,
+    pub gas: u128,
 }
 
 impl Fees {
-    pub fn total(&self) -> u64 {
+    pub fn total(&self) -> u128 {
         self.decarbonization + self.gas
     }
 }
 
 /// Domain service "Estimar taxa de descarb e GasFee": a calculation, nothing to violate.
 ///
-/// Placeholder rates (1% decarbonization, 1 RDEC of gas): the real ones are not on the board yet.
-pub fn estimate_fees(amount: u64) -> Fees {
+/// The gas is what the signed transaction allows (gas limit × max fee per gas), the same MetaMask showed the sender.
+/// The decarbonization (1%, a placeholder rate: the real one is not on the board yet) is charged on top, and MetaMask
+/// does not show it.
+pub fn estimate_fees(signed_transaction: &SignedTransaction) -> Fees {
     Fees {
-        decarbonization: amount / 100,
-        gas: 1,
+        decarbonization: signed_transaction.amount() / 100,
+        gas: signed_transaction.gas_limit() as u128 * signed_transaction.max_fee_per_gas(),
     }
 }

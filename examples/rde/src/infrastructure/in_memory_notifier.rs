@@ -1,11 +1,12 @@
 use crate::application::ports::notifier::Notifier;
+use crate::domain::value_objects::address::Address;
 use cerne::{Error, async_trait};
 use std::sync::{Arc, Mutex};
 
 /// A message delivered to the owner of a wallet.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Notification {
-    pub wallet: String,
+    pub wallet: Address,
     pub message: String,
 }
 
@@ -22,9 +23,9 @@ impl InMemoryNotifier {
 
 #[async_trait]
 impl Notifier for InMemoryNotifier {
-    async fn notify(&self, wallet: &str, message: &str) -> Result<(), Error> {
+    async fn notify(&self, wallet: &Address, message: &str) -> Result<(), Error> {
         let notification = Notification {
-            wallet: wallet.to_string(),
+            wallet: wallet.clone(),
             message: message.to_string(),
         };
 

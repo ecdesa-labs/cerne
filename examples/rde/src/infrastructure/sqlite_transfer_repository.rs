@@ -1,5 +1,6 @@
 use crate::domain::entities::transfer::{Transfer, TransferStatus};
 use crate::domain::services::fees::Fees;
+use crate::domain::value_objects::signed_transaction::SignedTransaction;
 use crate::domain::value_objects::tx_hash::TxHash;
 use cerne::application::Repository;
 use cerne::domain::{Entity, ValueObject};
@@ -39,16 +40,18 @@ impl Repository<Transfer> for SqliteTransferRepository {
     async fn save(&self, transfer: Transfer) -> Result<TxHash, Error> {
         let upsert = sqlx::query(
             "INSERT INTO transfers
-                (tx_hash, sender, recipient, amount, decarbonization_fee, gas_fee, nonce, status, chained)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                (tx_hash, signed_transaction, sender, recipient, amount, decarbonization_fee, gas_fee, nonce, status,
+                 chained)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
              ON CONFLICT (tx_hash) DO UPDATE SET status = excluded.status, chained = excluded.chained",
         )
         .bind(transfer.tx_hash.to_string())
-        .bind(&transfer.sender)
-        .bind(&transfer.recipient)
-        .bind(transfer.amount as i64)
-        .bind(transfer.fees.decarbonization as i64)
-        .bind(transfer.fees.gas as i64)
+        .bind(transfer.signed_transaction.to_string())
+        .bind(transfer.sender.to_string())
+        .bind(transfer.recipient.to_string())
+        .bind(transfer.amount.to_string())
+        .bind(transfer.fees.decarbonization.to_string())
+        .bind(transfer.fees.gas.to_string())
         .bind(transfer.nonce as i64)
         .bind(status_name(transfer.status))
         .bind(transfer.chained);
@@ -60,22 +63,37 @@ impl Repository<Transfer> for SqliteTransferRepository {
 }
 
 /// A row back into a transfer, through `validate`: a row that breaks an invariant is an error, not a transfer.
+///
+/// Who sends, to whom and how much come from the signed transaction, read again; the other columns with them are
+/// there for the queries.
 fn transfer_from(row: &SqliteRow) -> Result<Transfer, Error> {
+    let signed_transaction = SignedTransaction::new(column(row, "signed_transaction")?)?;
+
     let transfer = Transfer {
         tx_hash: TxHash::new(column(row, "tx_hash")?)?,
-        sender: column(row, "sender")?,
-        recipient: column(row, "recipient")?,
-        amount: column::<i64>(row, "amount")? as u64,
+        sender: signed_transaction.sender().clone(),
+        recipient: signed_transaction.recipient().clone(),
+        amount: signed_transaction.amount(),
+        nonce: signed_transaction.nonce(),
+        signed_transaction,
         fees: Fees {
-            decarbonization: column::<i64>(row, "decarbonization_fee")? as u64,
-            gas: column::<i64>(row, "gas_fee")? as u64,
+            decarbonization: wei(row, "decarbonization_fee")?,
+            gas: wei(row, "gas_fee")?,
         },
-        nonce: column::<i64>(row, "nonce")? as u64,
         status: status_from(&column::<String>(row, "status")?)?,
         chained: column(row, "chained")?,
     };
 
     Ok(transfer.validate()?)
+}
+
+/// An amount stored as decimal text.
+fn wei(row: &SqliteRow, name: &str) -> Result<u128, Error> {
+    let text: String = column(row, name)?;
+
+    text.parse().map_err(|error| {
+        InfrastructureError::from(anyhow::anyhow!("{name} is not wei: {error}")).into()
+    })
 }
 
 fn status_name(status: TransferStatus) -> &'static str {

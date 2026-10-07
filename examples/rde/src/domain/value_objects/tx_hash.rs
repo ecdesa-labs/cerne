@@ -6,7 +6,7 @@ use std::fmt;
 ///
 /// Two transfers with the same hash are the same transaction, whoever computed it.
 /// In JSON it is the string, and reading it back goes through `new`: the invariants hold there too.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct TxHash(String);
 

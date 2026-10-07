@@ -1,4 +1,5 @@
 use crate::application::read_models::pending_transfers::{PendingTransfer, PendingTransfers};
+use crate::domain::value_objects::address::Address;
 use crate::domain::value_objects::tx_hash::TxHash;
 use crate::ports::Ports;
 use cerne::application::Query;
@@ -10,7 +11,7 @@ use serde::Deserialize;
 /// Actor: the recipient. This is how bob finds the tx_hash of a transfer alice sent him.
 #[derive(Deserialize)]
 pub struct PendingTransfersQuery {
-    pub recipient: String,
+    pub recipient: Address,
 }
 
 #[async_trait]
@@ -25,7 +26,7 @@ impl Query<Ports> for PendingTransfersQuery {
              WHERE recipient = $1 AND status = 'Pending'
              ORDER BY sender, nonce",
         )
-        .bind(&self.recipient);
+        .bind(self.recipient.to_string());
 
         let rows = ports.database.fetch_all(select).await?;
 
@@ -36,8 +37,8 @@ impl Query<Ports> for PendingTransfersQuery {
             .map(|row| {
                 Ok(PendingTransfer {
                     tx_hash: TxHash::new(column(row, "tx_hash")?)?,
-                    sender: column(row, "sender")?,
-                    amount: column::<i64>(row, "amount")? as u64,
+                    sender: Address::new(column(row, "sender")?)?,
+                    amount: column(row, "amount")?,
                 })
             })
             .collect::<Result<Vec<_>, Error>>()?;

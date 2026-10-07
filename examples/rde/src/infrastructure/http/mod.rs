@@ -1,3 +1,4 @@
+pub mod eth;
 pub mod rpc;
 
 use crate::ports::Ports;

@@ -94,7 +94,8 @@ pub mod jsonrpc {
             }
         }
 
-        fn invalid_params(error: serde_json::Error) -> Self {
+        /// The params do not fit what the method reads.
+        pub fn invalid_params(error: serde_json::Error) -> Self {
             Self {
                 code: -32602,
                 message: format!("invalid params: {error}"),

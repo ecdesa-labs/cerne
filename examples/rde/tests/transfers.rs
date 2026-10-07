@@ -8,14 +8,32 @@ use rde::application::commands::reject_transfer::RejectTransferCommand;
 use rde::application::queries::pending_transfers::PendingTransfersQuery;
 use rde::application::read_models::pending_transfers::PendingTransfer;
 use rde::domain::entities::transfer::TransferStatus;
+use rde::domain::services::units::WEI_PER_RDEC;
+use rde::domain::value_objects::signed_transaction::SignedTransaction;
 use rde::domain::value_objects::tx_hash::TxHash;
 use rde::infrastructure::in_memory_blockchain::InMemoryBlockchain;
 use rde::infrastructure::in_memory_kyc_registry::InMemoryKycRegistry;
 use rde::infrastructure::in_memory_notifier::{InMemoryNotifier, Notification};
+use rde::infrastructure::local_wallet::LocalWallet;
 use rde::ports::{ExternalSystems, Ports, command_registry};
 use std::sync::{Arc, Mutex};
 
 // --- Fixtures ----------------------------------------------------------------
+
+/// The gas of a transfer signed by `LocalWallet`: 21000 at 1 gwei.
+const GAS: u128 = 21_000 * 1_000_000_000;
+
+fn alice() -> LocalWallet {
+    LocalWallet::new("0x0000000000000000000000000000000000000000000000000000000000000001")
+}
+
+fn bob() -> LocalWallet {
+    LocalWallet::new("0x0000000000000000000000000000000000000000000000000000000000000002")
+}
+
+fn carol() -> LocalWallet {
+    LocalWallet::new("0x0000000000000000000000000000000000000000000000000000000000000003")
+}
 
 /// SQLite in memory with the migrations of the rde. alice has 1000 RDEC; alice and bob passed KYC, carol did not.
 /// The inbox gets every notification.
@@ -26,8 +44,14 @@ async fn ports_and_inbox() -> (Arc<Ports>, Arc<Mutex<Vec<Notification>>>) {
     database.migrate(&sqlx::migrate!()).await.unwrap();
 
     let external_systems = ExternalSystems {
-        blockchain: Arc::new(InMemoryBlockchain::new(vec![("alice", 1000)])),
-        kyc: Arc::new(InMemoryKycRegistry::new(vec!["alice", "bob"])),
+        blockchain: Arc::new(InMemoryBlockchain::new(vec![(
+            alice().address().clone(),
+            1000 * WEI_PER_RDEC,
+        )])),
+        kyc: Arc::new(InMemoryKycRegistry::new(vec![
+            alice().address().clone(),
+            bob().address().clone(),
+        ])),
         notifier: Arc::new(InMemoryNotifier::new(Arc::clone(&inbox))),
     };
 
@@ -38,6 +62,18 @@ async fn ports() -> Arc<Ports> {
     let (ports, _inbox) = ports_and_inbox().await;
 
     ports
+}
+
+/// What MetaMask does: asks the chain for the next nonce of `sender` and signs `rdec` RDEC to `recipient`.
+async fn sign(
+    ports: &Arc<Ports>,
+    sender: &LocalWallet,
+    recipient: &LocalWallet,
+    rdec: u128,
+) -> SignedTransaction {
+    let next_nonce = ports.blockchain.next_nonce(sender.address()).await.unwrap();
+
+    sender.sign_transfer(recipient.address(), rdec * WEI_PER_RDEC, next_nonce)
 }
 
 /// Runs the command in a transaction, with the commands of its policies stored in the outbox of the same one;
@@ -63,12 +99,15 @@ async fn run_outbox(ports: &Arc<Ports>) -> Vec<CommandRun> {
     outbox_policy_processor.run_pending().await.unwrap()
 }
 
-/// Creates a transfer and returns its tx_hash.
-async fn create_transfer(ports: &Arc<Ports>, sender: &str, recipient: &str, amount: u64) -> TxHash {
+/// Signs and creates a transfer, and returns its tx_hash.
+async fn create_transfer(
+    ports: &Arc<Ports>,
+    sender: &LocalWallet,
+    recipient: &LocalWallet,
+    rdec: u128,
+) -> TxHash {
     let create_transfer = CreateTransferCommand {
-        sender: sender.into(),
-        recipient: recipient.into(),
-        amount,
+        signed_transaction: sign(ports, sender, recipient, rdec).await,
     };
 
     let transaction = ports.begin().await.unwrap();
@@ -78,6 +117,12 @@ async fn create_transfer(ports: &Arc<Ports>, sender: &str, recipient: &str, amou
     create_transfer_execution.output
 }
 
+/// Accepts the transfer and runs the outbox, which chains it.
+async fn accept_and_chain(ports: &Arc<Ports>, tx_hash: &TxHash) {
+    run(ports, accept(tx_hash, &bob())).await.unwrap();
+    run_outbox(ports).await;
+}
+
 fn done(command: &str) -> CommandRun {
     CommandRun {
         command: command.into(),
@@ -85,18 +130,14 @@ fn done(command: &str) -> CommandRun {
     }
 }
 
-fn create(sender: &str, recipient: &str, amount: u64) -> CreateTransferCommand {
-    CreateTransferCommand {
-        sender: sender.into(),
-        recipient: recipient.into(),
-        amount,
-    }
+fn create(signed_transaction: SignedTransaction) -> CreateTransferCommand {
+    CreateTransferCommand { signed_transaction }
 }
 
-fn accept(tx_hash: &TxHash, recipient: &str) -> AcceptTransferCommand {
+fn accept(tx_hash: &TxHash, recipient: &LocalWallet) -> AcceptTransferCommand {
     AcceptTransferCommand {
         tx_hash: tx_hash.clone(),
-        recipient: recipient.into(),
+        recipient: recipient.address().clone(),
     }
 }
 
@@ -113,10 +154,12 @@ fn violations(result: Result<Vec<&'static str>, Error>) -> Vec<&'static str> {
 async fn new_transfer_is_pending_and_known_by_its_tx_hash() {
     let ports = ports().await;
 
-    let tx_hash = create_transfer(&ports, "alice", "bob", 100).await;
+    let tx_hash = create_transfer(&ports, &alice(), &bob(), 100).await;
 
     let transfer = ports.transfers.load(&tx_hash).await.unwrap();
     assert_eq!(transfer.status, TransferStatus::Pending);
+    assert_eq!(&transfer.sender, alice().address());
+    assert_eq!(transfer.amount, 100 * WEI_PER_RDEC);
     assert_eq!(transfer.nonce, 0);
 }
 
@@ -124,7 +167,8 @@ async fn new_transfer_is_pending_and_known_by_its_tx_hash() {
 async fn new_transfer_notifies_the_recipient() {
     let (ports, inbox) = ports_and_inbox().await;
 
-    let fired_policies = run(&ports, create("alice", "bob", 100)).await.unwrap();
+    let signed_transaction = sign(&ports, &alice(), &bob(), 100).await;
+    let fired_policies = run(&ports, create(signed_transaction)).await.unwrap();
 
     assert_eq!(
         fired_policies,
@@ -139,15 +183,20 @@ async fn new_transfer_notifies_the_recipient() {
 
     let inbox = inbox.lock().unwrap();
     assert_eq!(inbox.len(), 1);
-    assert_eq!(inbox[0].wallet, "bob");
-    assert!(inbox[0].message.starts_with("alice sent you 100 RDEC."));
+    assert_eq!(&inbox[0].wallet, bob().address());
+    assert!(
+        inbox[0]
+            .message
+            .starts_with(&format!("{} sent you 100 RDEC.", alice().address()))
+    );
 }
 
 #[tokio::test]
 async fn rejected_creation_notifies_nobody() {
     let (ports, inbox) = ports_and_inbox().await;
 
-    let result = run(&ports, create("alice", "carol", 2000)).await;
+    let signed_transaction = sign(&ports, &alice(), &carol(), 2000).await;
+    let result = run(&ports, create(signed_transaction)).await;
 
     assert!(result.is_err());
     assert!(run_outbox(&ports).await.is_empty());
@@ -158,7 +207,8 @@ async fn rejected_creation_notifies_nobody() {
 async fn creation_reports_every_broken_business_rule() {
     let ports = ports().await;
 
-    let result = run(&ports, create("alice", "carol", 2000)).await;
+    let signed_transaction = sign(&ports, &alice(), &carol(), 2000).await;
+    let result = run(&ports, create(signed_transaction)).await;
 
     assert_eq!(
         violations(result),
@@ -170,7 +220,8 @@ async fn creation_reports_every_broken_business_rule() {
 async fn sender_without_kyc_cannot_create() {
     let ports = ports().await;
 
-    let result = run(&ports, create("carol", "bob", 1)).await;
+    let signed_transaction = sign(&ports, &carol(), &bob(), 1).await;
+    let result = run(&ports, create(signed_transaction)).await;
 
     assert_eq!(
         violations(result),
@@ -182,9 +233,35 @@ async fn sender_without_kyc_cannot_create() {
 async fn transfer_to_oneself_breaks_an_invariant() {
     let ports = ports().await;
 
-    let result = run(&ports, create("alice", "alice", 10)).await;
+    let signed_transaction = sign(&ports, &alice(), &alice(), 10).await;
+    let result = run(&ports, create(signed_transaction)).await;
 
     assert_eq!(violations(result), vec!["sender is not the recipient"]);
+}
+
+#[tokio::test]
+async fn the_nonce_must_be_the_next_one_of_the_sender() {
+    let ports = ports().await;
+
+    let signed_transaction = alice().sign_transfer(bob().address(), WEI_PER_RDEC, 5);
+    let result = run(&ports, create(signed_transaction)).await;
+
+    assert_eq!(
+        violations(result),
+        vec!["nonce is the next one of the sender"]
+    );
+}
+
+#[tokio::test]
+async fn a_sender_has_one_open_transfer_at_a_time() {
+    let ports = ports().await;
+    create_transfer(&ports, &alice(), &bob(), 100).await;
+
+    // Same nonce: the chain has not taken the first transaction yet.
+    let second = sign(&ports, &alice(), &bob(), 200).await;
+    let result = run(&ports, create(second)).await;
+
+    assert_eq!(violations(result), vec!["sender has no open transfer"]);
 }
 
 // --- Read model: pending transfers -------------------------------------------
@@ -192,12 +269,12 @@ async fn transfer_to_oneself_breaks_an_invariant() {
 #[tokio::test]
 async fn recipient_sees_only_the_transfers_still_pending_for_them() {
     let ports = ports().await;
-    let to_bob = create_transfer(&ports, "alice", "bob", 100).await;
-    let accepted_by_bob = create_transfer(&ports, "alice", "bob", 200).await;
-    run(&ports, accept(&accepted_by_bob, "bob")).await.unwrap();
+    let accepted_by_bob = create_transfer(&ports, &alice(), &bob(), 200).await;
+    accept_and_chain(&ports, &accepted_by_bob).await;
+    let to_bob = create_transfer(&ports, &alice(), &bob(), 100).await;
 
     let pending_transfers = PendingTransfersQuery {
-        recipient: "bob".into(),
+        recipient: bob().address().clone(),
     }
     .execute(&ports)
     .await
@@ -207,8 +284,8 @@ async fn recipient_sees_only_the_transfers_still_pending_for_them() {
         pending_transfers.transfers,
         vec![PendingTransfer {
             tx_hash: to_bob,
-            sender: "alice".into(),
-            amount: 100,
+            sender: alice().address().clone(),
+            amount: (100 * WEI_PER_RDEC).to_string(),
         }]
     );
 }
@@ -216,10 +293,10 @@ async fn recipient_sees_only_the_transfers_still_pending_for_them() {
 #[tokio::test]
 async fn sender_has_no_pending_transfer_to_answer() {
     let ports = ports().await;
-    create_transfer(&ports, "alice", "bob", 100).await;
+    create_transfer(&ports, &alice(), &bob(), 100).await;
 
     let pending_transfers = PendingTransfersQuery {
-        recipient: "alice".into(),
+        recipient: alice().address().clone(),
     }
     .execute(&ports)
     .await
@@ -233,9 +310,9 @@ async fn sender_has_no_pending_transfer_to_answer() {
 #[tokio::test]
 async fn accepted_transfer_is_chained() {
     let ports = ports().await;
-    let tx_hash = create_transfer(&ports, "alice", "bob", 100).await;
+    let tx_hash = create_transfer(&ports, &alice(), &bob(), 100).await;
 
-    let fired_policies = run(&ports, accept(&tx_hash, "bob")).await.unwrap();
+    let fired_policies = run(&ports, accept(&tx_hash, &bob())).await.unwrap();
 
     assert_eq!(
         fired_policies,
@@ -248,50 +325,114 @@ async fn accepted_transfer_is_chained() {
     let transfer = ports.transfers.load(&tx_hash).await.unwrap();
     assert_eq!(transfer.status, TransferStatus::Accepted);
     assert!(transfer.chained);
-    assert_eq!(ports.blockchain.available_rdec("alice").await.unwrap(), 898); // 100 + 1% + 1 of gas
-    assert_eq!(ports.blockchain.available_rdec("bob").await.unwrap(), 100);
+
+    // 100 RDEC, 1% of decarbonization and the gas the transaction allows.
+    let alice_pays = 100 * WEI_PER_RDEC + WEI_PER_RDEC + GAS;
+    assert_eq!(
+        ports
+            .blockchain
+            .available_rdec(alice().address())
+            .await
+            .unwrap(),
+        1000 * WEI_PER_RDEC - alice_pays
+    );
+    assert_eq!(
+        ports
+            .blockchain
+            .available_rdec(bob().address())
+            .await
+            .unwrap(),
+        100 * WEI_PER_RDEC
+    );
+
+    let receipt = ports.blockchain.receipt(&tx_hash).await.unwrap().unwrap();
+    assert!(receipt.succeeded);
+    assert_eq!(receipt.block_number, 1);
 }
 
 #[tokio::test]
 async fn only_the_recipient_accepts() {
     let ports = ports().await;
-    let tx_hash = create_transfer(&ports, "alice", "bob", 100).await;
+    let tx_hash = create_transfer(&ports, &alice(), &bob(), 100).await;
 
-    let result = run(&ports, accept(&tx_hash, "alice")).await;
+    let result = run(&ports, accept(&tx_hash, &alice())).await;
 
     assert_eq!(violations(result), vec!["only the recipient accepts"]);
 }
 
 #[tokio::test]
-async fn rejected_transfer_is_never_chained() {
+async fn rejected_transfer_is_chained_as_failed() {
     let ports = ports().await;
-    let tx_hash = create_transfer(&ports, "alice", "bob", 100).await;
+    let tx_hash = create_transfer(&ports, &alice(), &bob(), 100).await;
 
     let reject_transfer = RejectTransferCommand {
         tx_hash: tx_hash.clone(),
-        recipient: "bob".into(),
+        recipient: bob().address().clone(),
     };
     let fired_policies = run(&ports, reject_transfer).await.unwrap();
 
-    assert!(fired_policies.is_empty());
     assert_eq!(
-        ports.transfers.load(&tx_hash).await.unwrap().status,
-        TransferStatus::Rejected
+        fired_policies,
+        vec!["whenever a transfer is rejected, chain it as failed"]
     );
     assert_eq!(
-        violations(run(&ports, accept(&tx_hash, "bob")).await),
+        run_outbox(&ports).await,
+        vec![done("chain_failed_transfer")]
+    );
+
+    let transfer = ports.transfers.load(&tx_hash).await.unwrap();
+    assert_eq!(transfer.status, TransferStatus::Rejected);
+    assert!(transfer.chained);
+
+    // In a block, as failed: no RDEC moved, and the nonce of alice moved on.
+    let receipt = ports.blockchain.receipt(&tx_hash).await.unwrap().unwrap();
+    assert!(!receipt.succeeded);
+    assert_eq!(
+        ports
+            .blockchain
+            .available_rdec(alice().address())
+            .await
+            .unwrap(),
+        1000 * WEI_PER_RDEC
+    );
+    assert_eq!(
+        ports
+            .blockchain
+            .next_nonce(alice().address())
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        violations(run(&ports, accept(&tx_hash, &bob())).await),
         vec!["transfer is still pending"]
     );
 }
 
 #[tokio::test]
+async fn after_a_rejection_the_sender_sends_again() {
+    let ports = ports().await;
+    let rejected = create_transfer(&ports, &alice(), &bob(), 100).await;
+    let reject_transfer = RejectTransferCommand {
+        tx_hash: rejected,
+        recipient: bob().address().clone(),
+    };
+    run(&ports, reject_transfer).await.unwrap();
+    run_outbox(&ports).await;
+
+    let tx_hash = create_transfer(&ports, &alice(), &bob(), 50).await;
+
+    assert_eq!(ports.transfers.load(&tx_hash).await.unwrap().nonce, 1);
+}
+
+#[tokio::test]
 async fn only_the_sender_cancels() {
     let ports = ports().await;
-    let tx_hash = create_transfer(&ports, "alice", "bob", 100).await;
+    let tx_hash = create_transfer(&ports, &alice(), &bob(), 100).await;
 
     let cancel_by_bob = CancelTransferCommand {
         tx_hash: tx_hash.clone(),
-        sender: "bob".into(),
+        sender: bob().address().clone(),
     };
     assert_eq!(
         violations(run(&ports, cancel_by_bob).await),
@@ -300,59 +441,20 @@ async fn only_the_sender_cancels() {
 
     let cancel_by_alice = CancelTransferCommand {
         tx_hash: tx_hash.clone(),
-        sender: "alice".into(),
+        sender: alice().address().clone(),
     };
-    run(&ports, cancel_by_alice).await.unwrap();
+    let fired_policies = run(&ports, cancel_by_alice).await.unwrap();
 
+    assert_eq!(
+        fired_policies,
+        vec!["whenever a transfer is canceled, chain it as failed"]
+    );
+    assert_eq!(
+        run_outbox(&ports).await,
+        vec![done("chain_failed_transfer")]
+    );
     assert_eq!(
         ports.transfers.load(&tx_hash).await.unwrap().status,
         TransferStatus::Canceled
     );
-}
-
-// --- Hotspots ----------------------------------------------------------------
-
-/// Hotspot 1 ("A criação reserva o RDEC?"), as the board stands today: creating does not reserve.
-/// Two transfers that together exceed the balance are both created.
-#[tokio::test]
-async fn hotspot_1_creating_does_not_reserve_rdec() {
-    let ports = ports().await;
-
-    let first = create_transfer(&ports, "alice", "bob", 600).await;
-    let second = create_transfer(&ports, "alice", "bob", 500).await;
-
-    assert_eq!(
-        ports.transfers.load(&first).await.unwrap().status,
-        TransferStatus::Pending
-    );
-    assert_eq!(
-        ports.transfers.load(&second).await.unwrap().status,
-        TransferStatus::Pending
-    );
-}
-
-/// Hotspot 5: the nonce goes into the tx_hash at creation, but only advances on the chain after acceptance.
-/// Two pending transfers of a sender carry the same nonce, so the chain refuses the second one accepted.
-#[tokio::test]
-async fn hotspot_5_pending_transfers_of_a_sender_share_a_nonce() {
-    let ports = ports().await;
-    let first = create_transfer(&ports, "alice", "bob", 100).await;
-    let second = create_transfer(&ports, "alice", "bob", 200).await;
-
-    run(&ports, accept(&first, "bob")).await.unwrap();
-    run(&ports, accept(&second, "bob")).await.unwrap();
-
-    assert_eq!(
-        run_outbox(&ports).await,
-        vec![
-            done("chain_accepted_transfer"),
-            CommandRun {
-                command: "chain_accepted_transfer".into(),
-                error: Some("chain refused: alice expected nonce 1, got 0".into()),
-            }
-        ]
-    );
-    let second = ports.transfers.load(&second).await.unwrap();
-    assert_eq!(second.status, TransferStatus::Accepted);
-    assert!(!second.chained);
 }

@@ -1,3 +1,4 @@
+pub mod failed_transaction_chained;
 pub mod recipient_notified;
 pub mod transaction_chained;
 pub mod transfer_accepted_by_recipient;

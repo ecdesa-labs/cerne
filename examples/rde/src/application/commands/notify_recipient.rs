@@ -1,4 +1,6 @@
 use crate::domain::events::recipient_notified::RecipientNotified;
+use crate::domain::services::units::rdec;
+use crate::domain::value_objects::address::Address;
 use crate::domain::value_objects::tx_hash::TxHash;
 use crate::ports::Ports;
 use cerne::application::{Command, Executed};
@@ -9,9 +11,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize)]
 pub struct NotifyRecipientCommand {
     pub tx_hash: TxHash,
-    pub sender: String,
-    pub recipient: String,
-    pub amount: u64,
+    pub sender: Address,
+    pub recipient: Address,
+    /// In wei.
+    pub amount: u128,
 }
 
 #[async_trait]
@@ -22,8 +25,10 @@ impl Command<Ports> for NotifyRecipientCommand {
         // --- External system: Notifier ---------------------------------------
 
         let message = format!(
-            "{} sent you {} RDEC. Accept or reject the transfer {}.",
-            self.sender, self.amount, self.tx_hash
+            "{} sent you {}. Accept or reject the transfer {}.",
+            self.sender,
+            rdec(self.amount),
+            self.tx_hash
         );
 
         ports.notifier.notify(&self.recipient, &message).await?;
