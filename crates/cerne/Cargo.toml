@@ -1,0 +1,15 @@
+[package]
+name = "cerne"
+description = "Event Storming building blocks for Domain-Driven Design in Rust"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow = "1"
+async-trait = "0.1"
+thiserror = "2"
+tokio = { version = "1", features = ["sync", "rt"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
