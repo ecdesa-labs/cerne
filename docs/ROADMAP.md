@@ -146,9 +146,29 @@ O que já existe no código, comparado com os elementos do Event Storming:
 - [ ] Executar o REST gerado: no e2e, mandar um `POST` e um `GET` ao projeto `--http rest`, como o teste de ida e volta que já existe para o repositório. Hoje o handler gerado pelo `cerne g endpoint` só passa pelo `clippy`; a rde usa JSON-RPC.
 
 - [ ] Acrescentar HTTP a um projeto que nasceu sem `--http`: hoje não há `cerne g http rest|jsonrpc`, e o `cerne g endpoint` recusa o projeto. Quem muda de ideia cria a camada à mão.
-- [ ] JSON-RPC com `params` por posição (array), além de por nome (objeto): decidir e implementar a **D36**, item 1.
-- [ ] JSON-RPC: conferir o `"jsonrpc": "2.0"` e responder `-32600` quando ele faltar ou for outro (**D36**, item 2).
-- [ ] JSON-RPC: responder JSON malformado com `-32700` e um envelope inválido (sem `method`) com `-32600`, em vez do erro HTTP do extractor do axum (**D36**, item 3).
+- [ ] JSON-RPC com `params` por posição (array) e por nome (objeto) (**D36** ✅). Por posição é o que a MetaMask manda ([METAMASK.md](./METAMASK.md)).
+  - `crates/cerne/src/http.rs`: o `serde` já lê um array numa struct de command, na ordem dos campos. O `eth_sendRawTransaction` da rde depende disso (`["0x02f8…"]` vira o `CreateTransferCommand`). Falta o teste na lib, para o `Methods::command` e o `Methods::query`; um `params` que não é array nem objeto volta `-32602`.
+  - `examples/rde/tests/http.rs`: já cobertos o `params` em array para um command (`eth_sendRawTransaction`), o `params` ausente (`net_version`) e o `id` como string. Faltam o array para uma query, uma posição que leva um objeto (como o `eth_call`) e o `id` como número grande.
+  - Documentar que a ordem dos campos do command é contrato: no doc comment do `Methods`, no `rpc.rs.jinja` e no `command.rs.jinja` do CLI.
+  - README, passo 7: o `curl` com `params` em array.
+- [ ] JSON-RPC: a `Request` ganha o campo `jsonrpc`, e um valor diferente de `"2.0"` (ou a ausência dele) volta `-32600` (**D36**).
+- [ ] JSON-RPC: o handler lê o corpo cru com `serde_json`, em vez do extractor `Json<Request>` do axum. JSON malformado volta `-32700`, e um envelope sem `method` volta `-32600`, sempre com HTTP 200 e `"id": null` (**D36**). A lib dá a função que transforma o corpo numa `Request` ou num `ErrorObject`; o `rpc.rs` da rde e o `rpc.rs.jinja` do CLI passam a usá-la. Testes: corpo que não é JSON, JSON sem `method` e `"jsonrpc": "1.0"`.
+
+### A rde chamada pela MetaMask (D38 ✅)
+
+Feito no começo da Fase 3.5. A rde fala o JSON-RPC da Ethereum ([METAMASK.md](./METAMASK.md)). Uma transação assinada por uma MetaMask de verdade (a capturada em 2026-10-07) passou pelo servidor: criação, aceite, encadeamento e recibo com `status: "0x1"`.
+
+- [x] `eth_sendRawTransaction` é o `CreateTransferCommand`, cujo único campo é a `SignedTransaction`: um value object que decodifica a transação EIP-1559 (crate `alloy`), recupera o remetente da assinatura e confere a chain (8808). O `create_transfer` saiu do JSON-RPC.
+- [x] O `tx_hash` é o keccak dos bytes assinados, o mesmo que a MetaMask calcula. O encadeamento manda à chain a transação como chegou.
+- [x] Valores em wei (`u128`); no banco e no read model, como texto. O `Address` é um value object (`0x` + 40 dígitos, em minúsculas).
+- [x] Taxas: o gas que a transação assinada permite (gas limit × max fee per gas) mais 1% de descarbonização por cima.
+- [x] Regras novas na criação: "nonce is the next one of the sender" e "sender has no open transfer" (um envio em aberto por remetente, lido pelo `OpenTransfersQuery`). Elas resolvem os hotspots 1 e 5.
+- [x] Rejeitada ou cancelada, a transferência entra na chain como falha (`ChainFailedTransferCommand`): recibo com `status: "0x0"`, nenhum saldo muda, e o nonce anda. A MetaMask para de esperar e libera o próximo envio.
+- [x] O port `Blockchain` ganhou blocos, recibos e o preço do gas; o `InMemoryBlockchain` põe cada transação num bloco próprio. O `eth.rs` responde os métodos de leitura da MetaMask a partir dele.
+- [x] O servidor lê o `RDE_WALLETS`: as carteiras que começam com 1000 RDEC e com KYC.
+- [ ] O "Cancelar" da MetaMask: ela manda outra transação com o mesmo nonce, valor 0 e taxa 10% maior. Mapear para o `CancelTransferCommand`, com a regra de que só se cancela o que ainda não foi incluído numa proposta de bloco. A MetaMask passa a acompanhar o hash da transação nova.
+- [ ] A mensagem do `-32001`: a MetaMask mostra só o `message` do erro ("the domain refused the request"), e as violações ficam no `data`, onde a pessoa não as vê. Pôr os nomes das violações no `message`.
+- [ ] A chain em memória recomeça a cada vez que o servidor sobe, mas o `rde.db` fica. Hoje é preciso apagar o `rde.db` ao reiniciar.
 
 **Pronto quando:** o CI roda o Postgres, o e2e executa os handlers REST gerados e o JSON-RPC segue a especificação nos três itens da D36.
 
@@ -169,16 +189,34 @@ O que já existe no código, comparado com os elementos do Event Storming:
 
 **Meta:** o domínio de um projeto Cerne (value objects, entidades, invariantes, regras de negócio) vira biblioteca para TypeScript e Elixir, com as mesmas invariantes nos dois lados (**D37**).
 
-- [ ] Decidir a **D37**: a fronteira (JSON ou tipos nativos), o que sai e a ordem dos alvos.
-- [ ] Generator de uma crate à parte que embrulha o domínio (`cerne g bindings ...`), sem atributos de alvo no domínio.
-- [ ] TypeScript via WebAssembly (`wasm-bindgen` + `wasm-pack`): pacote npm com os tipos.
-- [ ] Elixir via Rustler (NIFs).
-- [ ] Na rde: o `TxHash` e a `Transfer` validados em TypeScript e em Elixir com as mesmas violações do Rust.
+**Decidido na D37:**
+- **O que é exportado:** tudo, menos o que recebe `Ports`. Value objects e entidades vão inteiros (struct, `new`, invariantes, transições). Dos commands vão a struct e o `business_rules`; dos eventos, a struct.
+- **A fronteira:** tipos nativos de cada alvo (classes com `.d.ts` no TypeScript, structs no Elixir), não JSON. Quem chama recebe tipos de verdade, e a ordem dos campos do command, que é contrato desde a D36, vem do Rust.
+- **Onde mora:** uma crate separada e gerada, que embrulha o domínio. Os atributos de cada alvo (`#[wasm_bindgen]`, `NifStruct`) e o `serde` dos eventos ficam no wrapper; o domínio não ganha nenhum.
+- **Os alvos, em ordem:** TypeScript via WebAssembly (`wasm-bindgen` + `wasm-pack`, navegador e Node), depois Elixir via Rustler (NIFs). O Node nativo via `napi-rs` fica de fora.
 
-**Fica de fora:** a camada de aplicação (commands, repositórios, outbox), que é async e depende de `tokio` e `sqlx`, e as policies.
+- [x] Decidir a **D37**.
+- [x] Regras de negócio num método síncrono `business_rules` do command, chamado pelo `execute`: nos commands da rde, no exemplo da doc do `Command` e no `command.rs.jinja` do CLI. Feito no começo da Fase 3.5.
+- [ ] Generator da crate que embrulha o domínio (`cerne g bindings --wasm`, depois `--elixir`), com um tipo nativo por value object, entidade, command e evento.
+- [ ] TypeScript via WebAssembly: pacote npm com as classes e os `.d.ts`. As violações chegam como uma exceção com os nomes, como `["amount is positive"]`.
+- [ ] Elixir via Rustler: as violações chegam como `{:error, ["amount is positive"]}`.
+- [ ] Na rde: o `TxHash`, a `Transfer` e o `CreateTransferCommand::business_rules` dão em TypeScript e em Elixir as mesmas violações do Rust.
+
+**Fica de fora:** tudo o que recebe `Ports`: o `execute` dos commands, o `trigger_policies` dos eventos, os repositórios e a outbox.
+
+---
+
+## Fase 6 — Skills para agentes
+
+**Meta:** qualquer agente (Claude Code e outros) sabe usar todo o potencial do Cerne e escreve código legível no estilo do projeto, sem depender de quem já conhece o código.
+
+- [ ] Skills que ensinam o fluxo do Event Storming ao código: cada post-it, o generator que o cria (`cerne g ...`) e a seção do `execute` onde ele mora.
+- [ ] As convenções de estilo do `CLAUDE.md` viram parte das skills, com exemplos tirados da rde.
+
+Escopo detalhado ainda a definir.
 
 ---
 
 ## Decisões pendentes
 
-Duas: a **D36**, item 1 (`params` do JSON-RPC por nome ou por posição), e a **D37** (o domínio em outras linguagens). O ponto em aberto da D23 (id gerado pelo repositório) foi resolvido na D28. Ver o resumo em [DECISOES.md](./DECISOES.md).
+Nenhuma. A D36, a D37 e a D38 foram decididas no começo da Fase 3.5; a D36 e a D38, com base na captura da MetaMask. O ponto em aberto da D23 (id gerado pelo repositório) foi resolvido na D28. Ver o resumo em [DECISOES.md](./DECISOES.md).
