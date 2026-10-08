@@ -1,62 +1,31 @@
 use crate::domain::value_objects::order_id::OrderId;
-use cerne::domain::{Aggregate, EnforcementResult, Entity, Invariant, Invariants};
+use cerne::domain::{EnforcementResult, Invariant, Invariants, Validate, aggregate};
 
 // --- Status ------------------------------------------------------------------
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub enum OrderStatus {
+    #[default]
     Placed,
     Paid,
 }
 
 // --- Aggregate ---------------------------------------------------------------
 
+#[aggregate]
 #[derive(Debug, Clone, PartialEq)]
 pub struct Order {
     pub id: Option<OrderId>,
     pub product: String,
     pub quantity: u32,
     pub total: u64,
+    #[skip_constructor]
     pub status: OrderStatus,
 }
 
-/// What a new `Order` is made of. There is no id: the repository decides it on the first `save`.
-pub struct OrderProps {
-    pub product: String,
-    pub quantity: u32,
-    pub total: u64,
-}
+// --- Invariants --------------------------------------------------------------
 
-impl Aggregate for Order {}
-
-// --- Entity: identity and invariants -----------------------------------------
-
-impl Entity for Order {
-    type Id = OrderId;
-    type Props = OrderProps;
-
-    fn id(&self) -> Option<&OrderId> {
-        self.id.as_ref()
-    }
-
-    fn with_id(self, id: OrderId) -> Self {
-        Self {
-            id: Some(id),
-            ..self
-        }
-    }
-
-    fn new(props: OrderProps) -> EnforcementResult<Self> {
-        Self {
-            id: None,
-            product: props.product,
-            quantity: props.quantity,
-            total: props.total,
-            status: OrderStatus::Placed,
-        }
-        .validate()
-    }
-
+impl Validate for Order {
     fn validate(self) -> EnforcementResult<Self> {
         let order_has_a_product = !self.product.is_empty();
         let quantity_is_positive = self.quantity > 0;

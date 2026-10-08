@@ -1,11 +1,11 @@
 use crate::domain::entities::order::{Order, OrderStatus};
 use crate::domain::value_objects::order_id::OrderId;
 use cerne::application::Repository;
-use cerne::domain::{Entity, ValueObject};
+use cerne::domain::{Entity, Validate, ValueObject};
 use cerne::sqlite::{SqliteDatabase, column};
 use cerne::{ApplicationError, Error, InfrastructureError, async_trait};
 
-/// The `Order` aggregates in the table `orders` (`migrations/1791482698_create_orders.sql`).
+/// The `Order` aggregates in the table `orders` (`migrations/1791486662_create_orders.sql`).
 pub struct SqliteOrderRepository {
     database: SqliteDatabase,
 }

@@ -877,10 +877,14 @@ fn existing_aggregates() -> Result<Vec<ExistingAggregate>, Box<dyn Error>> {
     for file in post_it_files("src/domain/entities")? {
         let entity = fs::read_to_string(format!("src/domain/entities/{file}.rs"))?;
 
-        let Some(name) = entity.lines().find_map(|line| {
-            line.strip_prefix("impl Aggregate for ")
-                .and_then(|rest| rest.split_whitespace().next())
-        }) else {
+        let Some(name) = entity
+            .lines()
+            .skip_while(|line| line.trim() != "#[aggregate]")
+            .find_map(|line| {
+                line.strip_prefix("pub struct ")
+                    .and_then(|rest| rest.split_whitespace().next())
+            })
+        else {
             continue;
         };
 
@@ -904,6 +908,7 @@ fn existing_aggregates() -> Result<Vec<ExistingAggregate>, Box<dyn Error>> {
             .map(|(field_name, ty)| {
                 let variants: Vec<String> = struct_body(&entity, &format!("pub enum {ty} {{"))
                     .iter()
+                    .filter(|line| !line.starts_with("#["))
                     .map(|variant| variant.trim_end_matches(',').to_string())
                     .collect();
 

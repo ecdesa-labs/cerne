@@ -5,7 +5,7 @@
 | Post-it | Conceito | No Cerne |
 |---|---|---|
 | 🟦 | Command | trait `Command<Ports>`, que devolve `Executed { output, events }` |
-| 🟨 | Aggregate / Entity | traits `Entity` e `Aggregate` |
+| 🟨 | Aggregate / Entity | atributos `#[entity]` e `#[aggregate]`, que escrevem as traits `Entity` e `Aggregate`; as invariantes ficam na trait `Validate` |
 | — | Value Object | trait `ValueObject`, que também é o tipo do id de toda entidade |
 | 🟧 | Domain Event | trait `DomainEvent<Ports>` |
 | 🟪 | Policy | `Policy` + `Policies`; os commands delas vão para a `Outbox`, e o `OutboxPolicyProcessor` os executa |
@@ -295,64 +295,33 @@ Como o `cerne g entity Order product:String quantity:u32 total:u64 status=Placed
 <!-- generated: src/domain/entities/order.rs -->
 ```rust
 use crate::domain::value_objects::order_id::OrderId;
-use cerne::domain::{Aggregate, EnforcementResult, Entity, Invariants};
+use cerne::domain::{EnforcementResult, Invariants, Validate, aggregate};
 
 // --- Status ------------------------------------------------------------------
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub enum OrderStatus {
+    #[default]
     Placed,
     Paid,
 }
 
 // --- Aggregate ---------------------------------------------------------------
 
+#[aggregate]
 #[derive(Debug, Clone, PartialEq)]
 pub struct Order {
     pub id: Option<OrderId>,
     pub product: String,
     pub quantity: u32,
     pub total: u64,
+    #[skip_constructor]
     pub status: OrderStatus,
 }
 
-/// What a new `Order` is made of. There is no id: the repository decides it on the first `save`.
-pub struct OrderProps {
-    pub product: String,
-    pub quantity: u32,
-    pub total: u64,
-}
+// --- Invariants --------------------------------------------------------------
 
-impl Aggregate for Order {}
-
-// --- Entity: identity and invariants -----------------------------------------
-
-impl Entity for Order {
-    type Id = OrderId;
-    type Props = OrderProps;
-
-    fn id(&self) -> Option<&OrderId> {
-        self.id.as_ref()
-    }
-
-    fn with_id(self, id: OrderId) -> Self {
-        Self {
-            id: Some(id),
-            ..self
-        }
-    }
-
-    fn new(props: OrderProps) -> EnforcementResult<Self> {
-        Self {
-            id: None,
-            product: props.product,
-            quantity: props.quantity,
-            total: props.total,
-            status: OrderStatus::Placed,
-        }
-        .validate()
-    }
-
+impl Validate for Order {
     fn validate(self) -> EnforcementResult<Self> {
         Invariants::new(vec![]).enforce()?;
 
@@ -370,64 +339,33 @@ Depois de preenchido:
 <!-- file: src/domain/entities/order.rs -->
 ```rust
 use crate::domain::value_objects::order_id::OrderId;
-use cerne::domain::{Aggregate, EnforcementResult, Entity, Invariant, Invariants};
+use cerne::domain::{EnforcementResult, Invariant, Invariants, Validate, aggregate};
 
 // --- Status ------------------------------------------------------------------
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub enum OrderStatus {
+    #[default]
     Placed,
     Paid,
 }
 
 // --- Aggregate ---------------------------------------------------------------
 
+#[aggregate]
 #[derive(Debug, Clone, PartialEq)]
 pub struct Order {
     pub id: Option<OrderId>,
     pub product: String,
     pub quantity: u32,
     pub total: u64,
+    #[skip_constructor]
     pub status: OrderStatus,
 }
 
-/// What a new `Order` is made of. There is no id: the repository decides it on the first `save`.
-pub struct OrderProps {
-    pub product: String,
-    pub quantity: u32,
-    pub total: u64,
-}
+// --- Invariants --------------------------------------------------------------
 
-impl Aggregate for Order {}
-
-// --- Entity: identity and invariants -----------------------------------------
-
-impl Entity for Order {
-    type Id = OrderId;
-    type Props = OrderProps;
-
-    fn id(&self) -> Option<&OrderId> {
-        self.id.as_ref()
-    }
-
-    fn with_id(self, id: OrderId) -> Self {
-        Self {
-            id: Some(id),
-            ..self
-        }
-    }
-
-    fn new(props: OrderProps) -> EnforcementResult<Self> {
-        Self {
-            id: None,
-            product: props.product,
-            quantity: props.quantity,
-            total: props.total,
-            status: OrderStatus::Placed,
-        }
-        .validate()
-    }
-
+impl Validate for Order {
     fn validate(self) -> EnforcementResult<Self> {
         let order_has_a_product = !self.product.is_empty();
         let quantity_is_positive = self.quantity > 0;
@@ -455,8 +393,9 @@ impl Order {
 }
 ```
 
-- O `Order::new` recebe as `OrderProps`, sem id: o repositório decide o id no primeiro `save`. Até lá, o `id()` é `None`.
-- O `validate` guarda as invariantes. Ele roda no `new`, em toda transição de estado (`pay`) e quando o repositório lê uma linha de volta: um pedido que quebra uma invariante nunca existe em memória.
+- O `#[aggregate]` escreve o que todo agregado tem em comum: o `impl Entity` (o `id()`, o `with_id` que o repositório chama e o `new`), o `impl Aggregate` e o `OrderConstructor`. Uma entidade que não é agregado (`cerne g entity` sem `--aggregate`) ganha o `#[entity]`, que escreve o mesmo menos o `impl Aggregate`: nenhum repositório a aceita.
+- O `Order::new` recebe o `OrderConstructor`, com todos os campos menos dois: o id, que o repositório decide no primeiro `save` (até lá, o `id()` é `None`), e o `status`, marcado com `#[skip_constructor]`. Um campo pulado começa no seu `Default`: o `OrderStatus` deriva `Default`, com `#[default]` no `Placed`, o valor inicial de `status=Placed:Placed,Paid`.
+- O `validate`, no `impl Validate`, guarda as invariantes: o CLI o gera vazio, para você preencher. Ele roda no `new`, em toda transição de estado (`pay`) e quando o repositório lê uma linha de volta: um pedido que quebra uma invariante nunca existe em memória.
 - As transições de estado são métodos que consomem o pedido e devolvem o próximo.
 
 ## 4. Sistemas externos: ports e adapters 🩷
@@ -784,7 +723,7 @@ Depois de preenchido:
 
 <!-- file: src/application/commands/place_order.rs -->
 ```rust
-use crate::domain::entities::order::{Order, OrderProps};
+use crate::domain::entities::order::{Order, OrderConstructor};
 use crate::domain::events::order_placed::OrderPlaced;
 use crate::domain::value_objects::order_id::OrderId;
 use crate::ports::Ports;
@@ -824,7 +763,7 @@ impl Command<Ports> for PlaceOrderCommand {
 
         let total = unit_price * u64::from(self.quantity);
 
-        let order = Order::new(OrderProps {
+        let order = Order::new(OrderConstructor {
             product: self.product.clone(),
             quantity: self.quantity,
             total,

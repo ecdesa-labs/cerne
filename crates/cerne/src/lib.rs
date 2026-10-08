@@ -6,7 +6,7 @@
 //! | Sticky note | Concept | In Cerne |
 //! |---|---|---|
 //! | 🟦 | Command | [`application::Command`], which returns [`application::Executed`] |
-//! | 🟨 | Aggregate / Entity | [`domain::Entity`] and [`domain::Aggregate`] |
+//! | 🟨 | Aggregate / Entity | [`domain::entity`] and [`domain::aggregate`], which write [`domain::Entity`] and [`domain::Aggregate`]; the invariants go in [`domain::Validate`] |
 //! | — | Value Object | [`domain::ValueObject`], also the type of every entity id |
 //! | 🟧 | Domain Event | [`domain::DomainEvent`] |
 //! | 🟪 | Policy | [`domain::Policy`] + [`domain::Policies`], run by an [`application::PolicyProcessor`] or stored in an [`application::Outbox`] |
@@ -30,6 +30,9 @@
     html_favicon_url = "https://raw.githubusercontent.com/ecdesa-labs/cerne/main/assets/cerne-favicon.svg",
     html_logo_url = "https://raw.githubusercontent.com/ecdesa-labs/cerne/main/assets/cerne-avatar-dark.svg"
 )]
+
+// The attributes of `cerne-macros` write `::cerne::..` paths: this makes them work inside this crate too.
+extern crate self as cerne;
 
 mod business_rules;
 mod commands;
@@ -57,6 +60,83 @@ pub mod domain {
 
     pub use business_rules::*;
     pub use domain_events::*;
+
+    /// The 🟨 entity: writes `impl Entity` and a `<Name>Constructor` for a struct with an `id: Option<<Name>Id>`.
+    ///
+    /// The constructor has every field but the id, which the repository decides on the first `save`. A field marked
+    /// `#[skip_constructor]` stays out of it too, and starts at its `Default`: a status, for example. The invariants
+    /// are not written: they go in an `impl Validate`, which `new` calls.
+    ///
+    /// ```
+    /// use cerne::domain::{EnforcementResult, Entity, Validate, ValueObject, entity};
+    ///
+    /// # #[derive(Debug, Clone, PartialEq)]
+    /// # struct OrderLineId(u64);
+    /// # impl ValueObject for OrderLineId {
+    /// #     type Props = u64;
+    /// #     fn new(value: u64) -> EnforcementResult<Self> { Ok(Self(value)) }
+    /// # }
+    /// #[derive(Debug, Clone, Copy, Default, PartialEq)]
+    /// enum OrderLineStatus {
+    ///     #[default]
+    ///     Open,
+    ///     Shipped,
+    /// }
+    ///
+    /// #[entity]
+    /// struct OrderLine {
+    ///     id: Option<OrderLineId>,
+    ///     product: String,
+    ///     #[skip_constructor]
+    ///     status: OrderLineStatus,
+    /// }
+    ///
+    /// impl Validate for OrderLine {
+    ///     fn validate(self) -> EnforcementResult<Self> {
+    ///         Ok(self)
+    ///     }
+    /// }
+    ///
+    /// let order_line = OrderLine::new(OrderLineConstructor {
+    ///     product: "book".into(),
+    /// })
+    /// .unwrap();
+    ///
+    /// assert!(order_line.id().is_none());
+    /// assert_eq!(order_line.status, OrderLineStatus::Open);
+    /// ```
+    pub use cerne_macros::entity;
+
+    /// The 🟨 aggregate: everything [`entity`] writes, and `impl Aggregate`, so a `Repository` takes it.
+    ///
+    /// ```
+    /// use cerne::application::Repository;
+    /// use cerne::domain::{EnforcementResult, Validate, ValueObject, aggregate};
+    ///
+    /// # #[derive(Debug, Clone, PartialEq)]
+    /// # struct OrderId(u64);
+    /// # impl ValueObject for OrderId {
+    /// #     type Props = u64;
+    /// #     fn new(value: u64) -> EnforcementResult<Self> { Ok(Self(value)) }
+    /// # }
+    /// #[aggregate]
+    /// struct Order {
+    ///     id: Option<OrderId>,
+    ///     total: u64,
+    /// }
+    ///
+    /// impl Validate for Order {
+    ///     fn validate(self) -> EnforcementResult<Self> {
+    ///         Ok(self)
+    ///     }
+    /// }
+    ///
+    /// struct Ports {
+    ///     orders: Box<dyn Repository<Order>>,
+    /// }
+    /// ```
+    pub use cerne_macros::aggregate;
+
     pub use entities::*;
     pub use errors::{DomainError, EnforcementResult};
     pub use invariants::*;

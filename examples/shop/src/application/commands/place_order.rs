@@ -1,4 +1,4 @@
-use crate::domain::entities::order::{Order, OrderProps};
+use crate::domain::entities::order::{Order, OrderConstructor};
 use crate::domain::events::order_placed::OrderPlaced;
 use crate::domain::value_objects::order_id::OrderId;
 use crate::ports::Ports;
@@ -38,7 +38,7 @@ impl Command<Ports> for PlaceOrderCommand {
 
         let total = unit_price * u64::from(self.quantity);
 
-        let order = Order::new(OrderProps {
+        let order = Order::new(OrderConstructor {
             product: self.product.clone(),
             quantity: self.quantity,
             total,

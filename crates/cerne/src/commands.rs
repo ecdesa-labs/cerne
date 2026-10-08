@@ -10,7 +10,8 @@ use async_trait::async_trait;
 /// ```
 /// use cerne::application::{Command, Executed, Repository};
 /// use cerne::domain::{
-///     Aggregate, BusinessRule, BusinessRules, DomainEvent, EnforcementResult, Entity, FiredPolicy, ValueObject,
+///     Aggregate, BusinessRule, BusinessRules, DomainEvent, EnforcementResult, Entity, FiredPolicy, Validate,
+///     ValueObject,
 /// };
 /// use cerne::{Error, async_trait};
 ///
@@ -31,12 +32,13 @@ use async_trait::async_trait;
 ///     available: i32,
 /// }
 ///
+/// // The stock of a product is known by the product: its id is never `None`, so `Entity` is written by hand.
 /// impl Entity for Stock {
 ///     type Id = ProductId;
-///     type Props = (ProductId, i32);
+///     type Constructor = (ProductId, i32);
 ///
 ///     fn id(&self) -> Option<&ProductId> {
-///         Some(&self.product_id) // the stock of a product is known by the product: it always has an id
+///         Some(&self.product_id)
 ///     }
 ///
 ///     fn with_id(self, product_id: ProductId) -> Self {
@@ -46,7 +48,9 @@ use async_trait::async_trait;
 ///     fn new((product_id, available): (ProductId, i32)) -> EnforcementResult<Self> {
 ///         Self { product_id, available }.validate()
 ///     }
+/// }
 ///
+/// impl Validate for Stock {
 ///     fn validate(self) -> EnforcementResult<Self> {
 ///         Ok(self)
 ///     }
@@ -125,11 +129,12 @@ pub struct Executed<Output, Ports> {
 mod tests {
     use super::*;
     use crate::business_rules::{BusinessRule, BusinessRules};
-    use crate::entities::Entity;
+    use crate::entities::Validate;
     use crate::errors::{DomainError, EnforcementResult};
     use crate::invariants::{Invariant, Invariants};
     use crate::policies::FiredPolicy;
     use crate::value_objects::ValueObject;
+    use cerne_macros::entity;
     use std::sync::Mutex;
 
     #[derive(Debug, Clone, PartialEq)]
@@ -143,31 +148,14 @@ mod tests {
         }
     }
 
+    #[entity]
     #[derive(Debug, Clone, PartialEq)]
     struct Order {
         id: Option<OrderId>,
         qty: i32,
     }
 
-    impl Entity for Order {
-        type Id = OrderId;
-        type Props = i32;
-
-        fn id(&self) -> Option<&OrderId> {
-            self.id.as_ref()
-        }
-
-        fn with_id(self, id: OrderId) -> Self {
-            Self {
-                id: Some(id),
-                ..self
-            }
-        }
-
-        fn new(qty: i32) -> EnforcementResult<Self> {
-            Self { id: None, qty }.validate()
-        }
-
+    impl Validate for Order {
         fn validate(self) -> EnforcementResult<Self> {
             let at_most_1000_items = self.qty <= 1000;
 

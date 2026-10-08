@@ -11,7 +11,7 @@ use async_trait::async_trait;
 ///
 /// ```
 /// use cerne::application::Repository;
-/// use cerne::domain::{Aggregate, EnforcementResult, Entity, ValueObject};
+/// use cerne::domain::{EnforcementResult, Entity, Validate, ValueObject, aggregate};
 /// use cerne::{ApplicationError, Error, async_trait};
 /// use std::collections::HashMap;
 /// use std::sync::Mutex;
@@ -27,33 +27,17 @@ use async_trait::async_trait;
 ///     }
 /// }
 ///
+/// #[aggregate]
 /// #[derive(Clone)]
 /// struct Order {
 ///     id: Option<OrderId>,
 /// }
 ///
-/// impl Entity for Order {
-///     type Id = OrderId;
-///     type Props = ();
-///
-///     fn id(&self) -> Option<&OrderId> {
-///         self.id.as_ref()
-///     }
-///
-///     fn with_id(self, id: OrderId) -> Self {
-///         Self { id: Some(id) }
-///     }
-///
-///     fn new(_: ()) -> EnforcementResult<Self> {
-///         Ok(Self { id: None })
-///     }
-///
+/// impl Validate for Order {
 ///     fn validate(self) -> EnforcementResult<Self> {
 ///         Ok(self)
 ///     }
 /// }
-///
-/// impl Aggregate for Order {}
 ///
 /// #[derive(Default)]
 /// struct InMemoryOrders(Mutex<HashMap<OrderId, Order>>);
@@ -84,7 +68,7 @@ use async_trait::async_trait;
 /// # async fn main() -> Result<(), Error> {
 /// let orders = InMemoryOrders::default();
 ///
-/// let order_id = orders.save(Order::new(())?).await?;
+/// let order_id = orders.save(Order::new(OrderConstructor {})?).await?;
 ///
 /// assert!(order_id == OrderId(1));
 /// # Ok(())

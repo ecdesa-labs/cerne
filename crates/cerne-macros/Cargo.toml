@@ -1,0 +1,20 @@
+[package]
+name = "cerne-macros"
+description = "The attributes of Cerne: #[entity] and #[aggregate] write the identity and the constructor of a sticky note"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/cerne"
+keywords.workspace = true
+categories = ["rust-patterns"]
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = "2"

@@ -2,15 +2,21 @@
 {{ line }}
 {% endfor %}
 use crate::domain::value_objects::{{ file }}_id::{{ name }}Id;
-use cerne::domain::{ {% if aggregate %}Aggregate, {% endif %}EnforcementResult, Entity, Invariants};
+use cerne::domain::{ {% if aggregate %}aggregate{% else %}entity{% endif %}, EnforcementResult, Invariants, Validate};
 
-{% set props_fields = fields|rejectattr("initial")|list %}
 {% for field in fields|selectattr("variants") %}
 {{ field.section }}
 
+{% if field.initial %}
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+{% else %}
 #[derive(Debug, Clone, Copy, PartialEq)]
+{% endif %}
 pub enum {{ field.ty }} {
 {% for variant in field.variants %}
+{% if variant == field.initial %}
+    #[default]
+{% endif %}
     {{ variant }},
 {% endfor %}
 }
@@ -18,62 +24,27 @@ pub enum {{ field.ty }} {
 {% endfor %}
 {% if aggregate %}
 // --- Aggregate ---------------------------------------------------------------
+
+#[aggregate]
 {% else %}
 // --- Entity ------------------------------------------------------------------
-{% endif %}
 
+#[entity]
+{% endif %}
 #[derive(Debug, Clone, PartialEq)]
 pub struct {{ name }} {
     pub id: Option<{{ name }}Id>,
 {% for field in fields %}
-    pub {{ field.name }}: {{ field.ty }},
-{% endfor %}
-}
-
-/// What a new `{{ name }}` is made of. There is no id: the repository decides it on the first `save`.
-pub struct {{ name }}Props {
-{% for field in props_fields %}
-    pub {{ field.name }}: {{ field.ty }},
-{% endfor %}
-}
-{% if aggregate %}
-
-impl Aggregate for {{ name }} {}
-{% endif %}
-
-// --- Entity: identity and invariants -----------------------------------------
-
-impl Entity for {{ name }} {
-    type Id = {{ name }}Id;
-    type Props = {{ name }}Props;
-
-    fn id(&self) -> Option<&{{ name }}Id> {
-        self.id.as_ref()
-    }
-
-    fn with_id(self, id: {{ name }}Id) -> Self {
-        Self {
-            id: Some(id),
-{% if fields %}
-            ..self
-{% endif %}
-        }
-    }
-
-    fn new({% if not props_fields %}_{% endif %}props: {{ name }}Props) -> EnforcementResult<Self> {
-        Self {
-            id: None,
-{% for field in fields %}
 {% if field.initial %}
-            {{ field.name }}: {{ field.ty }}::{{ field.initial }},
-{% else %}
-            {{ field.name }}: props.{{ field.name }},
+    #[skip_constructor]
 {% endif %}
+    pub {{ field.name }}: {{ field.ty }},
 {% endfor %}
-        }
-        .validate()
-    }
+}
 
+// --- Invariants --------------------------------------------------------------
+
+impl Validate for {{ name }} {
     fn validate(self) -> EnforcementResult<Self> {
         Invariants::new(vec![]).enforce()?;
 

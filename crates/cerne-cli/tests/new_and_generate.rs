@@ -7,7 +7,7 @@ const REPOSITORY_TEST: &str = r#"
 use cerne::application::TransactionalPorts;
 use cerne::domain::Entity;
 use cerne::sqlite::SqliteDatabase;
-use loja::domain::entities::order::{Order, OrderProps};
+use loja::domain::entities::order::{Order, OrderConstructor};
 use loja::ports::Ports;
 
 #[tokio::test]
@@ -17,7 +17,7 @@ async fn the_generated_repository_inserts_loads_and_updates() {
     let ports = Ports::new(database);
 
     let transaction = ports.begin().await.unwrap();
-    let order_id = transaction.orders.save(Order::new(OrderProps { qty: 3 }).unwrap()).await.unwrap();
+    let order_id = transaction.orders.save(Order::new(OrderConstructor { qty: 3 }).unwrap()).await.unwrap();
     transaction.commit().await.unwrap();
 
     let order = ports.orders.load(&order_id).await.unwrap();
@@ -33,7 +33,7 @@ const POSTGRES_REPOSITORY_TEST: &str = r#"
 use cerne::application::TransactionalPorts;
 use cerne::domain::Entity;
 use cerne::postgres::PostgresDatabase;
-use vitrine::domain::entities::product::{Product, ProductKind, ProductProps};
+use vitrine::domain::entities::product::{Product, ProductKind, ProductConstructor};
 use vitrine::ports::Ports;
 
 #[tokio::test]
@@ -50,7 +50,7 @@ async fn the_generated_repository_inserts_loads_and_updates_on_postgres() {
     database.migrate(&sqlx::migrate!()).await.unwrap();
     let ports = Ports::new(database);
 
-    let product = Product::new(ProductProps {
+    let product = Product::new(ProductConstructor {
         name: "Mug".into(),
         price: 30,
         kind: ProductKind::Physical,
@@ -84,7 +84,7 @@ const NUCLEO_REPOSITORY_TEST: &str = r#"
 use cerne::application::TransactionalPorts;
 use cerne::domain::Entity;
 use cerne::sqlite::SqliteDatabase;
-use nucleo::domain::entities::order::{Order, OrderProps, OrderStatus};
+use nucleo::domain::entities::order::{Order, OrderConstructor, OrderStatus};
 use nucleo::ports::Ports;
 
 #[tokio::test]
@@ -93,7 +93,7 @@ async fn the_aggregate_from_before_the_database_gets_a_repository() {
     database.migrate(&sqlx::migrate!()).await.unwrap();
     let ports = Ports::new(database);
 
-    let order = Order::new(OrderProps { product: "mug".into(), quantity: 2 }).unwrap();
+    let order = Order::new(OrderConstructor { product: "mug".into(), quantity: 2 }).unwrap();
 
     let transaction = ports.begin().await.unwrap();
     let order_id = transaction.orders.save(order).await.unwrap();
@@ -294,11 +294,14 @@ fn generated_project_passes_clippy_without_touching_anything() {
 
     let payment = fs::read_to_string(project.join("src/domain/entities/payment.rs")).unwrap();
 
-    assert!(payment.contains("pub enum PaymentPaymentStatus {"));
-    assert!(payment.contains("payment_status: PaymentPaymentStatus::Pending,"));
-    assert!(payment.contains("pub enum PaymentMethod {"));
-    assert!(payment.contains("method: props.method,"));
-    assert!(payment.contains("pub struct PaymentProps {\n    pub method: PaymentMethod,\n}"));
+    assert!(payment.contains(
+        "#[derive(Debug, Clone, Copy, Default, PartialEq)]\npub enum PaymentPaymentStatus {\n    #[default]\n    Pending,"
+    ));
+    assert!(payment.contains("#[derive(Debug, Clone, Copy, PartialEq)]\npub enum PaymentMethod {"));
+    assert!(
+        payment.contains("#[aggregate]\n#[derive(Debug, Clone, PartialEq)]\npub struct Payment {")
+    );
+    assert!(payment.contains("    #[skip_constructor]\n    pub payment_status: PaymentPaymentStatus,\n    pub method: PaymentMethod,"));
 
     let rpc = fs::read_to_string(project.join("src/infrastructure/http/rpc.rs")).unwrap();
 
