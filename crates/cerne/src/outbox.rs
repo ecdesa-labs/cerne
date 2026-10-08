@@ -10,7 +10,7 @@ use std::time::Duration;
 /// A command a policy fired, as the outbox stores it: its name and its fields in JSON.
 #[derive(Debug, Clone, PartialEq)]
 pub struct OutboxEntry {
-    /// `ChainAcceptedTransferCommand` → `"chain_accepted_transfer"`.
+    /// `ChargeOrderCommand` → `"charge_order"`.
     pub command: String,
     pub json: String,
 }
@@ -24,7 +24,7 @@ pub struct StoredCommand {
 }
 
 /// The port of the outbox table: the commands policies fired, stored in the same transaction as the aggregate that
-/// produced the events (D32). A command in the table runs at least once, even if the process dies.
+/// produced the events. A command in the table runs at least once, even if the process dies.
 ///
 /// The table is the same in every database (`cerne_outbox`); the adapters are `cerne::sqlite::SqliteOutbox` and,
 /// with the `postgres` feature, `cerne::postgres::PostgresOutbox`.
@@ -100,8 +100,8 @@ type Decode<Ports> = fn(&str) -> serde_json::Result<Box<dyn Command<Ports, Outpu
 ///
 /// ```ignore
 /// let command_registry = CommandRegistry::new()
-///     .register::<NotifyRecipientCommand>()
-///     .register::<ChainAcceptedTransferCommand>();
+///     .register::<ReserveStockCommand>()
+///     .register::<ChargeOrderCommand>();
 /// ```
 pub struct CommandRegistry<Ports> {
     decoders: HashMap<String, Decode<Ports>>,
@@ -262,7 +262,7 @@ impl<Ports: TransactionalPorts> OutboxPolicyProcessor<Ports> {
     }
 }
 
-/// `ChainAcceptedTransferCommand` → `chain_accepted_transfer`: the name of a command in the outbox and in JSON-RPC.
+/// `ChargeOrderCommand` → `charge_order`: the name of a command in the outbox and in JSON-RPC.
 pub fn command_name<C>() -> String {
     let type_name = std::any::type_name::<C>();
     let type_name = type_name.split('<').next().unwrap_or(type_name);
@@ -290,13 +290,10 @@ fn infrastructure(message: String) -> Error {
 mod tests {
     use super::*;
 
-    struct ChainAcceptedTransferCommand;
+    struct ChargeOrderCommand;
 
     #[test]
     fn command_name_is_the_snake_case_of_the_type_without_command() {
-        assert_eq!(
-            command_name::<ChainAcceptedTransferCommand>(),
-            "chain_accepted_transfer"
-        );
+        assert_eq!(command_name::<ChargeOrderCommand>(), "charge_order");
     }
 }

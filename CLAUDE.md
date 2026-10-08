@@ -4,10 +4,11 @@ Framework Rust, no espírito do Rails, em que cada post-it do Event Storming vir
 
 ## Onde está o contexto
 
-- `docs/ROADMAP.md`: fases, o que está feito ([x]) e o que falta. **Cada fase é feita num chat próprio.**
-- `docs/DECISOES.md`: a tabela-resumo de todas as decisões (D1–D38) e o texto completo só das que estão em aberto. As tomadas são a fonte da verdade: siga-as e não reabra uma decisão sem perguntar. O texto completo de uma decisão tomada está no histórico do git (`git show 67cf4c7:docs/DECISOES.md`).
-- `docs/METAMASK.md`: as chamadas JSON-RPC que a MetaMask manda e espera, capturadas de uma MetaMask de verdade. É o contrato do endpoint da rde (D38).
-- `README.md`: não é incluído na documentação da crate (o `lib.rs` tem a própria, com a tabela post-it → código). É um tutorial que percorre o `main.rs` do `examples/rde` (D26). Cada bloco marcado com `<!-- snippet: <arquivo> -->` é uma cópia literal do arquivo, e o `examples/rde/tests/readme.rs` falha se a cópia ficar desatualizada. Ao mudar um trecho da rde que aparece no README, atualize o bloco também.
+- **O projeto está pronto (0.1.0).** O `docs/` (ROADMAP, DECISOES, METAMASK) e o `examples/rde` foram apagados depois do commit `58535b1`. As decisões D1–D40 continuam valendo: o texto está em `git show 58535b1:docs/DECISOES.md`, e o planejamento futuro (Fase 5, o domínio em TypeScript e Elixir; Fase 6, skills para agentes) em `git show 58535b1:docs/ROADMAP.md`. Não reabra uma decisão sem perguntar.
+- `README.md`: só o nome e os links para as três versões (`README.en.md`, `README.pt-BR.md`, `README.es.md`), enxutas, no molde do README do Rails: o pitch (provisório, marcado com `<!-- pitch -->`), as três camadas, as crates, os primeiros passos, contribuição e licença. O `README.en.md` é o `readme` das crates no crates.io.
+- `docs/<idioma>/tutorial.md` (`en`, `pt-BR`, `es`): o tutorial, uma loja (`shop`) construída com o CLI. É o conteúdo do site de documentação, feito à parte no v0.dev com a identidade visual da ECDESA (não crie o site). Cada arquivo aparece duas vezes: `<!-- generated: <caminho> -->` (como o CLI o gera) e `<!-- file: <caminho> -->` (preenchido). O `tutorial_builds_and_passes_its_tests` (em `crates/cerne-cli/tests/new_and_generate.rs`) roda os comandos `cerne` do tutorial em inglês, confere os blocos gerados, escreve os preenchidos e roda `cargo clippy` e `cargo test`. Só a prosa, os diagramas e os comentários dos comandos são traduzidos: o `every_tutorial_translation_has_the_same_code` falha se o código divergir. A árvore do `tree shop` não é testada: refaça-a se o CLI passar a gerar outros arquivos.
+- `CHANGELOG.md`: toda quebra de compatibilidade. `CONTRIBUTING.md`: o estilo de código, em inglês, para quem contribui.
+- MSRV: Rust 1.88 (`rust-version` no workspace, job `msrv` no CI).
 
 ## Estilo de código (o mais importante)
 
@@ -17,18 +18,18 @@ Framework Rust, no espírito do Rails, em que cada post-it do Event Storming vir
 - **Variáveis com nome descritivo:** o `impl` lê de cima para baixo, e cada nome diz o que significa no domínio.
   - A condição é calculada antes da closure, numa variável que se lê como frase: `let sender_is_not_recipient = self.sender != self.recipient;` e depois `Invariant::new("...", move || sender_is_not_recipient)`. Nada de `let qty = self.qty;` com a comparação escondida na closure.
   - Cada evento ganha uma variável antes do retorno: `let transfer_created = TransferCreated { .. };` e depois `Ok(vec![Box::new(transfer_created)])`.
-  - Numa chamada com dois argumentos do mesmo tipo, cada argumento é uma variável com o mesmo nome do parâmetro: `transfer_rdec(sender, recipient, amount)`, com `sender` e `recipient` do tipo `Address`. Trocar os dois não dá erro de compilação, mas fica visível na leitura. Nada de literal ou expressão no lugar, e nada de struct só para nomear os argumentos.
+  - Numa chamada com dois argumentos do mesmo tipo, cada argumento é uma variável com o mesmo nome do parâmetro: `transfer(sender, recipient, amount)`, com `sender` e `recipient` do mesmo tipo. Trocar os dois não dá erro de compilação, mas fica visível na leitura. Nada de literal ou expressão no lugar, e nada de struct só para nomear os argumentos.
   - O resultado de um `execute` vai para uma variável `*_execution`: o `output` vai para quem chamou, e os `events` vão para o processador. Por exemplo, `let create_transfer_execution = create_transfer.execute(&ports).await?;`, depois `let tx_hash = create_transfer_execution.output;` e `processor.send_events(create_transfer_execution.events)`.
 - **Sem índice, downcast ou `.expect` para tirar dados de eventos:** o que quem chamou precisa vem no `Output` do command (D25).
-- **Seções com linha divisória e muita quebra de linha:** o corpo de um `execute` é dividido nas partes do Event Storming, cada uma aberta por um comentário divisório de 80 colunas (`// --- Business rules ------...`) e separada por linha em branco. A ordem é: `Domain service`, `Ports` (leituras), `Business rules`, `External system: <Nome>`, `Aggregate` (mudança + `save`) e `Domain events` (monta o evento e o `Ok(Executed { .. })`). O mesmo vale para o agregado (`Status`, `Aggregate`, `Entity: identity and invariants`, `State transitions`), para o `trigger_policies` (`Policies`, com uma variável por policy, sempre com o sufixo `_policy`: `chain_accepted_transfer_policy`), para o `main` (um bloco por ator) e para os testes (um bloco por raia do board). Cada `let` de um passo diferente ganha uma linha em branco antes.
+- **Seções com linha divisória e muita quebra de linha:** o corpo de um `execute` é dividido nas partes do Event Storming, cada uma aberta por um comentário divisório de 80 colunas (`// --- Business rules ------...`) e separada por linha em branco. A ordem é: `Domain service`, `Ports` (leituras), `Business rules`, `External system: <Nome>`, `Aggregate` (mudança + `save`) e `Domain events` (monta o evento e o `Ok(Executed { .. })`). O mesmo vale para o agregado (`Status`, `Aggregate`, `Entity: identity and invariants`, `State transitions`), para o `trigger_policies` (`Policies`, com uma variável por policy, sempre com o sufixo `_policy`: `charge_the_customer_policy`), para o `main` (um bloco por ator) e para os testes (um bloco por fluxo do board). Cada `let` de um passo diferente ganha uma linha em branco antes.
 - **Regras de negócio no `execute`:** na seção `Business rules`, cada condição numa variável e depois o `BusinessRules::new(..).check()?`. Só um projeto que exporta o domínio para outras linguagens (D37, Fase 5) tira as regras do `execute` para um método síncrono do command, `pub fn business_rules(&self, ..) -> BusinessRules`, que recebe o que a seção `Ports` leu (ou o agregado carregado); o `execute` passa a chamar `self.business_rules(..).check()?`. Numa aplicação só em Rust, o método não traz nada.
 - **A variável diz o tipo de processador:** `let outbox_policy_processor = OutboxPolicyProcessor::new(..)` (o padrão), `let sync_policy_processor = InlinePolicyProcessor::new(..)` e `let async_policy_processor = TokioPolicyProcessor::spawn(..)`. Nunca só `processor`.
 - **Repositório em memória é SQLite em memória** (`SqliteDatabase::in_memory()`), com o mesmo adapter SQL de produção. Nunca um `Vec` ou `HashMap` fingindo ser repositório (D31).
 - **Nomes de método dizem a parte do fluxo:** `send_events`, `send_command`, `trigger_policies`. Um nome vago como `react_to` não serve.
-- **Command de criação não recebe id:** quem decide o id é o repositório no insert, ou o próprio conteúdo, quando ele é determinístico (o `tx_hash` do `examples/rde`).
+- **Command de criação não recebe id:** quem decide o id é o repositório no insert, ou o próprio conteúdo, quando ele é determinístico (o hash de uma transação assinada).
 - **Erros:** o domínio devolve `EnforcementResult<T>` (= `Result<T, DomainError>`); commands, repositórios e processadores devolvem `Result<T, cerne::Error>`. A arquitetura com `thiserror`/`anyhow` está em D16.
 - **Domínio sync, aplicação async:** `Command`, `Repository` e `PolicyProcessor` usam `#[async_trait]`; entidades, eventos, invariantes, regras e policies nunca são async.
-- **Idioma:** código, testes e mensagens em inglês; docs em português.
+- **Idioma:** código, testes e mensagens em inglês; o README em inglês, português e espanhol; o rustdoc e o CHANGELOG em inglês.
 
 ## Comandos
 
@@ -40,10 +41,10 @@ cargo test --workspace
 
 As três precisam passar antes de dar uma fase por concluída.
 
-## Ao terminar uma fase
+## Ao mudar a API
 
-1. Marcar os itens no `docs/ROADMAP.md` e atualizar a tabela "Onde estamos hoje".
-2. Registrar no `docs/DECISOES.md` qualquer decisão nova tomada durante a fase.
+1. Registrar no `CHANGELOG.md` o que quebra compatibilidade.
+2. Atualizar o tutorial nos três READMEs, se ele usa o que mudou.
 
 ## Ao escrever docs
 

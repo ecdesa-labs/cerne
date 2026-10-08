@@ -15,7 +15,7 @@ type Then<Ports> = Box<
 ///
 /// The policy never runs the command itself: it only says which one should run, so the domain stays free of IO.
 /// The command has `Output = ()`: nobody is there to receive what a command run by a policy gives back.
-/// It derives `Serialize` (and `Deserialize`, to be read back), so an outbox can store it until it runs (D32).
+/// It derives `Serialize` (and `Deserialize`, to be read back), so an outbox can store it until it runs.
 pub struct Policy<Ports> {
     name: &'static str,
     when: Box<dyn Fn() -> bool + Send + Sync>,

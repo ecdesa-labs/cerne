@@ -1,5 +1,5 @@
-//! HTTP with `axum` (feature `axum`): a project speaks REST or JSON-RPC, chosen in `cerne new --http rest|jsonrpc`
-//! (D33). The body of a request is the command (or the query) itself, read with `serde`.
+//! HTTP with `axum` (feature `axum`): a project speaks REST or JSON-RPC, chosen in `cerne new --http rest|jsonrpc`.
+//! The body of a request is the command (or the query) itself, read with `serde`.
 //!
 //! The three categories of [`Error`] become the answer:
 //!
@@ -35,10 +35,10 @@ impl IntoResponse for Error {
     }
 }
 
-/// JSON-RPC 2.0 over a single `POST`: the method is the snake_case of the command or query (`accept_transfer`).
+/// JSON-RPC 2.0 over a single `POST`: the method is the snake_case of the command or query (`place_order`).
 ///
-/// The handler reads the raw body with [`Request::from_body`], so a body that is not JSON-RPC 2.0 still gets a
-/// JSON-RPC answer (D36):
+/// The handler reads the raw body with [`Request::from_body`](jsonrpc::Request::from_body), so a body that is not JSON-RPC 2.0 still gets a
+/// JSON-RPC answer:
 ///
 /// | Body | Error |
 /// |---|---|
@@ -186,14 +186,14 @@ pub mod jsonrpc {
     /// let methods = Methods::new(&ports);
     ///
     /// let result = match request.method.as_str() {
-    ///     "accept_transfer" => methods.command::<AcceptTransferCommand>(request.params).await,
-    ///     "pending_transfers" => methods.query::<PendingTransfersQuery>(request.params).await,
+    ///     "place_order" => methods.command::<PlaceOrderCommand>(request.params).await,
+    ///     "placed_orders" => methods.query::<PlacedOrdersQuery>(request.params).await,
     ///     method => methods.not_found(method),
     /// };
     /// ```
     ///
     /// The `params` come by name (an object) or by position (an array, like MetaMask sends them), as JSON-RPC 2.0
-    /// allows (D36). By position, the array follows the order of the fields of the command: that order is part of
+    /// allows. By position, the array follows the order of the fields of the command: that order is part of
     /// the API, and swapping two fields of the same type breaks the clients without a compilation error.
     pub struct Methods<'p, Ports> {
         ports: &'p Ports,

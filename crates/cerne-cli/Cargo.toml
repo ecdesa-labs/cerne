@@ -3,7 +3,14 @@ name = "cerne-cli"
 description = "The cerne command: creates a project laid out like the Event Storming board and generates its post-its"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "../../README.en.md"
+keywords.workspace = true
+categories = ["command-line-utilities", "development-tools"]
+exclude = ["tests/"]
 
 [[bin]]
 name = "cerne"

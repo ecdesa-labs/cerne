@@ -67,8 +67,8 @@ mod tests {
     #[test]
     fn value_object_is_born_when_invariants_hold() {
         assert_eq!(
-            Email::new("alice@rde.io".into()),
-            Ok(Email("alice@rde.io".into()))
+            Email::new("alice@example.com".into()),
+            Ok(Email("alice@example.com".into()))
         );
     }
 
@@ -83,8 +83,8 @@ mod tests {
     #[test]
     fn value_objects_with_the_same_fields_are_equal() {
         assert_eq!(
-            Email::new("alice@rde.io".into()),
-            Email::new("alice@rde.io".into())
+            Email::new("alice@example.com".into()),
+            Email::new("alice@example.com".into())
         );
     }
 }

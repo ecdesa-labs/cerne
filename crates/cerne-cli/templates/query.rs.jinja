@@ -1,3 +1,6 @@
+{% for line in uses %}
+{{ line }}
+{% endfor %}
 use crate::application::read_models::{{ file }}::{{ name }};
 use crate::ports::Ports;
 use cerne::application::Query;

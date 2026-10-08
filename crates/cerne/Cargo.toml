@@ -2,8 +2,19 @@
 name = "cerne"
 description = "Event Storming building blocks for Domain-Driven Design in Rust"
 version.workspace = true
+documentation = "https://docs.rs/cerne"
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "../../README.en.md"
+keywords.workspace = true
+categories = ["rust-patterns", "web-programming", "database"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 default = ["sqlite"]

@@ -1,5 +1,5 @@
 //! SQLite in a file, with a pool of connections: a transaction that reads and then writes must not fail because
-//! another connection wrote in between. That is the server of the rde: a command reads the transfer and saves it while
+//! another connection wrote in between. That is a server: a command reads an aggregate and saves it while
 //! the outbox marks its own commands done.
 #![cfg(feature = "sqlite")]
 

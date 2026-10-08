@@ -467,7 +467,7 @@ fn generated_project_passes_clippy_without_touching_anything() {
     assert!(rest_passed);
 }
 
-/// Runs cargo in a generated project, with the repository's own crate standing in for the Git dependency. Without
+/// Runs cargo in a generated project, with the repository's own crate standing in for the published one. Without
 /// `DATABASE_URL`: a SQLite project would read the Postgres of the CI job as its database.
 fn cargo(project: &Path, workspace: &Path, args: &[&str]) -> bool {
     cargo_command(project, workspace, args)
@@ -490,7 +490,7 @@ fn cargo_command(project: &Path, workspace: &Path, args: &[&str]) -> Command {
     let manifest = project.join("Cargo.toml");
     let cerne_path = workspace.join("crates/cerne");
     let cargo_toml = fs::read_to_string(&manifest).unwrap().replace(
-        r#"git = "https://github.com/ecdesa-labs/cerne""#,
+        concat!("version = \"", env!("CARGO_PKG_VERSION"), "\""),
         &format!("path = {:?}", cerne_path.display().to_string()),
     );
 
@@ -505,4 +505,120 @@ fn cargo_command(project: &Path, workspace: &Path, args: &[&str]) -> Command {
         .env("CARGO_TARGET_DIR", workspace.join("target/e2e"));
 
     command
+}
+
+// --- The tutorial (docs/<language>/tutorial.md) is a project that compiles -
+
+/// The fenced blocks of a Markdown file, with the line before each one: `(marker, language, code)`.
+fn fenced_blocks(markdown: &str) -> Vec<(String, String, String)> {
+    let mut blocks = vec![];
+    let mut previous = "";
+    let mut lines = markdown.lines();
+
+    while let Some(line) = lines.next() {
+        if let Some(language) = line.strip_prefix("```") {
+            let code: Vec<&str> = lines.by_ref().take_while(|l| *l != "```").collect();
+
+            blocks.push((
+                previous.to_string(),
+                language.to_string(),
+                code.join("\n") + "\n",
+            ));
+        }
+
+        previous = line;
+    }
+
+    blocks
+}
+
+#[test]
+fn tutorial_builds_and_passes_its_tests() {
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .unwrap();
+    let tmp: PathBuf = env::temp_dir().join(format!("cerne-tutorial-{}", std::process::id()));
+
+    fs::create_dir_all(&tmp).unwrap();
+
+    let tutorial = fs::read_to_string(workspace.join("docs/en/tutorial.md")).unwrap();
+    let mut project = tmp.clone();
+
+    for (marker, language, code) in fenced_blocks(&tutorial) {
+        // --- The commands of the tutorial: cerne and cd ----------------------
+
+        if language == "bash" {
+            for line in code.lines() {
+                if let Some(folder) = line.strip_prefix("cd ") {
+                    project = project.join(folder);
+                } else if let Some(args) = line.strip_prefix("cerne ") {
+                    let args: Vec<&str> = args.split_whitespace().collect();
+
+                    assert!(cerne(&args, &project), "the tutorial runs: {line}");
+                }
+            }
+        }
+
+        // --- The files as the CLI generated them ------------------------------
+
+        if let Some(path) = marker
+            .strip_prefix("<!-- generated: ")
+            .and_then(|rest| rest.strip_suffix(" -->"))
+        {
+            let generated = fs::read_to_string(project.join(path)).unwrap();
+
+            assert_eq!(
+                generated, code,
+                "the tutorial shows {path} as the CLI generates it"
+            );
+        }
+
+        // --- The files of the tutorial ---------------------------------------
+
+        if let Some(path) = marker
+            .strip_prefix("<!-- file: ")
+            .and_then(|rest| rest.strip_suffix(" -->"))
+        {
+            fs::write(project.join(path), code).unwrap();
+        }
+    }
+
+    let tutorial_passed = cargo(
+        &project,
+        &workspace,
+        &["clippy", "--all-targets", "--", "-D", "warnings"],
+    ) && cargo(&project, &workspace, &["test"]);
+
+    fs::remove_dir_all(&tmp).unwrap();
+
+    assert!(tutorial_passed);
+}
+
+#[test]
+fn every_tutorial_translation_has_the_same_code() {
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let code = |translation: &str| -> Vec<(String, String)> {
+        let tutorial =
+            fs::read_to_string(workspace.join(format!("docs/{translation}/tutorial.md"))).unwrap();
+
+        // The diagrams and the comments of the commands are translated; the code is not.
+        fenced_blocks(&tutorial)
+            .into_iter()
+            .filter(|(_, language, _)| language != "mermaid")
+            .map(|(_, language, code)| {
+                let untranslated: Vec<&str> = code
+                    .lines()
+                    .filter(|line| language != "bash" || !line.starts_with('#'))
+                    .collect();
+
+                (language, untranslated.join("\n"))
+            })
+            .collect()
+    };
+
+    let english = code("en");
+
+    assert_eq!(code("pt-BR"), english, "docs/pt-BR/tutorial.md");
+    assert_eq!(code("es"), english, "docs/es/tutorial.md");
 }

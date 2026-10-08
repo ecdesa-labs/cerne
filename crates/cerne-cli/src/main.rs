@@ -21,7 +21,7 @@ usage:
   cerne g port <Name>
   cerne g adapter <Name> <Port>";
 
-/// What `cerne new` writes: the layers of D11, each `mod.rs` ready for the generators to append to (D12).
+/// What `cerne new` writes: one folder per layer, each `mod.rs` ready for the generators to append to.
 const PROJECT: [(&str, &str); 17] = [
     ("Cargo.toml", include_str!("../templates/Cargo.toml.jinja")),
     (".gitignore", "/target\n*.db\n*.db-shm\n*.db-wal\n"),
@@ -160,6 +160,7 @@ fn project_context(name: &str, db: &str, http: &str) -> Value {
         database => format!("{prefix}Database"),
         outbox => format!("{prefix}Outbox"),
         cerne_features => cerne_features.join(", "),
+        cerne_version => env!("CARGO_PKG_VERSION"),
     }
 }
 
@@ -242,6 +243,7 @@ fn generate(kind: &str, name: &str, args: &[&str]) -> CliResult {
 
     let mut fields = parse_fields(args.iter().filter(|arg| !arg.starts_with("--")))?;
     let id_type = take_id_type(&mut fields);
+    let uses = value_object_uses(&fields);
 
     let fields = fields
         .into_iter()
@@ -271,7 +273,7 @@ fn generate(kind: &str, name: &str, args: &[&str]) -> CliResult {
             add_file(
                 &format!("src/domain/entities/{file}.rs"),
                 ENTITY,
-                context! { name, file, fields, aggregate },
+                context! { name, file, fields, aggregate, uses },
             )?;
 
             if aggregate {
@@ -286,18 +288,18 @@ fn generate(kind: &str, name: &str, args: &[&str]) -> CliResult {
         "value_object" => add_file(
             &format!("src/domain/value_objects/{file}.rs"),
             VALUE_OBJECT,
-            context! { name, fields },
+            context! { name, fields, uses },
         ),
         "event" => add_file(
             &format!("src/domain/events/{file}.rs"),
             EVENT,
-            context! { name, fields },
+            context! { name, fields, uses },
         ),
         "command" => {
             add_file(
                 &format!("src/application/commands/{file}.rs"),
                 COMMAND,
-                context! { name, fields, policy },
+                context! { name, fields, policy, uses },
             )?;
 
             let command = format!("{name}Command");
@@ -319,7 +321,7 @@ fn generate(kind: &str, name: &str, args: &[&str]) -> CliResult {
         "read_model" => add_file(
             &format!("src/application/read_models/{file}.rs"),
             READ_MODEL,
-            context! { name, fields },
+            context! { name, fields, uses },
         ),
         "query" if !Path::new(&format!("src/application/read_models/{file}.rs")).exists() => Err(format!(
             "the query {name}Query returns the read model {name}: run cerne g read_model {name} first"
@@ -329,7 +331,7 @@ fn generate(kind: &str, name: &str, args: &[&str]) -> CliResult {
             add_file(
                 &format!("src/application/queries/{file}.rs"),
                 QUERY,
-                context! { name, file, fields },
+                context! { name, file, fields, uses },
             )?;
 
             let query_use = format!("use crate::application::queries::{file}::{name}Query;");
@@ -345,7 +347,7 @@ fn generate(kind: &str, name: &str, args: &[&str]) -> CliResult {
     }
 }
 
-/// The SQL repository of an aggregate, its migration, and its field in the `Ports` (D31).
+/// The SQL repository of an aggregate, its migration, and its field in the `Ports`.
 fn add_repository(name: &str, file: &str, id_type: &str, fields: &[Value]) -> CliResult {
     let project = project()?;
     let table = format!("{file}s");
@@ -710,7 +712,7 @@ fn generate_adapter(name: &str, port: &str) -> CliResult {
     )
 }
 
-/// In a JSON-RPC project, the arm `"place_order" => methods.command::<PlaceOrderCommand>(..)` (D33).
+/// In a JSON-RPC project, the arm `"place_order" => methods.command::<PlaceOrderCommand>(..)`.
 fn add_rpc_method(file: &str, post_it_use: &str, call: &str) -> CliResult {
     if project()?.http != "jsonrpc" {
         return Ok(());
@@ -742,7 +744,7 @@ fn add_rpc_method(file: &str, post_it_use: &str, call: &str) -> CliResult {
 
 // --- Files -------------------------------------------------------------------
 
-/// Writes the post-it and appends `pub mod <file>;` to the `mod.rs` next to it, so it compiles right away (D12).
+/// Writes the post-it and appends `pub mod <file>;` to the `mod.rs` next to it, so it compiles right away.
 fn add_file(path: &str, template: &str, post_it: Value) -> CliResult {
     let file = Path::new(path);
     let mod_rs = file.with_file_name("mod.rs");
@@ -843,7 +845,7 @@ fn next_migration_version() -> Result<u64, Box<dyn Error>> {
 }
 
 fn rustfmt(file: &Path) {
-    // ponytail: best effort, the code is valid without rustfmt, just less tidy
+    // Best effort: without rustfmt the code is still valid, only less tidy.
     let _ = process::Command::new("rustfmt")
         .args(["--edition", "2024"])
         .arg(file)
@@ -862,7 +864,7 @@ fn render(template: &str, data: &Value) -> Result<String, minijinja::Error> {
     environment.render_str(template, data)
 }
 
-/// `qty:i32 id:u64` → `[(qty, i32), (id, u64)]`, in the order given (D13).
+/// `qty:i32 id:u64` → `[(qty, i32), (id, u64)]`, in the order given.
 fn parse_fields<'a>(
     args: impl Iterator<Item = &'a &'a str>,
 ) -> Result<Vec<(&'a str, &'a str)>, String> {
@@ -882,7 +884,7 @@ fn take_id_type<'a>(fields: &mut Vec<(&'a str, &'a str)>) -> Option<&'a str> {
 
 /// `qty:i32` is a plain field. In `Product`, `kind:Physical,Digital` is the enum `ProductKind`, chosen by whoever
 /// creates the product. In `Order`, `status=Pending:Pending,Accepted` is the enum `OrderStatus`, and every new
-/// `Order` starts as `Pending`, like the `TransferStatus` of the rde.
+/// `Order` starts as `Pending`.
 fn field(owner: &str, kind: &str, name: &str, ty: &str) -> Result<Value, String> {
     let (name, initial) = match name.split_once('=') {
         Some((name, initial)) => (name, Some(initial)),
@@ -925,6 +927,22 @@ fn field(owner: &str, kind: &str, name: &str, ty: &str) -> Result<Value, String>
     let section = format!("// --- {title} {}", "-".repeat(80 - 8 - title.len()));
 
     Ok(context! { name, ty => format!("{owner}{title}"), variants, initial, section })
+}
+
+/// `order_id:OrderId`, when `OrderId` is a value object of the project: the `use` the post-it needs for it.
+fn value_object_uses(fields: &[(&str, &str)]) -> Vec<String> {
+    fields
+        .iter()
+        .map(|(_, ty)| *ty)
+        .filter(|ty| is_pascal_case(ty))
+        .filter(|ty| Path::new(&format!("src/domain/value_objects/{}.rs", snake_case(ty))).exists())
+        .map(|ty| {
+            format!(
+                "use crate::domain::value_objects::{}::{ty};",
+                snake_case(ty)
+            )
+        })
+        .collect()
 }
 
 fn is_integer(ty: &str) -> bool {

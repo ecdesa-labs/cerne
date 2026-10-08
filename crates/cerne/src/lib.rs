@@ -1,29 +1,31 @@
 //! # Cerne
 //!
-//! Do Event Storming ao código Rust. Cada post-it vira um bloco explícito: quem olha o código sabe na hora em que
-//! parte do fluxo está.
+//! From Event Storming to Rust code. Every sticky note becomes an explicit block: whoever reads the code knows
+//! right away which part of the flow they are in.
 //!
-//! | Post-it | Conceito | No Cerne |
+//! | Sticky note | Concept | In Cerne |
 //! |---|---|---|
-//! | 🟦 | Command | [`application::Command`], que devolve [`application::Executed`] |
-//! | 🟨 | Aggregate / Entity | [`domain::Entity`] e [`domain::Aggregate`] |
-//! | — | Value Object | [`domain::ValueObject`], que também é o tipo do id de toda entidade |
+//! | 🟦 | Command | [`application::Command`], which returns [`application::Executed`] |
+//! | 🟨 | Aggregate / Entity | [`domain::Entity`] and [`domain::Aggregate`] |
+//! | — | Value Object | [`domain::ValueObject`], also the type of every entity id |
 //! | 🟧 | Domain Event | [`domain::DomainEvent`] |
-//! | 🟪 | Policy | [`domain::Policy`] + [`domain::Policies`], executadas por um [`application::PolicyProcessor`] ou guardadas numa [`application::Outbox`] |
-//! | 🩷 | External System (Port) | [`application::Repository`] e os ports da aplicação |
-//! | 🟩 | Read Model / Query | [`application::Query`], que devolve um [`application::ReadModel`] |
-//! | — | Invariantes | [`domain::Invariant`] + [`domain::Invariants`] |
-//! | — | Regras de negócio | [`domain::BusinessRule`] + [`domain::BusinessRules`] |
+//! | 🟪 | Policy | [`domain::Policy`] + [`domain::Policies`], run by an [`application::PolicyProcessor`] or stored in an [`application::Outbox`] |
+//! | 🩷 | External System (Port) | [`application::Repository`] and the ports of the application |
+//! | 🟩 | Read Model / Query | [`application::Query`], which returns an [`application::ReadModel`] |
+//! | — | Invariants | [`domain::Invariant`] + [`domain::Invariants`] |
+//! | — | Business rules | [`domain::BusinessRule`] + [`domain::BusinessRules`] |
 //!
-//! Os erros seguem três categorias, reunidas em [`Error`]: [`DomainError`], [`ApplicationError`] e
+//! Errors fall into three categories, gathered in [`Error`]: [`DomainError`], [`ApplicationError`] and
 //! [`InfrastructureError`].
 //!
-//! O banco entra pelos adapters SQL: [`sqlite`] (feature padrão, também em memória) e `postgres` (feature
-//! `postgres`). Os dois têm a mesma API, e trocar um pelo outro é trocar o adapter. O HTTP entra pela feature
-//! `axum`: [`Error`] vira resposta REST, e `http::jsonrpc` atende JSON-RPC.
+//! The database comes in through the SQL adapters: `sqlite` (default feature, also in memory) and `postgres`
+//! (feature `postgres`). Both have the same API, and switching is switching the adapter. HTTP comes in through the
+//! feature `axum`: [`Error`] becomes a REST answer, and `http::jsonrpc` serves JSON-RPC.
 //!
-//! Cada trait traz um exemplo. O tutorial completo, que percorre uma aplicação de ponta a ponta (o `examples/rde`),
-//! está no README do repositório.
+//! Every trait carries an example. The `cerne` command (crate `cerne-cli`) creates a project laid out like the
+//! board and generates each sticky note; the README walks through one from start to finish.
+
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod business_rules;
 mod commands;

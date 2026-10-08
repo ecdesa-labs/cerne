@@ -1,4 +1,4 @@
-//! JSON-RPC 2.0 (D36): the body becomes a `Request` or an error, and the `params` come by name or by position.
+//! JSON-RPC 2.0: the body becomes a `Request` or an error, and the `params` come by name or by position.
 #![cfg(all(feature = "axum", feature = "sqlite"))]
 
 use cerne::application::{Command, Executed, Outbox, Query, ReadModel, TransactionalPorts};

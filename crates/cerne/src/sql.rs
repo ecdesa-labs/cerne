@@ -1,4 +1,4 @@
-//! The SQL adapters: one module per database, written once by `sql_adapters!` (D31).
+//! The SQL adapters: one module per database, written once by `sql_adapters!`.
 //!
 //! The SQL is the same in both databases (`$1` placeholders and `RETURNING` work in SQLite and Postgres); only the
 //! migrations, written by the application, differ.

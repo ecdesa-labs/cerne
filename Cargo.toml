@@ -1,11 +1,15 @@
 [workspace]
 resolver = "3"
-members = ["crates/*", "examples/*"]
+members = ["crates/*"]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.88"
 license = "Apache-2.0"
+repository = "https://github.com/ecdesa-labs/cerne"
+homepage = "https://github.com/ecdesa-labs/cerne"
+keywords = ["ddd", "event-storming", "cqrs", "domain-driven-design", "outbox"]
 
 [workspace.dependencies]
 cerne = { path = "crates/cerne" }

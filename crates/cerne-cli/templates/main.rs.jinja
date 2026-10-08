@@ -38,7 +38,11 @@ async fn main() -> anyhow::Result<()> {
             .await
     });
 
-    // --- HTTP: {% if http == "jsonrpc" %}JSON-RPC on POST /rpc{% else %}REST{% endif %} ---------------------------------------------
+{% if http == "jsonrpc" %}
+    // --- HTTP: JSON-RPC on POST /rpc -----------------------------------------
+{% else %}
+    // --- HTTP: REST ----------------------------------------------------------
+{% endif %}
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000").await?;
 
