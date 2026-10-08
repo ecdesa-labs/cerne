@@ -23,12 +23,11 @@ Inspired by the video [Entropia de software não é a mesma coisa que complexida
 
 ## What's Cerne?
 
-<!-- pitch: provisional -->
-Cerne is a Rust framework that turns an [Event Storming](https://www.eventstorming.com) board into code. Every sticky note on the board becomes an explicit block of code, so whoever opens a file knows right away which part of the flow they are in.
+Cerne is a Rust framework that turns an [Event Storming](https://www.eventstorming.com) board into code: every sticky note becomes a type of yours that implements a Cerne trait, and every flow becomes an `execute` with the sections of the board.
 
 To keep the application in that shape as it grows, Cerne comes with a CLI, `cerne`. `cerne new` creates the project already laid out like the board, and each `cerne g` generates the new piece (a command, an event, an entity, a port) in the right place, with the right sections and already compiling. Whoever joins the project does not have to guess where a new feature lives or how to write it: it is born inside the proposal.
 
-Understanding Event Storming is key to understanding Cerne. The board tells a story with colored sticky notes: an actor sends a command (blue), an aggregate (yellow) changes, a domain event (orange) happens, a policy (lilac) reacts with a new command, external systems (pink) are called, and read models (green) show the result. Cerne gives each sticky note a Rust trait, and splits your application into three layers: Domain, Application and Infrastructure.
+Understanding Event Storming is key to understanding Cerne. The board tells a story with colored sticky notes: an actor sends a command (blue), an aggregate (yellow) changes, a domain event (orange) happens, a policy (lilac) reacts with a new command, external systems (pink) are called, and read models (green) show the result. Cerne splits your application into three layers: Domain, Application and Infrastructure.
 
 ### Domain layer
 

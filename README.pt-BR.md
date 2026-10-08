@@ -23,12 +23,11 @@ Inspirado no vídeo [Entropia de software não é a mesma coisa que complexidade
 
 ## O que é o Cerne?
 
-<!-- pitch: provisório -->
-O Cerne é um framework Rust que transforma um board de [Event Storming](https://www.eventstorming.com) em código. Cada post-it do board vira um bloco explícito de código, e quem abre um arquivo sabe na hora em que parte do fluxo está.
+O Cerne é um framework Rust que transforma um board de [Event Storming](https://www.eventstorming.com) em código: cada post-it vira um tipo seu que implementa uma trait do Cerne, e cada fluxo vira um `execute` com as seções do board.
 
 Para a aplicação seguir essa forma enquanto cresce, o Cerne vem com um CLI, o `cerne`. O `cerne new` cria o projeto já organizado como o board, e cada `cerne g` gera a peça nova (um command, um evento, uma entidade, um port) no lugar certo, com as seções certas e já compilando. Quem chega ao projeto não precisa adivinhar onde a feature nova mora nem como escrevê-la: ela já nasce dentro da proposta.
 
-Entender o Event Storming é a chave para entender o Cerne. O board conta uma história com post-its coloridos: um ator envia um command (azul), um agregado (amarelo) muda, um evento de domínio (laranja) acontece, uma policy (lilás) reage com um novo command, sistemas externos (rosa) são chamados, e read models (verde) mostram o resultado. O Cerne dá a cada post-it uma trait Rust e divide a aplicação em três camadas: Domain, Application e Infrastructure.
+Entender o Event Storming é a chave para entender o Cerne. O board conta uma história com post-its coloridos: um ator envia um command (azul), um agregado (amarelo) muda, um evento de domínio (laranja) acontece, uma policy (lilás) reage com um novo command, sistemas externos (rosa) são chamados, e read models (verde) mostram o resultado. O Cerne divide a aplicação em três camadas: Domain, Application e Infrastructure.
 
 ### Camada Domain
 
