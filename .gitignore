@@ -2,3 +2,7 @@
 *.db
 *.db-shm
 *.db-wal
+
+# Markdown Preview Enhanced creates these templates; only style.less is ours
+/.crossnote/*
+!/.crossnote/style.less
