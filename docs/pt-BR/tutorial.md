@@ -55,55 +55,97 @@ Cada bloco de código abaixo é um arquivo inteiro do projeto. Um teste deste re
 
 ## 1. O projeto e seus post-its
 
+Cria o projeto `shop`, com SQLite como banco e uma API REST.
+
 ```bash
-# Cria o projeto: uma pasta por camada, SQLite como banco e uma API REST.
 cerne new shop --db sqlite --http rest
+```
 
-# Entra no projeto: todo `cerne g` roda dentro dele.
+Entra no projeto: os comandos `cerne g` rodam dentro dele.
+
+```bash
 cd shop
+```
 
-# O agregado Order (🟨), com o id OrderId (um value object), o repositório SQL e a migração.
-# Os campos são nome:tipo; status=Placed:Placed,Paid é um enum que começa em Placed.
+Cria o agregado 🟨 `Order`: Um pedido, com seu repositório SQL (o projeto tem banco, por causa do `--db sqlite`) e um status que começa em `Placed`. O campo `id` o CLI cria sozinho: um value object `OrderId`, com um `u64` dentro. Com `id:<tipo>` (por exemplo, `id:String`), o `OrderId` guarda um `String` no lugar do `u64`. Como o `Order` é um agregado, o repositório dele só aceita um id inteiro ou `String`.
+
+```bash
 cerne g entity Order product:String quantity:u32 total:u64 status=Placed:Placed,Paid --aggregate
+```
 
-# O evento OrderPlaced (🟧): o pedido foi feito.
+Cria o evento 🟧 `OrderPlaced`: o pedido foi feito.
+
+```bash
 cerne g event OrderPlaced order_id:OrderId total:u64
+```
 
-# O evento OrderPaid (🟧): o pedido foi pago.
+Cria o evento 🟧 `OrderPaid`: o pedido foi pago.
+
+```bash
 cerne g event OrderPaid order_id:OrderId
+```
 
-# O command PlaceOrder (🟦), que o cliente envia.
+Cria o command 🟦 `PlaceOrder`: o cliente faz um pedido.
+
+```bash
 cerne g command PlaceOrder product:String quantity:u32
+```
 
-# O command ChargeOrder (🟦): nenhum ator o envia, uma policy o dispara (--policy).
+Cria o command 🟦 `ChargeOrder`: cobrar o pedido, disparado por uma policy e não por um ator.
+
+```bash
 cerne g command ChargeOrder order_id:OrderId total:u64 --policy
+```
 
-# O port Catalog (🩷): o sistema externo com os preços e o estoque.
+Cria o port 🩷 `Catalog`: o sistema externo com os preços e o estoque.
+
+```bash
 cerne g port Catalog
+```
 
-# O adapter em memória do Catalog, para os testes e para este tutorial.
+Cria o `InMemoryCatalog`: um catálogo em memória, para os testes e para este tutorial.
+
+```bash
 cerne g adapter InMemoryCatalog Catalog
+```
 
-# O port Payments (🩷): o sistema externo que cobra o cliente.
+Cria o port 🩷 `Payments`: o sistema externo que cobra o cliente.
+
+```bash
 cerne g port Payments
+```
 
-# O adapter em memória do Payments.
+Cria o `InMemoryPayments`: um sistema de pagamentos em memória, para os testes e para este tutorial.
+
+```bash
 cerne g adapter InMemoryPayments Payments
+```
 
-# O read model OrderSummary (🟩): o que o cliente vê na tela.
+Cria o read model 🟩 `OrderSummary`: o resumo do pedido que o cliente vê.
+
+```bash
 cerne g read_model OrderSummary product:String quantity:u32 total:u64 status:String
+```
 
-# A query OrderSummary, que monta o read model a partir do id do pedido.
+Cria a query `OrderSummary`: ela busca esse resumo pelo id do pedido.
+
+```bash
 cerne g query OrderSummary order_id:OrderId
+```
 
-# A rota POST /orders, cujo corpo é o PlaceOrderCommand.
+Liga o `PlaceOrder` à rota `POST /orders`.
+
+```bash
 cerne g endpoint PlaceOrder POST /orders
+```
 
-# A rota GET /orders, cuja query string é a OrderSummaryQuery.
+Liga a `OrderSummary` à rota `GET /orders`.
+
+```bash
 cerne g endpoint OrderSummary GET /orders
 ```
 
-Depois de cada comando, o projeto continua compilando. O `--aggregate` também acrescenta o campo `orders` nos `Ports`, e o `--policy` registra o command na outbox.
+Os campos são `nome:tipo`, e `status=Placed:Placed,Paid` cria um enum com os valores `Placed` e `Paid`, que começa em `Placed`. Depois de cada comando, o projeto continua compilando. O `--aggregate` também acrescenta o campo `orders` nos `Ports`, e o `--policy` registra o command na outbox.
 
 ```console
 $ tree shop
@@ -165,7 +207,7 @@ Falta preencher os post-its.
 
 Um value object não tem identidade: dois `OrderId(7)` são a mesma coisa. Ele só existe se as invariantes dele valem, e nunca muda. O id de toda entidade é um value object, então um `0` nunca vira id de pedido, nem quando é lido de volta de um JSON ou do banco.
 
-Como o CLI gerou o `src/domain/value_objects/order_id.rs`:
+Como o `cerne g entity Order product:String quantity:u32 total:u64 status=Placed:Placed,Paid --aggregate` gerou o `src/domain/value_objects/order_id.rs`:
 
 <!-- generated: src/domain/value_objects/order_id.rs -->
 ```rust
@@ -248,7 +290,7 @@ Cada invariante é um nome mais uma closure. A condição vai para uma variável
 
 ## 3. Agregado: `Order` 🟨
 
-Como o CLI gerou o `src/domain/entities/order.rs`:
+Como o `cerne g entity Order product:String quantity:u32 total:u64 status=Placed:Placed,Paid --aggregate` gerou o `src/domain/entities/order.rs`:
 
 <!-- generated: src/domain/entities/order.rs -->
 ```rust
@@ -421,7 +463,7 @@ impl Order {
 
 Um port é uma trait assíncrona da aplicação, e todo método devolve `Result<_, cerne::Error>`. O command não sabe qual adapter está por trás.
 
-Como o CLI gerou o `src/application/ports/catalog.rs`:
+Como o `cerne g port Catalog` gerou o `src/application/ports/catalog.rs`:
 
 <!-- generated: src/application/ports/catalog.rs -->
 ```rust
@@ -449,7 +491,7 @@ pub trait Catalog: Send + Sync {
 }
 ```
 
-Como o CLI gerou o `src/application/ports/payments.rs`:
+Como o `cerne g port Payments` gerou o `src/application/ports/payments.rs`:
 
 <!-- generated: src/application/ports/payments.rs -->
 ```rust
@@ -478,7 +520,7 @@ pub trait Payments: Send + Sync {
 
 Os adapters em memória fazem o papel dos sistemas de verdade nos testes e neste tutorial:
 
-Como o CLI gerou o `src/infrastructure/in_memory_catalog.rs`:
+Como o `cerne g adapter InMemoryCatalog Catalog` gerou o `src/infrastructure/in_memory_catalog.rs`:
 
 <!-- generated: src/infrastructure/in_memory_catalog.rs -->
 ```rust
@@ -528,7 +570,7 @@ impl Catalog for InMemoryCatalog {
 }
 ```
 
-Como o CLI gerou o `src/infrastructure/in_memory_payments.rs`:
+Como o `cerne g adapter InMemoryPayments Payments` gerou o `src/infrastructure/in_memory_payments.rs`:
 
 <!-- generated: src/infrastructure/in_memory_payments.rs -->
 ```rust
@@ -573,7 +615,7 @@ impl Payments for InMemoryPayments {
 
 Os `Ports` reúnem todos os ports. O `cerne g entity --aggregate` já acrescentou o repositório `orders`; os dois sistemas externos entram à mão. O repositório e a outbox moram no banco, então o `begin` abre uma transação e os entrega aos novos `Ports`. Os sistemas externos continuam os mesmos, porque uma chamada a eles não tem como ser desfeita.
 
-Como o CLI gerou o `src/ports.rs`:
+Como o `cerne new shop --db sqlite --http rest`, o `cerne g entity Order product:String quantity:u32 total:u64 status=Placed:Placed,Paid --aggregate` e o `cerne g command ChargeOrder order_id:OrderId total:u64 --policy` geraram o `src/ports.rs`:
 
 <!-- generated: src/ports.rs -->
 ```rust
@@ -699,7 +741,7 @@ impl TransactionalPorts for Ports {
 
 O command é uma struct com o que o ator envia, e nada mais: sem id, porque quem decide o id é o repositório. O `execute` segue o board da esquerda para a direita, uma seção por post-it:
 
-Como o CLI gerou o `src/application/commands/place_order.rs`:
+Como o `cerne g command PlaceOrder product:String quantity:u32` gerou o `src/application/commands/place_order.rs`:
 
 <!-- generated: src/application/commands/place_order.rs -->
 ```rust
@@ -814,7 +856,7 @@ impl Command<Ports> for PlaceOrderCommand {
 
 Um evento diz o que aconteceu, no passado. O `trigger_policies` dele lista as policies que reagem a ele: cada uma tem um nome, uma condição (`when`) e o command que dispara (`then`).
 
-Como o CLI gerou o `src/domain/events/order_placed.rs`:
+Como o `cerne g event OrderPlaced order_id:OrderId total:u64` gerou o `src/domain/events/order_placed.rs`:
 
 <!-- generated: src/domain/events/order_placed.rs -->
 ```rust
@@ -879,7 +921,7 @@ O `OrderPaid` fica como o `cerne g event` o gerou: nenhuma policy reage a ele ai
 
 ## 7. O command que uma policy dispara: `ChargeOrderCommand` 🟦
 
-Como o CLI gerou o `src/application/commands/charge_order.rs`:
+Como o `cerne g command ChargeOrder order_id:OrderId total:u64 --policy` gerou o `src/application/commands/charge_order.rs`:
 
 <!-- generated: src/application/commands/charge_order.rs -->
 ```rust
@@ -986,7 +1028,7 @@ Se o processo cair depois da cobrança e antes do commit, a outbox executa o com
 
 O read model é o que o ator vê na tela: campos simples, sem comportamento. O `cerne g read_model` o gerou, e ele fica como está. A query lê os ports e o monta:
 
-Como o CLI gerou o `src/application/queries/order_summary.rs`:
+Como o `cerne g query OrderSummary order_id:OrderId` gerou o `src/application/queries/order_summary.rs`:
 
 <!-- generated: src/application/queries/order_summary.rs -->
 ```rust
@@ -1059,7 +1101,7 @@ impl Query<Ports> for OrderSummaryQuery {
 
 O `tests/board.rs` tem um bloco por fluxo. O banco é um SQLite em memória, com o mesmo adapter SQL de produção; um repositório nunca é um `Vec`.
 
-Como o CLI gerou o `tests/board.rs`:
+Como o `cerne new shop --db sqlite --http rest` gerou o `tests/board.rs`:
 
 <!-- generated: tests/board.rs -->
 ```rust
@@ -1192,7 +1234,7 @@ cargo test
 
 O `cerne new --http rest` gerou o router, e cada `cerne g endpoint` acrescentou uma rota: o corpo do `POST /orders` é o `PlaceOrderCommand`, e a query string do `GET /orders` é a `OrderSummaryQuery`. No `main.rs`, só os dois adapters entram à mão:
 
-Como o CLI gerou o `src/main.rs`:
+Como o `cerne new shop --db sqlite --http rest` gerou o `src/main.rs`:
 
 <!-- generated: src/main.rs -->
 ```rust
