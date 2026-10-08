@@ -4,7 +4,7 @@ use crate::errors::{Error, InfrastructureError};
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 /// A command a policy fired, as the outbox stores it: its name and its fields in JSON.
@@ -27,7 +27,8 @@ pub struct StoredCommand {
 /// produced the events. A command in the table runs at least once, even if the process dies.
 ///
 /// The table is the same in every database (`cerne_outbox`); the adapters are `cerne::sqlite::SqliteOutbox` and,
-/// with the `postgres` feature, `cerne::postgres::PostgresOutbox`.
+/// with the `postgres` feature, `cerne::postgres::PostgresOutbox`. A project without a database uses the
+/// [`InMemoryOutbox`].
 #[async_trait]
 pub trait Outbox<Ports: 'static>: Send + Sync {
     /// Stores one command, to run later in a transaction of its own.
@@ -257,6 +258,124 @@ impl<Ports: TransactionalPorts> OutboxPolicyProcessor<Ports> {
         let execution = command.execute(transaction).await?;
 
         transaction.outbox().send_events(execution.events).await?;
+
+        Ok(())
+    }
+}
+
+/// The outbox of a project without a database (`cerne new` without `--db`): the commands policies fire wait in
+/// memory, and the `OutboxPolicyProcessor` runs them as it runs a table.
+///
+/// There is no transaction: `begin` returns the same outbox and `commit` does nothing, so a command that fails keeps
+/// whatever it already wrote. If the process dies, the commands still waiting are lost. `cerne g db` swaps it for a
+/// database and its outbox table.
+///
+/// ```
+/// use cerne::application::{InMemoryOutbox, Outbox, OutboxEntry};
+///
+/// # #[tokio::main(flavor = "current_thread")]
+/// # async fn main() -> Result<(), cerne::Error> {
+/// let in_memory_outbox = InMemoryOutbox::new();
+///
+/// let charge_order = OutboxEntry {
+///     command: "charge_order".into(),
+///     json: r#"{"order_id":1}"#.into(),
+/// };
+///
+/// Outbox::<()>::store(&in_memory_outbox, charge_order).await?;
+///
+/// let pending = Outbox::<()>::next_pending(&in_memory_outbox).await?.unwrap();
+///
+/// assert_eq!(pending.command, "charge_order");
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Clone, Default)]
+pub struct InMemoryOutbox {
+    rows: Arc<Mutex<Vec<InMemoryOutboxRow>>>,
+}
+
+struct InMemoryOutboxRow {
+    stored_command: StoredCommand,
+    is_pending: bool,
+    error: Option<String>,
+}
+
+impl InMemoryOutbox {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The same outbox: in memory there is no transaction to open.
+    pub async fn begin(&self) -> Result<Self, Error> {
+        Ok(self.clone())
+    }
+
+    /// Nothing to make permanent: every write is already in memory.
+    pub async fn commit(&self) -> Result<(), Error> {
+        Ok(())
+    }
+
+    /// The error of every command that failed, in the order they were stored.
+    pub fn failures(&self) -> Vec<(StoredCommand, String)> {
+        self.rows()
+            .iter()
+            .filter_map(|row| Some((row.stored_command.clone(), row.error.clone()?)))
+            .collect()
+    }
+
+    fn rows(&self) -> MutexGuard<'_, Vec<InMemoryOutboxRow>> {
+        self.rows
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn finish(&self, id: i64, error: Option<String>) {
+        if let Some(row) = self
+            .rows()
+            .iter_mut()
+            .find(|row| row.stored_command.id == id)
+        {
+            row.is_pending = false;
+            row.error = error;
+        }
+    }
+}
+
+#[async_trait]
+impl<Ports: 'static> Outbox<Ports> for InMemoryOutbox {
+    async fn store(&self, outbox_entry: OutboxEntry) -> Result<(), Error> {
+        let mut rows = self.rows();
+        let id = rows.len() as i64 + 1;
+
+        rows.push(InMemoryOutboxRow {
+            stored_command: StoredCommand {
+                id,
+                command: outbox_entry.command,
+                json: outbox_entry.json,
+            },
+            is_pending: true,
+            error: None,
+        });
+
+        Ok(())
+    }
+
+    async fn next_pending(&self) -> Result<Option<StoredCommand>, Error> {
+        let rows = self.rows();
+        let oldest_pending = rows.iter().find(|row| row.is_pending);
+
+        Ok(oldest_pending.map(|row| row.stored_command.clone()))
+    }
+
+    async fn mark_done(&self, id: i64) -> Result<(), Error> {
+        self.finish(id, None);
+
+        Ok(())
+    }
+
+    async fn mark_failed(&self, id: i64, error: &str) -> Result<(), Error> {
+        self.finish(id, Some(error.to_string()));
 
         Ok(())
     }

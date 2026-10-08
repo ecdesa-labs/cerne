@@ -42,7 +42,7 @@ La capa Application es donde actúan los actores. Un command (`Command`) lee los
 
 Cerne es, ante todo, un framework para modelar el dominio y la aplicación, no la infraestructura. La capa Infrastructure es un extra para acelerar el desarrollo: adapters listos para los repositorios SQL (`cerne::sqlite`, también en memoria, y `cerne::postgres`, con la misma API y el mismo SQL) y para HTTP, en REST o JSON-RPC 2.0 (feature `axum`).
 
-Nada en las capas Domain y Application depende de estos adapters. Los ports son traits, y cualquier adapter que los implemente sirve: otra base de datos, otro framework web, una cola. Para usar Cerne sin ninguno de sus adapters:
+`cerne new` solo los usa cuando se le pide: sin `--db`, el proyecto no depende de ningún adapter de base de datos, y la outbox vive en memoria; `--db`, o `cerne g db` más tarde, añade la base de datos. Nada en las capas Domain y Application depende de estos adapters. Los ports son traits, y cualquier adapter que los implemente sirve: otra base de datos, otro framework web, una cola. Para usar Cerne sin ninguno de sus adapters:
 
 ```toml
 cerne = { version = "0.1", default-features = false }

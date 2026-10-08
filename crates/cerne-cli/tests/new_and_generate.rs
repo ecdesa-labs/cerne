@@ -78,6 +78,33 @@ async fn the_generated_repository_inserts_loads_and_updates_on_postgres() {
 "#;
 
 /// What the e2e test writes into the REST project: a `POST` and a `GET` straight to the generated router.
+/// What the e2e test writes into the project that got its database from `cerne g db`: the repository of the
+/// aggregate that existed before the database.
+const NUCLEO_REPOSITORY_TEST: &str = r#"
+use cerne::application::TransactionalPorts;
+use cerne::domain::Entity;
+use cerne::sqlite::SqliteDatabase;
+use nucleo::domain::entities::order::{Order, OrderProps, OrderStatus};
+use nucleo::ports::Ports;
+
+#[tokio::test]
+async fn the_aggregate_from_before_the_database_gets_a_repository() {
+    let database = SqliteDatabase::in_memory().await.unwrap();
+    database.migrate(&sqlx::migrate!()).await.unwrap();
+    let ports = Ports::new(database);
+
+    let order = Order::new(OrderProps { product: "mug".into(), quantity: 2 }).unwrap();
+
+    let transaction = ports.begin().await.unwrap();
+    let order_id = transaction.orders.save(order).await.unwrap();
+    transaction.commit().await.unwrap();
+
+    let order = ports.orders.load(&order_id).await.unwrap();
+
+    assert_eq!((order.product.as_str(), order.quantity, order.status), ("mug", 2, OrderStatus::Placed));
+}
+"#;
+
 const REST_TEST: &str = r##"
 use axum::body::Body;
 use axum::http::Request;
@@ -142,7 +169,10 @@ fn generated_project_passes_clippy_without_touching_anything() {
 
     // --- cerne new -----------------------------------------------------------
 
-    assert!(cerne(&["new", "loja", "--http", "jsonrpc"], &tmp));
+    assert!(cerne(
+        &["new", "loja", "--db", "memory", "--http", "jsonrpc"],
+        &tmp
+    ));
     assert!(
         !cerne(&["new", "loja"], &tmp),
         "new must not overwrite a project"
@@ -459,8 +489,91 @@ fn generated_project_passes_clippy_without_touching_anything() {
             .starts_with("pub mod http;")
     );
 
+    // --- No database: the outbox in memory, then cerne g db sqlite ----------
+
+    assert!(cerne(&["new", "nucleo", "--http", "rest"], &tmp));
+
+    let nucleo = tmp.join("nucleo");
+
+    assert!(!nucleo.join("migrations").exists());
+    assert!(cerne(
+        &[
+            "g",
+            "entity",
+            "Order",
+            "product:String",
+            "quantity:u32",
+            "status=Placed:Placed,Paid",
+            "--aggregate"
+        ],
+        &nucleo
+    ));
+    assert!(
+        !nucleo
+            .join("src/infrastructure/sqlite_order_repository.rs")
+            .exists(),
+        "no database, no repository"
+    );
+    assert!(cerne(
+        &[
+            "g",
+            "command",
+            "PlaceOrder",
+            "product:String",
+            "quantity:u32"
+        ],
+        &nucleo
+    ));
+    assert!(cerne(
+        &["g", "command", "ShipOrder", "order_id:OrderId", "--policy"],
+        &nucleo
+    ));
+    assert!(cerne(
+        &["g", "endpoint", "PlaceOrder", "POST", "/orders"],
+        &nucleo
+    ));
+
+    let nucleo_cargo_toml = fs::read_to_string(nucleo.join("Cargo.toml")).unwrap();
+
+    assert!(nucleo_cargo_toml.contains("default-features = false"));
+    assert!(!nucleo_cargo_toml.contains("sqlx"));
+
+    let no_database_passed = cargo(
+        &nucleo,
+        &workspace,
+        &["clippy", "--all-targets", "--", "-D", "warnings"],
+    );
+
+    assert!(!cerne(&["g", "db", "mysql"], &nucleo));
+    assert!(cerne(&["g", "db", "sqlite"], &nucleo));
+    assert!(
+        !cerne(&["g", "db", "postgres"], &nucleo),
+        "the project already has a database"
+    );
+    assert!(
+        nucleo
+            .join("src/infrastructure/sqlite_order_repository.rs")
+            .exists()
+    );
+    assert!(nucleo.join("migrations/1_create_cerne_outbox.sql").exists());
+    assert!(
+        !fs::read_to_string(nucleo.join("src/ports.rs"))
+            .unwrap()
+            .contains("InMemoryOutbox")
+    );
+
+    fs::write(nucleo.join("tests/repository.rs"), NUCLEO_REPOSITORY_TEST).unwrap();
+
+    let database_added_passed = cargo(
+        &nucleo,
+        &workspace,
+        &["clippy", "--all-targets", "--", "-D", "warnings"],
+    ) && cargo(&nucleo, &workspace, &["test"]);
+
     fs::remove_dir_all(&tmp).unwrap();
 
+    assert!(no_database_passed);
+    assert!(database_added_passed);
     assert!(memory_and_jsonrpc_passed);
     assert!(postgres_and_rest_passed);
     assert!(sqlite_passed);

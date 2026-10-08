@@ -13,8 +13,10 @@ anyhow = "1"
 {% if http %}
 axum = "0.8"
 {% endif %}
-cerne = { version = "{{ cerne_version }}"{% if module == "postgres" %}, default-features = false{% endif %}, features = [{{ cerne_features }}] }
+cerne = { version = "{{ cerne_version }}"{% if db != "memory" and db != "sqlite" %}, default-features = false{% endif %}, features = [{{ cerne_features }}] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+{% if db %}
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "{{ module }}", "macros", "migrate"] }
+{% endif %}
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "time"] }

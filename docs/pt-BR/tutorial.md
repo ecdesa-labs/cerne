@@ -580,8 +580,7 @@ Como o CLI gerou o `src/ports.rs`:
 use crate::application::commands::charge_order::ChargeOrderCommand;
 use crate::domain::entities::order::Order;
 use crate::infrastructure::sqlite_order_repository::SqliteOrderRepository;
-use cerne::application::Repository;
-use cerne::application::{CommandRegistry, Outbox, TransactionalPorts};
+use cerne::application::{CommandRegistry, Outbox, Repository, TransactionalPorts};
 use cerne::sqlite::{SqliteDatabase, SqliteOutbox};
 use cerne::{Error, async_trait};
 
@@ -1326,6 +1325,8 @@ $ curl -X POST localhost:3000/orders -H 'content-type: application/json' -d '{"p
 ## Outras opções
 
 - **Postgres:** o `cerne new shop --db postgres` usa o `cerne::postgres`, com a mesma API e o mesmo SQL. O endereço vem do `DATABASE_URL`.
+- **Sem banco:** o `cerne new shop`, sem `--db`, não usa nenhum adapter de banco do Cerne. A outbox fica em memória (`InMemoryOutbox`), e o `--aggregate` gera só o agregado, sem repositório. Se o processo cair, os commands das policies que ainda não rodaram se perdem.
+- **Banco depois:** o `cerne g db sqlite` (ou `postgres`, ou `memory`) escreve o que o `cerne new --db` teria escrito: o `sqlx`, a tabela da outbox, os `Ports` no banco e o repositório SQL de cada agregado que já existe.
 - **Sem arquivo de banco:** o `cerne new shop --db memory` começa com um SQLite em memória, o mesmo adapter.
 - **JSON-RPC 2.0:** o `cerne new shop --http jsonrpc` atende `POST /rpc`, e cada `cerne g command` e `cerne g query` acrescenta o seu método (`place_order`, `order_summary`). Os `params` chegam por nome (um objeto) ou por posição (um array, na ordem dos campos do command).
 - **HTTP depois:** um projeto criado sem `--http` o ganha com `cerne g http rest` ou `cerne g http jsonrpc`.
@@ -1343,6 +1344,7 @@ cerne g read_model <Name> [field:type ...]
 cerne g query <Name> [field:type ...]
 cerne g endpoint <Name> <GET|POST|PUT|PATCH|DELETE> </path>
 cerne g http <rest|jsonrpc>
+cerne g db <memory|sqlite|postgres>
 cerne g port <Name>
 cerne g adapter <Name> <Port>
 ```

@@ -42,7 +42,7 @@ A camada Application é onde os atores agem. Um command (`Command`) lê os ports
 
 O Cerne é, antes de tudo, um framework de modelagem de domínio e de aplicação, não de infraestrutura. A camada Infrastructure é um extra para acelerar o desenvolvimento: adapters prontos para os repositórios SQL (`cerne::sqlite`, também em memória, e `cerne::postgres`, com a mesma API e o mesmo SQL) e para o HTTP, em REST ou JSON-RPC 2.0 (feature `axum`).
 
-Nada nas camadas Domain e Application depende desses adapters. Os ports são traits, e qualquer adapter que as implemente serve: outro banco, outro framework web, uma fila. Para usar o Cerne sem nenhum adapter dele:
+O `cerne new` só os usa quando pedido: sem `--db`, o projeto não depende de nenhum adapter de banco, e a outbox fica em memória; o `--db` ou, depois, o `cerne g db` acrescentam o banco. Nada nas camadas Domain e Application depende desses adapters. Os ports são traits, e qualquer adapter que as implemente serve: outro banco, outro framework web, uma fila. Para usar o Cerne sem nenhum adapter dele:
 
 ```toml
 cerne = { version = "0.1", default-features = false }

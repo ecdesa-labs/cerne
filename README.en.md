@@ -42,7 +42,7 @@ The Application layer is where the actors act. A command (`Command`) reads the p
 
 Cerne is, first of all, a framework for modeling the domain and the application, not the infrastructure. The Infrastructure layer is an extra to speed up development: ready-made adapters for the SQL repositories (`cerne::sqlite`, also in memory, and `cerne::postgres`, with the same API and the same SQL) and for HTTP, as REST or JSON-RPC 2.0 (feature `axum`).
 
-Nothing in the Domain and Application layers depends on these adapters. The ports are traits, and any adapter that implements them will do: another database, another web framework, a queue. To use Cerne without any of its adapters:
+`cerne new` only uses them when asked: without `--db`, the project depends on no database adapter, and the outbox lives in memory; `--db`, or `cerne g db` later, adds the database. Nothing in the Domain and Application layers depends on these adapters. The ports are traits, and any adapter that implements them will do: another database, another web framework, a queue. To use Cerne without any of its adapters:
 
 ```toml
 cerne = { version = "0.1", default-features = false }

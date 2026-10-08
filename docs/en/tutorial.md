@@ -580,8 +580,7 @@ The `src/ports.rs` as the CLI generated it:
 use crate::application::commands::charge_order::ChargeOrderCommand;
 use crate::domain::entities::order::Order;
 use crate::infrastructure::sqlite_order_repository::SqliteOrderRepository;
-use cerne::application::Repository;
-use cerne::application::{CommandRegistry, Outbox, TransactionalPorts};
+use cerne::application::{CommandRegistry, Outbox, Repository, TransactionalPorts};
 use cerne::sqlite::{SqliteDatabase, SqliteOutbox};
 use cerne::{Error, async_trait};
 
@@ -1326,6 +1325,8 @@ $ curl -X POST localhost:3000/orders -H 'content-type: application/json' -d '{"p
 ## Other options
 
 - **Postgres:** `cerne new shop --db postgres` uses `cerne::postgres`, with the same API and the same SQL. The address comes from `DATABASE_URL`.
+- **No database:** `cerne new shop`, without `--db`, uses no database adapter of Cerne. The outbox lives in memory (`InMemoryOutbox`), and `--aggregate` generates only the aggregate, with no repository. If the process dies, the commands of the policies that did not run yet are lost.
+- **A database later:** `cerne g db sqlite` (or `postgres`, or `memory`) writes what `cerne new --db` would have written: `sqlx`, the outbox table, the `Ports` on the database and the SQL repository of every aggregate that already exists.
 - **No database file:** `cerne new shop --db memory` starts with SQLite in memory, the same adapter.
 - **JSON-RPC 2.0:** `cerne new shop --http jsonrpc` serves `POST /rpc`, and every `cerne g command` and `cerne g query` adds its method (`place_order`, `order_summary`). The `params` come by name (an object) or by position (an array, in the order of the fields of the command).
 - **HTTP later:** a project created without `--http` gets it with `cerne g http rest` or `cerne g http jsonrpc`.
@@ -1343,6 +1344,7 @@ cerne g read_model <Name> [field:type ...]
 cerne g query <Name> [field:type ...]
 cerne g endpoint <Name> <GET|POST|PUT|PATCH|DELETE> </path>
 cerne g http <rest|jsonrpc>
+cerne g db <memory|sqlite|postgres>
 cerne g port <Name>
 cerne g adapter <Name> <Port>
 ```

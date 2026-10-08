@@ -1,9 +1,14 @@
+{% if db %}
 use cerne::application::{CommandRegistry, Outbox, TransactionalPorts};
 use cerne::{{ module }}::{ {{ database }}, {{ outbox }} };
+{% else %}
+use cerne::application::{CommandRegistry, InMemoryOutbox, Outbox, TransactionalPorts};
+{% endif %}
 use cerne::{Error, async_trait};
 
 /// The composition root: every port the commands and queries can use.
 ///
+{% if db %}
 /// The repositories and the outbox live in the database, so they follow its transaction. External systems do not:
 /// `begin` hands the same adapters to the new ports.
 pub struct Ports {
@@ -19,6 +24,23 @@ impl Ports {
         }
     }
 }
+{% else %}
+/// No database yet (`cerne g db` adds one): the outbox lives in memory, and a transaction is only the same ports. If
+/// the process dies, the commands the policies fired and that did not run yet are lost.
+pub struct Ports {
+    pub in_memory_outbox: InMemoryOutbox,
+    pub outbox: Box<dyn Outbox<Ports>>,
+}
+
+impl Ports {
+    pub fn new(in_memory_outbox: InMemoryOutbox) -> Self {
+        Self {
+            outbox: Box::new(in_memory_outbox.clone()),
+            in_memory_outbox,
+        }
+    }
+}
+{% endif %}
 
 /// Every command a policy fires, so the outbox can read it back from its row.
 pub fn command_registry() -> CommandRegistry<Ports> {
@@ -28,13 +50,21 @@ pub fn command_registry() -> CommandRegistry<Ports> {
 #[async_trait]
 impl TransactionalPorts for Ports {
     async fn begin(&self) -> Result<Self, Error> {
+{% if db %}
         let transaction = self.database.begin().await?;
+{% else %}
+        let transaction = self.in_memory_outbox.begin().await?;
+{% endif %}
 
         Ok(Ports::new(transaction))
     }
 
     async fn commit(self) -> Result<(), Error> {
+{% if db %}
         self.database.commit().await
+{% else %}
+        self.in_memory_outbox.commit().await
+{% endif %}
     }
 
     fn outbox(&self) -> &dyn Outbox<Self> {

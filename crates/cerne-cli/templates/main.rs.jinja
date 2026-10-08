@@ -1,5 +1,9 @@
+{% if db %}
 use cerne::application::OutboxPolicyProcessor;
 use cerne::{{ module }}::{{ database }};
+{% else %}
+use cerne::application::{InMemoryOutbox, OutboxPolicyProcessor};
+{% endif %}
 {% if http %}
 use {{ crate_name }}::infrastructure::http::router;
 {% endif %}
@@ -13,19 +17,14 @@ use std::time::Duration;
 async fn main() -> anyhow::Result<()> {
     // --- Composition root ----------------------------------------------------
 
-{% if db == "memory" %}
-    let database = {{ database }}::in_memory().await?;
-{% elif db == "sqlite" %}
-    let database_url = std::env::var("DATABASE_URL").unwrap_or("sqlite://{{ crate_name }}.db?mode=rwc".into());
-
-    let database = {{ database }}::connect(&database_url, 5).await?;
+{% if db %}
+{{ database_setup }}
 {% else %}
-    let database = {{ database }}::connect(&std::env::var("DATABASE_URL")?, 5).await?;
+    // No database yet (`cerne g db` adds one): the commands of the policies wait in memory.
+    let in_memory_outbox = InMemoryOutbox::new();
 {% endif %}
 
-    database.migrate(&sqlx::migrate!()).await?;
-
-    let ports = Arc::new(Ports::new(database));
+    let ports = Arc::new(Ports::new({% if db %}database{% else %}in_memory_outbox{% endif %}));
 
     // --- Outbox: the commands of the policies --------------------------------
 

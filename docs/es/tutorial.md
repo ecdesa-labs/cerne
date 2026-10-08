@@ -580,8 +580,7 @@ El `src/ports.rs` tal como lo generó el CLI:
 use crate::application::commands::charge_order::ChargeOrderCommand;
 use crate::domain::entities::order::Order;
 use crate::infrastructure::sqlite_order_repository::SqliteOrderRepository;
-use cerne::application::Repository;
-use cerne::application::{CommandRegistry, Outbox, TransactionalPorts};
+use cerne::application::{CommandRegistry, Outbox, Repository, TransactionalPorts};
 use cerne::sqlite::{SqliteDatabase, SqliteOutbox};
 use cerne::{Error, async_trait};
 
@@ -1326,6 +1325,8 @@ $ curl -X POST localhost:3000/orders -H 'content-type: application/json' -d '{"p
 ## Otras opciones
 
 - **Postgres:** `cerne new shop --db postgres` usa `cerne::postgres`, con la misma API y el mismo SQL. La dirección viene de `DATABASE_URL`.
+- **Sin base de datos:** `cerne new shop`, sin `--db`, no usa ningún adapter de base de datos de Cerne. La outbox vive en memoria (`InMemoryOutbox`), y `--aggregate` genera solo el agregado, sin repositorio. Si el proceso se cae, los commands de las policies que aún no se ejecutaron se pierden.
+- **Base de datos más tarde:** `cerne g db sqlite` (o `postgres`, o `memory`) escribe lo que `cerne new --db` habría escrito: `sqlx`, la tabla de la outbox, los `Ports` sobre la base de datos y el repositorio SQL de cada agregado que ya existe.
 - **Sin archivo de base de datos:** `cerne new shop --db memory` empieza con un SQLite en memoria, el mismo adapter.
 - **JSON-RPC 2.0:** `cerne new shop --http jsonrpc` atiende `POST /rpc`, y cada `cerne g command` y `cerne g query` añade su método (`place_order`, `order_summary`). Los `params` llegan por nombre (un objeto) o por posición (un array, en el orden de los campos del command).
 - **HTTP más tarde:** un proyecto creado sin `--http` lo obtiene con `cerne g http rest` o `cerne g http jsonrpc`.
@@ -1343,6 +1344,7 @@ cerne g read_model <Name> [field:type ...]
 cerne g query <Name> [field:type ...]
 cerne g endpoint <Name> <GET|POST|PUT|PATCH|DELETE> </path>
 cerne g http <rest|jsonrpc>
+cerne g db <memory|sqlite|postgres>
 cerne g port <Name>
 cerne g adapter <Name> <Port>
 ```

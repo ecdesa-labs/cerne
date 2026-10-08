@@ -9,7 +9,7 @@ use std::{env, fs, process};
 
 const USAGE: &str = "\
 usage:
-  cerne new <name> [--db memory|sqlite|postgres] [--http rest|jsonrpc]
+  cerne new <name> [--db memory|sqlite|postgres] [--http rest|jsonrpc]   (no --db: no database, the outbox in memory)
   cerne g entity <Name> [field:type ...] [field:Value1,Value2 ...] [field=Initial:Value1,Value2 ...] [id:type] [--aggregate]
   cerne g value_object <Name> field:type [field:type ...]
   cerne g event <Name> [field:type ...]
@@ -18,11 +18,12 @@ usage:
   cerne g query <Name> [field:type ...]   (needs the read model <Name>)
   cerne g endpoint <Name> <GET|POST|PUT|PATCH|DELETE> </path>   (REST projects)
   cerne g http <rest|jsonrpc>   (projects created without --http)
+  cerne g db <memory|sqlite|postgres>   (projects created without --db)
   cerne g port <Name>
   cerne g adapter <Name> <Port>";
 
 /// What `cerne new` writes: one folder per layer, each `mod.rs` ready for the generators to append to.
-const PROJECT: [(&str, &str); 17] = [
+const PROJECT: [(&str, &str); 16] = [
     ("Cargo.toml", include_str!("../templates/Cargo.toml.jinja")),
     (".gitignore", "/target\n*.db\n*.db-shm\n*.db-wal\n"),
     ("src/lib.rs", include_str!("../templates/lib.rs.jinja")),
@@ -48,16 +49,17 @@ const PROJECT: [(&str, &str); 17] = [
         "{% if http %}pub mod http;\n{% endif %}",
     ),
     (
-        "migrations/1_create_cerne_outbox.sql",
-        include_str!("../templates/outbox_migration.sql.jinja"),
-    ),
-    (
         "tests/board.rs",
         include_str!("../templates/board.rs.jinja"),
     ),
 ];
 
 const MAIN: &str = include_str!("../templates/main.rs.jinja");
+const DATABASE_SETUP: &str = include_str!("../templates/database_setup.rs.jinja");
+const OUTBOX_MIGRATION: (&str, &str) = (
+    "migrations/1_create_cerne_outbox.sql",
+    include_str!("../templates/outbox_migration.sql.jinja"),
+);
 const HTTP_MOD: &str = include_str!("../templates/http_mod.rs.jinja");
 const RPC: &str = include_str!("../templates/rpc.rs.jinja");
 const VALUE_OBJECT: &str = include_str!("../templates/value_object.rs.jinja");
@@ -91,6 +93,7 @@ fn main() -> ExitCode {
         ["g" | "generate", "endpoint", name, method, path] => generate_endpoint(name, method, path),
         ["g" | "generate", "adapter", name, port] => generate_adapter(name, port),
         ["g" | "generate", "http", http] => generate_http(http),
+        ["g" | "generate", "db", db] => generate_db(db),
         ["g" | "generate", kind, name, rest @ ..] => generate(kind, name, rest),
         _ => Err(USAGE.into()),
     };
@@ -107,7 +110,7 @@ fn main() -> ExitCode {
 // --- cerne new ---------------------------------------------------------------
 
 fn new_project(name: &str, flags: &[&str]) -> CliResult {
-    let db = flag(flags, "--db", &["memory", "sqlite", "postgres"])?.unwrap_or("memory");
+    let db = flag(flags, "--db", &["memory", "sqlite", "postgres"])?.unwrap_or("");
     let http = flag(flags, "--http", &["rest", "jsonrpc"])?.unwrap_or("");
     let root = Path::new(name);
 
@@ -115,9 +118,13 @@ fn new_project(name: &str, flags: &[&str]) -> CliResult {
         return Err(format!("{name} already exists").into());
     }
 
-    let project = project_context(name, db, http);
+    let project = project_context(name, db, http)?;
 
     let mut files = PROJECT.to_vec();
+
+    if !db.is_empty() {
+        files.push(OUTBOX_MIGRATION);
+    }
 
     files.extend(http_files(http));
 
@@ -128,16 +135,22 @@ fn new_project(name: &str, flags: &[&str]) -> CliResult {
         fs::write(&file, render(template, &project)?)?;
     }
 
+    fn none(choice: &str) -> &str {
+        if choice.is_empty() { "none" } else { choice }
+    }
+
     println!(
-        "created {name} (database: {db}, http: {})",
-        if http.is_empty() { "none" } else { http }
+        "created {name} (database: {}, http: {})",
+        none(db),
+        none(http)
     );
 
     Ok(())
 }
 
-/// What the templates of `cerne new` read: the name, the database and the HTTP of the project.
-fn project_context(name: &str, db: &str, http: &str) -> Value {
+/// What the templates of `cerne new` read: the name, the database and the HTTP of the project. Without a database
+/// (`db` empty), the project depends on no adapter of `cerne`.
+fn project_context(name: &str, db: &str, http: &str) -> Result<Value, minijinja::Error> {
     let module = if db == "postgres" {
         "postgres"
     } else {
@@ -151,17 +164,22 @@ fn project_context(name: &str, db: &str, http: &str) -> Value {
         .map(|(_, feature)| format!("{feature:?}"))
         .collect();
 
-    context! {
+    let database = format!("{prefix}Database");
+    let crate_name = name.replace('-', "_");
+    let database_setup = render(DATABASE_SETUP, &context! { db, database, crate_name })?;
+
+    Ok(context! {
         name,
-        crate_name => name.replace('-', "_"),
+        crate_name,
         db,
         http,
         module,
-        database => format!("{prefix}Database"),
+        database,
+        database_setup => database_setup.trim_end(),
         outbox => format!("{prefix}Outbox"),
         cerne_features => cerne_features.join(", "),
         cerne_version => env!("CARGO_PKG_VERSION"),
-    }
+    })
 }
 
 /// The files of the HTTP layer: the router, and the JSON-RPC endpoint when the project speaks JSON-RPC.
@@ -277,7 +295,7 @@ fn generate(kind: &str, name: &str, args: &[&str]) -> CliResult {
             )?;
 
             if aggregate {
-                add_repository(name, &file, id_type, &fields)?;
+                add_repository_if_there_is_a_database(name, &file, id_type, &fields)?;
             }
 
             Ok(())
@@ -345,6 +363,24 @@ fn generate(kind: &str, name: &str, args: &[&str]) -> CliResult {
         ),
         _ => Err(format!("unknown generator {kind}\n{USAGE}").into()),
     }
+}
+
+/// With a database, the SQL repository of the aggregate; without one, only a note: `cerne g db` adds it later.
+fn add_repository_if_there_is_a_database(
+    name: &str,
+    file: &str,
+    id_type: &str,
+    fields: &[Value],
+) -> CliResult {
+    if project()?.db.is_empty() {
+        println!(
+            "no database yet: {name} has no repository; cerne g db <memory|sqlite|postgres> adds it"
+        );
+
+        return Ok(());
+    }
+
+    add_repository(name, file, id_type, fields)
 }
 
 /// The SQL repository of an aggregate, its migration, and its field in the `Ports`.
@@ -447,9 +483,11 @@ fn add_repository(name: &str, file: &str, id_type: &str, fields: &[Value]) -> Cl
         Before,
     )?;
 
+    add_to_use("src/ports.rs", "cerne::application", "Repository")?;
+
     insert_lines(
         "src/ports.rs",
-        "use cerne::application::Repository;",
+        "",
         PORTS_NEW,
         &[&format!(
             "{table}: Box::new({repository}::new(database.clone())),"
@@ -613,8 +651,8 @@ fn generate_http(http: &str) -> CliResult {
 
     // --- The HTTP layer ------------------------------------------------------
 
-    let without_http = project_context(&project.name, &project.db, "");
-    let with_http = project_context(&project.name, &project.db, http);
+    let without_http = project_context(&project.name, &project.db, "")?;
+    let with_http = project_context(&project.name, &project.db, http)?;
 
     for (path, template) in http_files(http) {
         fs::create_dir_all(Path::new(path).parent().unwrap())?;
@@ -669,6 +707,234 @@ fn generate_http(http: &str) -> CliResult {
     }
 
     Ok(())
+}
+
+/// The lines a project without a database has in `ports.rs` and `main.rs`, which `cerne g db` swaps for the database.
+const NO_DATABASE_PORTS_DOC: &str = "/// No database yet (`cerne g db` adds one): the outbox lives in memory, and a transaction is only the same ports. If
+/// the process dies, the commands the policies fired and that did not run yet are lost.";
+const DATABASE_PORTS_DOC: &str = "/// The repositories and the outbox live in the database, so they follow its transaction. External systems do not:
+/// `begin` hands the same adapters to the new ports.";
+const NO_DATABASE_SETUP: &str =
+    "    // No database yet (`cerne g db` adds one): the commands of the policies wait in memory.
+    let in_memory_outbox = InMemoryOutbox::new();";
+
+/// `cerne g db memory|sqlite|postgres`: the database of a project created without `--db`, as `cerne new --db` writes
+/// it: `sqlx` and the adapters of `cerne`, the outbox table, the `Ports` on the database, and the SQL repository of
+/// every aggregate that already exists.
+fn generate_db(db: &str) -> CliResult {
+    if !["memory", "sqlite", "postgres"].contains(&db) {
+        return Err(format!("cerne g db takes memory|sqlite|postgres, not {db}").into());
+    }
+
+    let project = project()?;
+
+    if !project.db.is_empty() {
+        return Err(format!("the project already has the database {}", project.db).into());
+    }
+
+    let with_db = project_context(&project.name, db, &project.http)?;
+    let module = with_db.get_attr("module")?.to_string();
+    let database = with_db.get_attr("database")?.to_string();
+    let outbox = with_db.get_attr("outbox")?.to_string();
+
+    // --- Cargo.toml: the choice, sqlx, and the adapters of cerne -------------
+
+    let cargo_toml = fs::read_to_string("Cargo.toml")?;
+    let mut cargo_lines: Vec<String> = cargo_toml.lines().map(String::from).collect();
+
+    let Some(cerne_line) = cargo_lines.iter().position(|line| {
+        line.starts_with("cerne = ") && line.contains(", default-features = false")
+    }) else {
+        return Err("Cargo.toml has no line cerne = { .., default-features = false, .. }: add the database by hand".into());
+    };
+
+    cargo_lines[cerne_line] = if db == "postgres" {
+        let cerne_line_without_features = cargo_lines[cerne_line].contains("features = []");
+
+        if cerne_line_without_features {
+            cargo_lines[cerne_line].replace("features = []", r#"features = ["postgres"]"#)
+        } else {
+            cargo_lines[cerne_line].replace("features = [", r#"features = ["postgres", "#)
+        }
+    } else {
+        cargo_lines[cerne_line].replace(", default-features = false", "")
+    };
+
+    let sqlx_line = format!(
+        r#"sqlx = {{ version = "0.8", default-features = false, features = ["runtime-tokio", "{module}", "macros", "migrate"] }}"#
+    );
+    let tokio_line = cargo_lines
+        .iter()
+        .position(|line| line.starts_with("tokio = "))
+        .unwrap_or(cerne_line + 1);
+
+    cargo_lines.insert(tokio_line, sqlx_line);
+
+    for line in cargo_lines.iter_mut() {
+        if line == r#"db = """# {
+            *line = format!("db = {db:?}");
+        }
+    }
+
+    fs::write("Cargo.toml", cargo_lines.join("\n") + "\n")?;
+
+    println!("updated Cargo.toml");
+
+    // --- The outbox table ----------------------------------------------------
+
+    let (migration, template) = OUTBOX_MIGRATION;
+
+    fs::create_dir_all("migrations")?;
+    fs::write(migration, render(template, &with_db)?)?;
+
+    println!("created {migration}");
+
+    // --- ports.rs: the in-memory outbox becomes the database -----------------
+
+    let ports_rs = fs::read_to_string("src/ports.rs")?
+        .replace(NO_DATABASE_PORTS_DOC, DATABASE_PORTS_DOC)
+        .replace(
+            "Box::new(in_memory_outbox.clone())",
+            &format!("Box::new({outbox}::new(database.clone()))"),
+        )
+        .replace(
+            "in_memory_outbox: InMemoryOutbox",
+            &format!("database: {database}"),
+        )
+        .replace("in_memory_outbox", "database")
+        .replace("InMemoryOutbox, ", "");
+
+    if ports_rs.contains("InMemoryOutbox") {
+        return Err(
+            "src/ports.rs still uses InMemoryOutbox: swap it for the database by hand".into(),
+        );
+    }
+
+    let database_use = format!("use cerne::{module}::{{{database}, {outbox}}};");
+
+    fs::write("src/ports.rs", format!("{database_use}\n{ports_rs}"))?;
+    rustfmt(Path::new("src/ports.rs"));
+
+    println!("updated src/ports.rs");
+
+    // --- main.rs: the database instead of the in-memory outbox ---------------
+
+    let main_rs = fs::read_to_string("src/main.rs")?;
+    let database_setup = with_db.get_attr("database_setup")?.to_string();
+
+    if main_rs.contains(NO_DATABASE_SETUP) {
+        let main_rs = main_rs
+            .replace(NO_DATABASE_SETUP, &database_setup)
+            .replace("Ports::new(in_memory_outbox", "Ports::new(database")
+            .replace(
+                "{InMemoryOutbox, OutboxPolicyProcessor}",
+                "OutboxPolicyProcessor",
+            );
+
+        fs::write(
+            "src/main.rs",
+            format!("use cerne::{module}::{database};\n{main_rs}"),
+        )?;
+        rustfmt(Path::new("src/main.rs"));
+
+        println!("updated src/main.rs");
+    } else {
+        println!(
+            "src/main.rs changed since cerne new: build the Ports on the database by hand, as in\n\n{database_setup}\n"
+        );
+    }
+
+    // --- The SQL repository of every aggregate that already exists -----------
+
+    for aggregate in existing_aggregates()? {
+        add_repository(
+            &aggregate.name,
+            &aggregate.file,
+            &aggregate.id_type,
+            &aggregate.fields,
+        )?;
+    }
+
+    println!(
+        "tests that build Ports::new(InMemoryOutbox::new()) now need the database, as src/main.rs builds it"
+    );
+
+    Ok(())
+}
+
+/// An aggregate read back from its file, as `cerne g entity --aggregate` wrote it.
+struct ExistingAggregate {
+    name: String,
+    file: String,
+    id_type: String,
+    fields: Vec<Value>,
+}
+
+/// Every aggregate in `src/domain/entities/`: what `add_repository` needs to give it a SQL repository.
+fn existing_aggregates() -> Result<Vec<ExistingAggregate>, Box<dyn Error>> {
+    let mut aggregates = vec![];
+
+    for file in post_it_files("src/domain/entities")? {
+        let entity = fs::read_to_string(format!("src/domain/entities/{file}.rs"))?;
+
+        let Some(name) = entity.lines().find_map(|line| {
+            line.strip_prefix("impl Aggregate for ")
+                .and_then(|rest| rest.split_whitespace().next())
+        }) else {
+            continue;
+        };
+
+        let id_file = fs::read_to_string(format!("src/domain/value_objects/{file}_id.rs"))?;
+        let id_type = id_file
+            .lines()
+            .find_map(|line| line.strip_prefix(&format!("pub struct {name}Id(")))
+            .and_then(|rest| rest.strip_suffix(");"))
+            .ok_or(format!(
+                "src/domain/value_objects/{file}_id.rs has no pub struct {name}Id(..);"
+            ))?;
+
+        let fields: Vec<Value> = struct_body(&entity, &format!("pub struct {name} {{"))
+            .iter()
+            .filter_map(|line| {
+                line.strip_prefix("pub ")?
+                    .strip_suffix(',')?
+                    .split_once(": ")
+            })
+            .filter(|(field_name, _)| *field_name != "id")
+            .map(|(field_name, ty)| {
+                let variants: Vec<String> = struct_body(&entity, &format!("pub enum {ty} {{"))
+                    .iter()
+                    .map(|variant| variant.trim_end_matches(',').to_string())
+                    .collect();
+
+                if variants.is_empty() {
+                    context! { name => field_name, ty }
+                } else {
+                    context! { name => field_name, ty, variants }
+                }
+            })
+            .collect();
+
+        aggregates.push(ExistingAggregate {
+            name: name.to_string(),
+            file,
+            id_type: id_type.to_string(),
+            fields,
+        });
+    }
+
+    Ok(aggregates)
+}
+
+/// The trimmed lines between `opening` and the next `}`: the fields of a struct or the variants of an enum.
+fn struct_body<'a>(source: &'a str, opening: &str) -> Vec<&'a str> {
+    source
+        .lines()
+        .skip_while(|line| line.trim() != opening)
+        .skip(1)
+        .map(str::trim)
+        .take_while(|line| *line != "}")
+        .collect()
 }
 
 /// The modules of a folder, without `mod.rs`, in alphabetical order: `place_order`, `ship_order`.
@@ -823,6 +1089,39 @@ fn insert_lines(
     rustfmt(Path::new(path));
 
     println!("updated {path}");
+
+    Ok(())
+}
+
+/// `use cerne::application::{CommandRegistry, Outbox};` + `Repository` →
+/// `use cerne::application::{CommandRegistry, Outbox, Repository};`: one `use` per path, the names in order.
+fn add_to_use(path: &str, module: &str, name: &str) -> CliResult {
+    let content = fs::read_to_string(path).map_err(|_| format!("{path} not found"))?;
+    let opening = format!("use {module}::{{");
+
+    let Some(use_line) = content.lines().find(|line| line.starts_with(&opening)) else {
+        fs::write(path, format!("use {module}::{name};\n{content}"))?;
+
+        return Ok(());
+    };
+
+    let mut names: Vec<&str> = use_line[opening.len()..]
+        .trim_end_matches("};")
+        .split(',')
+        .map(str::trim)
+        .filter(|existing| !existing.is_empty())
+        .collect();
+
+    if names.contains(&name) {
+        return Ok(());
+    }
+
+    names.push(name);
+    names.sort_by_key(|name| name.to_lowercase());
+
+    let merged_use_line = format!("{opening}{}}};", names.join(", "));
+
+    fs::write(path, content.replacen(use_line, &merged_use_line, 1))?;
 
     Ok(())
 }
