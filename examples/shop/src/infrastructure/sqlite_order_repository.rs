@@ -5,7 +5,7 @@ use cerne::domain::{Entity, Validate, ValueObject};
 use cerne::sqlite::{SqliteDatabase, column};
 use cerne::{ApplicationError, Error, InfrastructureError, async_trait};
 
-/// The `Order` aggregates in the table `orders` (`migrations/1791486662_create_orders.sql`).
+/// The `Order` aggregates in the table `orders` (`migrations/1791490542_create_orders.sql`).
 pub struct SqliteOrderRepository {
     database: SqliteDatabase,
 }

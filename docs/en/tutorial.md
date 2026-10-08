@@ -6,7 +6,7 @@
 |---|---|---|
 | 🟦 | Command | trait `Command<Ports>`, which returns `Executed { output, events }` |
 | 🟨 | Aggregate / Entity | attributes `#[entity]` and `#[aggregate]`, which write the traits `Entity` and `Aggregate`; the invariants go in the trait `Validate` |
-| — | Value Object | trait `ValueObject`, also the type of every entity id |
+| — | Value Object | trait `ValueObject`, also the type of every entity id; attribute `#[value_object]`, for a value object of one value |
 | 🟧 | Domain Event | trait `DomainEvent<Ports>` |
 | 🟪 | Policy | `Policy` + `Policies`; their commands go to the `Outbox`, and the `OutboxPolicyProcessor` runs them |
 | 🩷 | External System | a port (an async trait of the application) and its adapters, gathered in the composition root `Ports` |
@@ -211,35 +211,21 @@ The `src/domain/value_objects/order_id.rs` as `cerne g entity Order product:Stri
 
 <!-- generated: src/domain/value_objects/order_id.rs -->
 ```rust
-use cerne::domain::{DomainError, EnforcementResult, Invariants, ValueObject};
+use cerne::domain::{EnforcementResult, Invariants, ValueObject, value_object};
 use serde::{Deserialize, Serialize};
 
 /// In JSON it is the `u64` itself, and reading it back goes through `new`: the invariants hold there too.
+#[value_object]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(try_from = "u64", into = "u64")]
 pub struct OrderId(u64);
 
 impl ValueObject for OrderId {
-    type Props = u64;
+    type Constructor = u64;
 
     fn new(value: u64) -> EnforcementResult<Self> {
         Invariants::new(vec![]).enforce()?;
 
         Ok(Self(value))
-    }
-}
-
-impl TryFrom<u64> for OrderId {
-    type Error = DomainError;
-
-    fn try_from(value: u64) -> EnforcementResult<Self> {
-        Self::new(value)
-    }
-}
-
-impl From<OrderId> for u64 {
-    fn from(value: OrderId) -> u64 {
-        value.0
     }
 }
 ```
@@ -248,16 +234,16 @@ Filled in:
 
 <!-- file: src/domain/value_objects/order_id.rs -->
 ```rust
-use cerne::domain::{DomainError, EnforcementResult, Invariant, Invariants, ValueObject};
+use cerne::domain::{EnforcementResult, Invariant, Invariants, ValueObject, value_object};
 use serde::{Deserialize, Serialize};
 
 /// In JSON it is the `u64` itself, and reading it back goes through `new`: the invariants hold there too.
+#[value_object]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(try_from = "u64", into = "u64")]
 pub struct OrderId(u64);
 
 impl ValueObject for OrderId {
-    type Props = u64;
+    type Constructor = u64;
 
     fn new(value: u64) -> EnforcementResult<Self> {
         let order_id_is_positive = value > 0;
@@ -270,23 +256,11 @@ impl ValueObject for OrderId {
         Ok(Self(value))
     }
 }
-
-impl TryFrom<u64> for OrderId {
-    type Error = DomainError;
-
-    fn try_from(value: u64) -> EnforcementResult<Self> {
-        Self::new(value)
-    }
-}
-
-impl From<OrderId> for u64 {
-    fn from(value: OrderId) -> u64 {
-        value.0
-    }
-}
 ```
 
 Each invariant is a name plus a closure. The condition goes into a variable before the closure, named like the sentence on the board. `enforce` runs all of them and, if any fails, returns `DomainError::Violations` with every failing name.
+
+`#[value_object]` writes what a value object of one value has in common: `TryFrom<u64> for OrderId`, which goes through `new`, `From<OrderId> for u64`, which gives the `u64` back, and, because `OrderId` derives `Serialize` and `Deserialize`, `#[serde(try_from = "u64", into = "u64")]`. `new`, with the invariants, is yours. The SQL repository uses the `From` to write the id to its column.
 
 ## 3. Aggregate: `Order` 🟨
 

@@ -7,12 +7,15 @@ Every change that breaks compatibility is listed here. While Cerne is in `0.x`, 
 ### `cerne`
 
 - `#[entity]` and `#[aggregate]` (in `cerne::domain`, from the new crate `cerne-macros`): on a struct with an `id: Option<<Name>Id>`, they write `impl Entity`, a `<Name>Constructor` with every field but the id, and, for `#[aggregate]`, `impl Aggregate`. A field marked `#[skip_constructor]` stays out of the constructor and starts at its `Default`.
+- `#[value_object]`: on a struct of one unnamed field (`OrderId(u64)`), it writes `TryFrom<u64> for OrderId` (through `ValueObject::new`) and `From<OrderId> for u64`, and, if the struct derives `Deserialize` or `Serialize`, `#[serde(try_from = "u64", into = "u64")]`.
 - **Breaking:** `validate` left `Entity` for a trait of its own, `Validate`, which `Entity` requires. Move `fn validate` to an `impl Validate for <Name>`, and import `Validate` wherever `.validate()` is called.
-- **Breaking:** `Entity::Props` is now `Entity::Constructor`, and `Entity::new` takes a `constructor`.
+- **Breaking:** `Entity::Props` and `ValueObject::Props` are now `Entity::Constructor` and `ValueObject::Constructor`.
 
 ### `cerne-cli`
 
 - **Breaking:** `cerne g entity` writes `#[entity]` (or `#[aggregate]`, with `--aggregate`) and an `impl Validate` instead of `impl Entity`, `impl Aggregate` and `<Name>Props`. `Order::new` takes an `OrderConstructor`. An enum field with an initial value (`status=Placed:Placed,Paid`) is `#[skip_constructor]`, and its enum derives `Default` with `#[default]` on the initial value.
+- `cerne g value_object` with one field, and the id of `cerne g entity`, write `#[value_object]` instead of `#[serde(try_from, into)]`, `impl TryFrom` and `impl From`.
+- **Breaking:** `cerne g value_object` with more than one field writes a `<Name>Constructor` instead of `<Name>Props`.
 - `cerne g db` finds the aggregates by their `#[aggregate]`, no longer by `impl Aggregate for`.
 
 ## 0.1.0

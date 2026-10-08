@@ -6,7 +6,7 @@
 |---|---|---|
 | 🟦 | Command | trait `Command<Ports>`, que devuelve `Executed { output, events }` |
 | 🟨 | Aggregate / Entity | atributos `#[entity]` y `#[aggregate]`, que escriben los traits `Entity` y `Aggregate`; las invariantes van en el trait `Validate` |
-| — | Value Object | trait `ValueObject`, que también es el tipo del id de toda entidad |
+| — | Value Object | trait `ValueObject`, que también es el tipo del id de toda entidad; atributo `#[value_object]`, para un value object de un solo valor |
 | 🟧 | Domain Event | trait `DomainEvent<Ports>` |
 | 🟪 | Policy | `Policy` + `Policies`; sus commands van a la `Outbox`, y el `OutboxPolicyProcessor` los ejecuta |
 | 🩷 | External System | un port (un trait asíncrono de la aplicación) y sus adapters, reunidos en el composition root `Ports` |
@@ -211,35 +211,21 @@ El `src/domain/value_objects/order_id.rs` tal como lo generó `cerne g entity Or
 
 <!-- generated: src/domain/value_objects/order_id.rs -->
 ```rust
-use cerne::domain::{DomainError, EnforcementResult, Invariants, ValueObject};
+use cerne::domain::{EnforcementResult, Invariants, ValueObject, value_object};
 use serde::{Deserialize, Serialize};
 
 /// In JSON it is the `u64` itself, and reading it back goes through `new`: the invariants hold there too.
+#[value_object]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(try_from = "u64", into = "u64")]
 pub struct OrderId(u64);
 
 impl ValueObject for OrderId {
-    type Props = u64;
+    type Constructor = u64;
 
     fn new(value: u64) -> EnforcementResult<Self> {
         Invariants::new(vec![]).enforce()?;
 
         Ok(Self(value))
-    }
-}
-
-impl TryFrom<u64> for OrderId {
-    type Error = DomainError;
-
-    fn try_from(value: u64) -> EnforcementResult<Self> {
-        Self::new(value)
-    }
-}
-
-impl From<OrderId> for u64 {
-    fn from(value: OrderId) -> u64 {
-        value.0
     }
 }
 ```
@@ -248,16 +234,16 @@ Después de rellenarlo:
 
 <!-- file: src/domain/value_objects/order_id.rs -->
 ```rust
-use cerne::domain::{DomainError, EnforcementResult, Invariant, Invariants, ValueObject};
+use cerne::domain::{EnforcementResult, Invariant, Invariants, ValueObject, value_object};
 use serde::{Deserialize, Serialize};
 
 /// In JSON it is the `u64` itself, and reading it back goes through `new`: the invariants hold there too.
+#[value_object]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(try_from = "u64", into = "u64")]
 pub struct OrderId(u64);
 
 impl ValueObject for OrderId {
-    type Props = u64;
+    type Constructor = u64;
 
     fn new(value: u64) -> EnforcementResult<Self> {
         let order_id_is_positive = value > 0;
@@ -270,23 +256,11 @@ impl ValueObject for OrderId {
         Ok(Self(value))
     }
 }
-
-impl TryFrom<u64> for OrderId {
-    type Error = DomainError;
-
-    fn try_from(value: u64) -> EnforcementResult<Self> {
-        Self::new(value)
-    }
-}
-
-impl From<OrderId> for u64 {
-    fn from(value: OrderId) -> u64 {
-        value.0
-    }
-}
 ```
 
 Cada invariante es un nombre más una closure. La condición va a una variable antes de la closure, con el nombre de la frase del tablero. `enforce` las ejecuta todas y, si alguna falla, devuelve `DomainError::Violations` con el nombre de cada una que falló.
+
+`#[value_object]` escribe lo que un value object de un solo valor tiene en común: el `TryFrom<u64> for OrderId`, que pasa por `new`, el `From<OrderId> for u64`, que devuelve el `u64`, y, como `OrderId` deriva `Serialize` y `Deserialize`, el `#[serde(try_from = "u64", into = "u64")]`. `new`, con las invariantes, es tuyo. El repositorio SQL usa el `From` para guardar el id en su columna.
 
 ## 3. Agregado: `Order` 🟨
 

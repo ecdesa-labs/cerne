@@ -58,7 +58,7 @@ cerne = { version = "0.1", default-features = false }
 
 - [`cerne`](https://crates.io/crates/cerne): the library. The features `sqlite` (default), `postgres` and `axum` are the optional Infrastructure layer.
 - [`cerne-cli`](https://crates.io/crates/cerne-cli): the `cerne` command, which creates a project laid out like the board (`cerne new`) and generates each sticky note in its place, already compiling (`cerne g`).
-- [`cerne-macros`](https://crates.io/crates/cerne-macros): the attributes `#[entity]` and `#[aggregate]`. `cerne::domain` re-exports them, so a project only depends on `cerne`.
+- [`cerne-macros`](https://crates.io/crates/cerne-macros): the attributes `#[entity]`, `#[aggregate]` and `#[value_object]`. `cerne::domain` re-exports them, so a project only depends on `cerne`.
 
 ## Getting Started
 

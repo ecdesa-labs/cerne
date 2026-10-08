@@ -58,7 +58,7 @@ cerne = { version = "0.1", default-features = false }
 
 - [`cerne`](https://crates.io/crates/cerne): la biblioteca. Las features `sqlite` (predeterminada), `postgres` y `axum` son la capa Infrastructure, opcional.
 - [`cerne-cli`](https://crates.io/crates/cerne-cli): el comando `cerne`, que crea un proyecto organizado como el tablero (`cerne new`) y genera cada post-it en su lugar, ya compilando (`cerne g`).
-- [`cerne-macros`](https://crates.io/crates/cerne-macros): los atributos `#[entity]` y `#[aggregate]`. `cerne::domain` los reexporta, así que un proyecto solo depende de `cerne`.
+- [`cerne-macros`](https://crates.io/crates/cerne-macros): los atributos `#[entity]`, `#[aggregate]` y `#[value_object]`. `cerne::domain` los reexporta, así que un proyecto solo depende de `cerne`.
 
 ## Primeros pasos
 

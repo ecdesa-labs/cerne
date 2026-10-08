@@ -1,13 +1,13 @@
-use cerne::domain::{DomainError, EnforcementResult, Invariant, Invariants, ValueObject};
+use cerne::domain::{EnforcementResult, Invariant, Invariants, ValueObject, value_object};
 use serde::{Deserialize, Serialize};
 
 /// In JSON it is the `u64` itself, and reading it back goes through `new`: the invariants hold there too.
+#[value_object]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(try_from = "u64", into = "u64")]
 pub struct OrderId(u64);
 
 impl ValueObject for OrderId {
-    type Props = u64;
+    type Constructor = u64;
 
     fn new(value: u64) -> EnforcementResult<Self> {
         let order_id_is_positive = value > 0;
@@ -18,19 +18,5 @@ impl ValueObject for OrderId {
         .enforce()?;
 
         Ok(Self(value))
-    }
-}
-
-impl TryFrom<u64> for OrderId {
-    type Error = DomainError;
-
-    fn try_from(value: u64) -> EnforcementResult<Self> {
-        Self::new(value)
-    }
-}
-
-impl From<OrderId> for u64 {
-    fn from(value: OrderId) -> u64 {
-        value.0
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "cerne-macros"
-description = "The attributes of Cerne: #[entity] and #[aggregate] write the identity and the constructor of a sticky note"
+description = "The attributes of Cerne: #[entity], #[aggregate] and #[value_object] write what every sticky note of a kind has in common"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

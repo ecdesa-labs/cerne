@@ -73,7 +73,7 @@ pub mod domain {
     /// # #[derive(Debug, Clone, PartialEq)]
     /// # struct OrderLineId(u64);
     /// # impl ValueObject for OrderLineId {
-    /// #     type Props = u64;
+    /// #     type Constructor = u64;
     /// #     fn new(value: u64) -> EnforcementResult<Self> { Ok(Self(value)) }
     /// # }
     /// #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -116,7 +116,7 @@ pub mod domain {
     /// # #[derive(Debug, Clone, PartialEq)]
     /// # struct OrderId(u64);
     /// # impl ValueObject for OrderId {
-    /// #     type Props = u64;
+    /// #     type Constructor = u64;
     /// #     fn new(value: u64) -> EnforcementResult<Self> { Ok(Self(value)) }
     /// # }
     /// #[aggregate]
@@ -136,6 +136,42 @@ pub mod domain {
     /// }
     /// ```
     pub use cerne_macros::aggregate;
+
+    /// The value object of one value: writes `TryFrom<u64> for OrderId`, through `ValueObject::new`, and
+    /// `From<OrderId> for u64`, for a struct like `OrderId(u64)`.
+    ///
+    /// If the struct derives `Deserialize` or `Serialize` (in a `#[derive]` below the attribute), it also gets
+    /// `#[serde(try_from = "u64", into = "u64")]`: in JSON it is the `u64` itself, and reading it back goes through
+    /// `new`, so the invariants hold there too. `impl ValueObject`, with the invariants, is not written.
+    ///
+    /// ```
+    /// use cerne::domain::{EnforcementResult, Invariant, Invariants, ValueObject, value_object};
+    /// use serde::{Deserialize, Serialize};
+    ///
+    /// #[value_object]
+    /// #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    /// struct OrderId(u64);
+    ///
+    /// impl ValueObject for OrderId {
+    ///     type Constructor = u64;
+    ///
+    ///     fn new(value: u64) -> EnforcementResult<Self> {
+    ///         let order_id_is_positive = value > 0;
+    ///
+    ///         Invariants::new(vec![Invariant::new("order id is positive", move || {
+    ///             order_id_is_positive
+    ///         })])
+    ///         .enforce()?;
+    ///
+    ///         Ok(Self(value))
+    ///     }
+    /// }
+    ///
+    /// assert_eq!(u64::from(OrderId::try_from(7).unwrap()), 7);
+    /// assert!(OrderId::try_from(0).is_err());
+    /// assert!(serde_json::from_str::<OrderId>("0").is_err());
+    /// ```
+    pub use cerne_macros::value_object;
 
     pub use entities::*;
     pub use errors::{DomainError, EnforcementResult};

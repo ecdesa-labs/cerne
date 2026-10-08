@@ -1,18 +1,22 @@
 {% for line in uses %}
 {{ line }}
 {% endfor %}
+{% if fields|length == 1 %}
+use cerne::domain::{EnforcementResult, Invariants, ValueObject, value_object};
+{% else %}
 use cerne::domain::{DomainError, EnforcementResult, Invariants, ValueObject};
+{% endif %}
 use serde::{Deserialize, Serialize};
 
 {% if fields|length == 1 %}
 {% set field = fields[0] %}
 /// In JSON it is the `{{ field.ty }}` itself, and reading it back goes through `new`: the invariants hold there too.
+#[value_object]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(try_from = "{{ field.ty }}", into = "{{ field.ty }}")]
 pub struct {{ name }}({{ field.ty }});
 
 impl ValueObject for {{ name }} {
-    type Props = {{ field.ty }};
+    type Constructor = {{ field.ty }};
 
     fn new({{ field.name }}: {{ field.ty }}) -> EnforcementResult<Self> {
         Invariants::new(vec![]).enforce()?;
@@ -20,24 +24,10 @@ impl ValueObject for {{ name }} {
         Ok(Self({{ field.name }}))
     }
 }
-
-impl TryFrom<{{ field.ty }}> for {{ name }} {
-    type Error = DomainError;
-
-    fn try_from({{ field.name }}: {{ field.ty }}) -> EnforcementResult<Self> {
-        Self::new({{ field.name }})
-    }
-}
-
-impl From<{{ name }}> for {{ field.ty }} {
-    fn from({{ field.name }}: {{ name }}) -> {{ field.ty }} {
-        {{ field.name }}.0
-    }
-}
 {% else %}
 /// Reading it from JSON goes through `new`: the invariants hold there too.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(try_from = "{{ name }}Props")]
+#[serde(try_from = "{{ name }}Constructor")]
 pub struct {{ name }} {
 {% for field in fields %}
     {{ field.name }}: {{ field.ty }},
@@ -45,31 +35,31 @@ pub struct {{ name }} {
 }
 
 #[derive(Deserialize)]
-pub struct {{ name }}Props {
+pub struct {{ name }}Constructor {
 {% for field in fields %}
     pub {{ field.name }}: {{ field.ty }},
 {% endfor %}
 }
 
 impl ValueObject for {{ name }} {
-    type Props = {{ name }}Props;
+    type Constructor = {{ name }}Constructor;
 
-    fn new(props: {{ name }}Props) -> EnforcementResult<Self> {
+    fn new(constructor: {{ name }}Constructor) -> EnforcementResult<Self> {
         Invariants::new(vec![]).enforce()?;
 
         Ok(Self {
 {% for field in fields %}
-            {{ field.name }}: props.{{ field.name }},
+            {{ field.name }}: constructor.{{ field.name }},
 {% endfor %}
         })
     }
 }
 
-impl TryFrom<{{ name }}Props> for {{ name }} {
+impl TryFrom<{{ name }}Constructor> for {{ name }} {
     type Error = DomainError;
 
-    fn try_from(props: {{ name }}Props) -> EnforcementResult<Self> {
-        Self::new(props)
+    fn try_from(constructor: {{ name }}Constructor) -> EnforcementResult<Self> {
+        Self::new(constructor)
     }
 }
 {% endif %}

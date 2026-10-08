@@ -5,6 +5,9 @@ use crate::errors::EnforcementResult;
 /// It is born valid and never changes. There is no `validate`, because there is no state transition to check:
 /// a different value is a new value object, built with `new`.
 ///
+/// On a struct with one unnamed field, [`value_object`](crate::domain::value_object) writes the conversions to and
+/// from the value it wraps; `new`, with the invariants, is yours.
+///
 /// ```
 /// use cerne::domain::{EnforcementResult, Invariant, Invariants, ValueObject};
 ///
@@ -12,7 +15,7 @@ use crate::errors::EnforcementResult;
 /// struct Amount(u64);
 ///
 /// impl ValueObject for Amount {
-///     type Props = u64;
+///     type Constructor = u64;
 ///
 ///     fn new(value: u64) -> EnforcementResult<Self> {
 ///         let amount_is_positive = value > 0;
@@ -30,12 +33,14 @@ use crate::errors::EnforcementResult;
 /// assert!(Amount::new(0).is_err());
 /// ```
 pub trait ValueObject: Sized + Clone + PartialEq + Send + Sync {
-    type Props;
+    /// What a new value object is made of: the value it wraps (`u64` in `OrderId(u64)`), or a `<Name>Constructor`
+    /// with its fields.
+    type Constructor;
 
     /// A value object is born valid: it only exists if its invariants hold.
     ///
     /// Otherwise nothing is created, and the error names every violated invariant, not just the first.
-    fn new(props: Self::Props) -> EnforcementResult<Self>;
+    fn new(constructor: Self::Constructor) -> EnforcementResult<Self>;
 }
 
 #[cfg(test)]
@@ -43,12 +48,15 @@ mod tests {
     use super::*;
     use crate::errors::DomainError;
     use crate::invariants::{Invariant, Invariants};
+    use cerne_macros::value_object;
+    use serde::{Deserialize, Serialize};
 
-    #[derive(Debug, Clone, PartialEq)]
+    #[value_object]
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     struct Email(String);
 
     impl ValueObject for Email {
-        type Props = String;
+        type Constructor = String;
 
         fn new(address: String) -> EnforcementResult<Self> {
             let has_an_at_sign = address.contains('@');
@@ -86,5 +94,28 @@ mod tests {
             Email::new("alice@example.com".into()),
             Email::new("alice@example.com".into())
         );
+    }
+
+    #[test]
+    fn value_object_converts_to_and_from_the_value_it_wraps() {
+        let email = Email::try_from(String::from("alice@example.com")).unwrap();
+
+        assert_eq!(String::from(email), "alice@example.com");
+        assert!(Email::try_from(String::from("alice")).is_err());
+    }
+
+    #[test]
+    fn value_object_is_the_value_itself_in_json_and_is_read_back_through_new() {
+        let email = Email::new("alice@example.com".into()).unwrap();
+
+        assert_eq!(
+            serde_json::to_string(&email).unwrap(),
+            r#""alice@example.com""#
+        );
+        assert_eq!(
+            serde_json::from_str::<Email>(r#""alice@example.com""#).unwrap(),
+            email
+        );
+        assert!(serde_json::from_str::<Email>(r#""alice""#).is_err());
     }
 }

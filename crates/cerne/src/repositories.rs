@@ -20,7 +20,7 @@ use async_trait::async_trait;
 /// struct OrderId(u64);
 ///
 /// impl ValueObject for OrderId {
-///     type Props = u64;
+///     type Constructor = u64;
 ///
 ///     fn new(value: u64) -> EnforcementResult<Self> {
 ///         Ok(Self(value))

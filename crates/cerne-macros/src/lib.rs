@@ -1,4 +1,4 @@
-//! The attributes of [Cerne](https://docs.rs/cerne): `#[entity]` and `#[aggregate]`.
+//! The attributes of [Cerne](https://docs.rs/cerne): `#[entity]`, `#[aggregate]` and `#[value_object]`.
 //!
 //! Use them from `cerne::domain`, where they are documented: this crate is only how Rust builds them.
 
@@ -25,22 +25,36 @@ pub fn aggregate(arguments: TokenStream, item: TokenStream) -> TokenStream {
     expand(arguments, item, is_aggregate)
 }
 
+/// Writes the conversions of a value object to and from the type it wraps, which serde also goes through.
+#[proc_macro_attribute]
+pub fn value_object(arguments: TokenStream, item: TokenStream) -> TokenStream {
+    let value_object = parse_macro_input!(item as DeriveInput);
+
+    takes_no_arguments("value_object", arguments)
+        .and_then(|()| value_object_with_its_conversions(value_object))
+        .unwrap_or_else(Error::into_compile_error)
+        .into()
+}
+
 fn expand(arguments: TokenStream, item: TokenStream, is_aggregate: bool) -> TokenStream {
     let entity = parse_macro_input!(item as DeriveInput);
     let attribute = if is_aggregate { "aggregate" } else { "entity" };
 
-    if !arguments.is_empty() {
-        let no_arguments = Error::new_spanned(
-            Tokens::from(arguments),
-            format!("#[{attribute}] takes no arguments"),
-        );
-
-        return no_arguments.to_compile_error().into();
-    }
-
-    entity_with_its_identity_and_constructor(entity, attribute, is_aggregate)
+    takes_no_arguments(attribute, arguments)
+        .and_then(|()| entity_with_its_identity_and_constructor(entity, attribute, is_aggregate))
         .unwrap_or_else(Error::into_compile_error)
         .into()
+}
+
+fn takes_no_arguments(attribute: &str, arguments: TokenStream) -> syn::Result<()> {
+    if arguments.is_empty() {
+        return Ok(());
+    }
+
+    Err(Error::new_spanned(
+        Tokens::from(arguments),
+        format!("#[{attribute}] takes no arguments"),
+    ))
 }
 
 /// The struct as written (without `#[skip_constructor]`), its `<Name>Constructor`, `impl Entity` and, for an
@@ -171,6 +185,95 @@ fn entity_with_its_identity_and_constructor(
             }
         }
     })
+}
+
+/// The struct, with `#[serde(try_from, into)]` if it derives `Deserialize` or `Serialize`, and the conversions:
+/// `TryFrom<u64> for OrderId` goes through `ValueObject::new`, and `From<OrderId> for u64` gives the value back.
+fn value_object_with_its_conversions(mut value_object: DeriveInput) -> syn::Result<Tokens> {
+    let name = value_object.ident.clone();
+    let one_unnamed_field = format!(
+        "#[value_object] goes on a struct with one unnamed field, like pub struct {name}(u64)"
+    );
+
+    if !value_object.generics.params.is_empty() {
+        return Err(Error::new_spanned(
+            &value_object.generics,
+            "#[value_object] does not take generics",
+        ));
+    }
+
+    let Data::Struct(data) = &value_object.data else {
+        return Err(Error::new_spanned(&name, one_unnamed_field));
+    };
+
+    let Fields::Unnamed(fields) = &data.fields else {
+        return Err(Error::new_spanned(&name, one_unnamed_field));
+    };
+
+    if fields.unnamed.len() != 1 {
+        return Err(Error::new_spanned(&name, one_unnamed_field));
+    }
+
+    let value_type = fields.unnamed[0].ty.clone();
+
+    // --- serde: in JSON it is the value itself, read back through `new` ------
+
+    let derives = derived_traits(&value_object.attrs)?;
+    let value_type_name = quote!(#value_type).to_string();
+
+    if derives.iter().any(|derive| derive == "Deserialize") {
+        value_object
+            .attrs
+            .push(syn::parse_quote!(#[serde(try_from = #value_type_name)]));
+    }
+
+    if derives.iter().any(|derive| derive == "Serialize") {
+        value_object
+            .attrs
+            .push(syn::parse_quote!(#[serde(into = #value_type_name)]));
+    }
+
+    // --- What the attribute writes -------------------------------------------
+
+    Ok(quote! {
+        #value_object
+
+        #[automatically_derived]
+        impl ::core::convert::TryFrom<#value_type> for #name {
+            type Error = ::cerne::domain::DomainError;
+
+            fn try_from(value: #value_type) -> ::cerne::domain::EnforcementResult<Self> {
+                <Self as ::cerne::domain::ValueObject>::new(value)
+            }
+        }
+
+        #[automatically_derived]
+        impl ::core::convert::From<#name> for #value_type {
+            fn from(value_object: #name) -> #value_type {
+                value_object.0
+            }
+        }
+    })
+}
+
+/// `["Debug", "Serialize"]` for `#[derive(Debug, serde::Serialize)]`: the derives written below the attribute.
+fn derived_traits(attributes: &[syn::Attribute]) -> syn::Result<Vec<String>> {
+    let mut derives = vec![];
+
+    for attribute in attributes
+        .iter()
+        .filter(|attribute| attribute.path().is_ident("derive"))
+    {
+        attribute.parse_nested_meta(|derive| {
+            if let Some(last) = derive.path.segments.last() {
+                derives.push(last.ident.to_string());
+            }
+
+            Ok(())
+        })?;
+    }
+
+    Ok(derives)
 }
 
 /// Removes `#[skip_constructor]` from a field and says whether it was there.
