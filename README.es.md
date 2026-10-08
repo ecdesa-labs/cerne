@@ -1,8 +1,17 @@
-# Bienvenido a Cerne
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="assets/cerne-banner-light.svg">
+    <img alt="Cerne" src="assets/cerne-banner-dark.svg" width="400">
+  </picture>
+</p>
 
-[English](README.en.md) · [Português](README.pt-BR.md) · Español
+<p align="center">
+  🇺🇸 <a href="README.en.md">English</a> ·
+  🇧🇷 <a href="README.pt-BR.md">Português</a> ·
+  🇪🇸 Español
+</p>
 
-## ¿Por qué Cerne?
+<br>
 
 Un sistema no se vuelve legado porque alguien lo escribió mal. Se vuelve legado porque, a lo largo de los años, recibe miles de cambios que tienen sentido uno a uno: un acuerdo sindical, una ley nueva, una decisión judicial, un impuesto que cambió. Cada equipo resuelve su ticket como puede, muchas veces de madrugada, con un `if` en medio del código "solo por ahora". La regla antigua sigue funcionando al lado de la nueva, porque nadie se atreve a tocarla. Como resume el canal gotoCobol:
 

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 240" width="720" height="240" role="img" aria-label="Cerne">
+  <rect x="0.5" y="0.5" width="719" height="239" rx="16" fill="#0A0A10" stroke="#23253A"/>
+  <g transform="translate(80 40)">
+  <g fill="none" stroke="#F5F4F0" stroke-width="10">
+    <circle cx="80" cy="80" r="66" stroke-dasharray="89.7 14" transform="rotate(-80 80 80)"/>
+    <circle cx="80" cy="80" r="48" stroke-dasharray="86.5 14" transform="rotate(-50 80 80)"/>
+    <circle cx="80" cy="80" r="30" stroke-dasharray="80.2 14" transform="rotate(-20 80 80)"/>
+  </g>
+  <polygon transform="translate(80 80)" fill="#E8B923" points="16,0 6.25,2.59 11.31,11.31 2.59,6.25 0,16 -2.59,6.25 -11.31,11.31 -6.25,2.59 -16,0 -6.25,-2.59 -11.31,-11.31 -2.59,-6.25 0,-16 2.59,-6.25 11.31,-11.31 6.25,-2.59"/>
+  <g fill="none" stroke="#F5F4F0" stroke-width="13">
+    <path d="M251.15 59.85A28.5 28.5 0 1 0 251.15 100.15"/>
+    <path d="M274.5 80H331.5A28.5 28.5 0 1 0 324.83 98.32"/>
+    <path d="M356.5 45V115M356.5 80A28.5 28.5 0 0 1 385 51.5H390.5"/>
+    <path d="M407 45V115M407 80A28.5 28.5 0 0 1 464 80V115"/>
+    <path d="M489 80H546A28.5 28.5 0 1 0 539.33 98.32"/>
+  </g>
+  </g>
+</svg>

@@ -1,8 +1,17 @@
-# Welcome to Cerne
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="assets/cerne-banner-light.svg">
+    <img alt="Cerne" src="assets/cerne-banner-dark.svg" width="400">
+  </picture>
+</p>
 
-English · [Português](README.pt-BR.md) · [Español](README.es.md)
+<p align="center">
+  🇺🇸 English ·
+  🇧🇷 <a href="README.pt-BR.md">Português</a> ·
+  🇪🇸 <a href="README.es.md">Español</a>
+</p>
 
-## Why Cerne?
+<br>
 
 A system does not become legacy because someone wrote it badly. It becomes legacy because, over the years, it receives thousands of changes that make sense one by one: a union agreement, a new law, a court decision, a tax that changed. Each team solves its ticket as best it can, often in the middle of the night, with an `if` in the middle of the code "just for now". The old rule keeps running next to the new one, because nobody dares to touch it. As the gotoCobol channel puts it:
 

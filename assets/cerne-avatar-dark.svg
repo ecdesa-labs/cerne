@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="512" height="512" role="img" aria-label="Cerne">
+  <rect width="200" height="200" fill="#0A0A10"/>
+  <g transform="translate(20 20)">
+  <g fill="none" stroke="#F5F4F0" stroke-width="10">
+    <circle cx="80" cy="80" r="66" stroke-dasharray="89.7 14" transform="rotate(-80 80 80)"/>
+    <circle cx="80" cy="80" r="48" stroke-dasharray="86.5 14" transform="rotate(-50 80 80)"/>
+    <circle cx="80" cy="80" r="30" stroke-dasharray="80.2 14" transform="rotate(-20 80 80)"/>
+  </g>
+  <polygon transform="translate(80 80)" fill="#E8B923" points="16,0 6.25,2.59 11.31,11.31 2.59,6.25 0,16 -2.59,6.25 -11.31,11.31 -6.25,2.59 -16,0 -6.25,-2.59 -11.31,-11.31 -2.59,-6.25 0,-16 2.59,-6.25 11.31,-11.31 6.25,-2.59"/>
+  </g>
+</svg>

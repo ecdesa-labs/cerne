@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" width="32" height="32" role="img" aria-label="Cerne">
+  <style>
+    .ring { stroke: #151A5C; }
+    @media (prefers-color-scheme: dark) { .ring { stroke: #F5F4F0; } }
+  </style>
+  <g fill="none" class="ring" stroke-width="18">
+    <circle cx="80" cy="80" r="60" stroke-dasharray="103.7 22" transform="rotate(-75 80 80)"/>
+    <circle cx="80" cy="80" r="32" stroke-dasharray="78.5 22" transform="rotate(-30 80 80)"/>
+  </g>
+  <polygon transform="translate(80 80)" fill="#E8B923" points="18,0 7.03,2.91 12.73,12.73 2.91,7.03 0,18 -2.91,7.03 -12.73,12.73 -7.03,2.91 -18,0 -7.03,-2.91 -12.73,-12.73 -2.91,-7.03 0,-18 2.91,-7.03 12.73,-12.73 7.03,-2.91"/>
+</svg>
