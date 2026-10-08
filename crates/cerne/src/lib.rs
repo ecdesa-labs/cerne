@@ -27,7 +27,8 @@
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![doc(
-    html_favicon_url = "https://raw.githubusercontent.com/ecdesa-labs/cerne/main/assets/cerne-favicon.svg"
+    html_favicon_url = "https://raw.githubusercontent.com/ecdesa-labs/cerne/main/assets/cerne-favicon.svg",
+    html_logo_url = "https://raw.githubusercontent.com/ecdesa-labs/cerne/main/assets/cerne-avatar-dark.svg"
 )]
 
 mod business_rules;
