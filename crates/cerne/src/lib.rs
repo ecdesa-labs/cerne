@@ -26,6 +26,9 @@
 //! board and generates each sticky note; the README walks through one from start to finish.
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
+#![doc(
+    html_favicon_url = "https://raw.githubusercontent.com/ecdesa-labs/cerne/main/assets/cerne-favicon.svg"
+)]
 
 mod business_rules;
 mod commands;

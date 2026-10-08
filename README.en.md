@@ -1,8 +1,6 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: light)" srcset="assets/cerne-banner-light.svg">
-    <img alt="Cerne" src="assets/cerne-banner-dark.svg" width="400">
-  </picture>
+  <img alt="Cerne" src="assets/cerne-banner-light.svg#gh-light-mode-only" width="400">
+  <img alt="Cerne" src="assets/cerne-banner-dark.svg#gh-dark-mode-only" width="400">
 </p>
 
 <p align="center">
