@@ -1,0 +1,6 @@
+//! shop: one module per layer of the Event Storming board.
+
+pub mod application;
+pub mod domain;
+pub mod infrastructure;
+pub mod ports;
