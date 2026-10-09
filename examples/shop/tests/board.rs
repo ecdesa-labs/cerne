@@ -1,127 +1,59 @@
 //! One block per flow of the board: an actor sends a command, and the test checks its events and the policies that fired.
 
-use cerne::Error;
-use cerne::application::{Command, Query, SyncEventBus};
-use cerne::domain::{DomainError, ValueObject};
-use shop::application::commands::place_order::PlaceOrderCommand;
-use shop::application::queries::order_summary::OrderSummaryQuery;
-use shop::application::read_models::order_summary::OrderSummary;
-use shop::composition_root::{CompositionRoot, CompositionRootConstructor};
+use cerne::domain::{DomainError, DomainEvent, Entity, ValueObject};
+use shop::domain::entities::order::{Order, OrderConstructor, OrderStatus};
+use shop::domain::events::order_placed::OrderPlaced;
 use shop::domain::value_objects::order_id::OrderId;
-use shop::infrastructure::database::{Database, InMemoryEventOutbox, InMemoryOrderRepository};
-use shop::infrastructure::in_memory_catalog::InMemoryCatalog;
-use shop::infrastructure::in_memory_payments::InMemoryPayments;
-use std::sync::Arc;
 
-fn composition_root(payments: Arc<InMemoryPayments>) -> Arc<CompositionRoot> {
-    let database = Database::default();
-
-    let order_repository = InMemoryOrderRepository;
-    let event_outbox = InMemoryEventOutbox;
-
-    let catalog = InMemoryCatalog {
-        products: vec![("mug", 3000, 10)],
-    };
-
-    let composition_root_constructor = CompositionRootConstructor {
-        database,
-        order_repository: Box::new(order_repository),
-        event_outbox: Box::new(event_outbox),
-        catalog: Arc::new(catalog),
-        payments,
-    };
-
-    Arc::new(CompositionRoot::new(composition_root_constructor))
-}
-
-#[tokio::test]
-async fn the_customer_places_an_order_and_the_policy_charges_it() -> anyhow::Result<()> {
-    let payments = Arc::new(InMemoryPayments::default());
-    let composition_root = composition_root(Arc::clone(&payments));
-
-    let sync_event_bus = SyncEventBus::new(Arc::clone(&composition_root), |error| eprintln!("policy: {error}"));
-
+#[test]
+fn the_customer_places_an_order_and_the_policy_charges_it() -> anyhow::Result<()> {
     // --- Customer: places an order -------------------------------------------
 
-    let place_order = PlaceOrderCommand {
-        product: "mug".into(),
-        quantity: 2,
-    };
-
-    let place_order_execution = place_order.execute(&composition_root).await?;
-
-    let order_id = place_order_execution.output;
-
-    sync_event_bus.publish(place_order_execution.events).await;
-
-    // --- Policy: whenever an order is placed, charge the customer -----------
-
-    assert_eq!(*payments.charges.lock().unwrap(), vec![(order_id.clone(), 6000)]);
-
-    let stored_events: Vec<String> = composition_root
-        .database
-        .event_outbox
-        .lock()
-        .unwrap()
-        .iter()
-        .map(|outbox_entry| outbox_entry.event.clone())
-        .collect();
-
-    assert_eq!(stored_events, ["order_placed", "order_paid"]);
-
-    // --- Customer: reads the order -------------------------------------------
-
-    let order_summary_query = OrderSummaryQuery { order_id };
-
-    let order_summary = order_summary_query.execute(&composition_root).await?;
-
-    let paid_order_summary = OrderSummary {
+    let order = Order::new(OrderConstructor {
         product: "mug".into(),
         quantity: 2,
         total: 6000,
-        status: "Paid".into(),
+    })?;
+
+    assert_eq!(order.status, OrderStatus::Placed);
+
+    // --- Policy: whenever an order is placed, charge the customer -----------
+
+    let order_placed = OrderPlaced {
+        order_id: OrderId::new(1)?,
+        total: 6000,
     };
 
-    assert_eq!(order_summary, paid_order_summary);
+    let fired_policies = order_placed.trigger_policies()?;
+    let fired_policy_names: Vec<&str> = fired_policies
+        .iter()
+        .map(|fired_policy| fired_policy.name)
+        .collect();
+
+    assert_eq!(fired_policy_names, ["whenever an order is placed, charge the customer"]);
+
+    // --- Payments: the order is paid -----------------------------------------
+
+    let paid_order = order.pay()?;
+
+    assert_eq!(paid_order.status, OrderStatus::Paid);
 
     Ok(())
 }
 
-#[tokio::test]
-async fn the_domain_refuses_what_breaks_a_rule_or_an_invariant() -> anyhow::Result<()> {
-    let composition_root = composition_root(Arc::default());
-
-    // --- Business rule: stock covers the quantity ----------------------------
-
-    let too_many_mugs = PlaceOrderCommand {
-        product: "mug".into(),
-        quantity: 11,
-    };
-
-    let refused = too_many_mugs.execute(&composition_root).await;
-
-    assert!(matches!(
-        refused,
-        Err(Error::Domain(DomainError::Violations(violations))) if violations == ["stock covers the quantity"]
-    ));
-
+#[test]
+fn the_domain_refuses_what_breaks_an_invariant() {
     // --- Invariant: quantity is positive -------------------------------------
 
-    let no_mugs = PlaceOrderCommand {
+    let no_mugs = Order::new(OrderConstructor {
         product: "mug".into(),
         quantity: 0,
-    };
+        total: 0,
+    });
 
-    let refused = no_mugs.execute(&composition_root).await;
-
-    assert!(matches!(
-        refused,
-        Err(Error::Domain(DomainError::Violations(violations))) if violations == ["quantity is positive"]
-    ));
+    assert!(matches!(no_mugs, Err(DomainError::Violations(violations)) if violations == ["quantity is positive"]));
 
     // --- Value object: order id is positive ----------------------------------
 
     assert!(OrderId::new(0).is_err());
-
-    Ok(())
 }

@@ -1,30 +1,29 @@
-use cerne::application::{Command, Query, SyncEventBus};
+use cerne::application::{Command, EventOutbox, Query, Repository, SyncEventBus};
 use shop::application::commands::place_order::PlaceOrderCommand;
 use shop::application::queries::order_summary::OrderSummaryQuery;
 use shop::composition_root::{CompositionRoot, CompositionRootConstructor};
-use shop::infrastructure::database::{Database, InMemoryEventOutbox, InMemoryOrderRepository};
-use shop::infrastructure::in_memory_catalog::InMemoryCatalog;
-use shop::infrastructure::in_memory_payments::InMemoryPayments;
+use shop::domain::entities::order::Order;
+use shop::infrastructure::database::{Database, Transaction};
+use shop::infrastructure::http_catalog::HttpCatalog;
+use shop::infrastructure::http_payments::HttpPayments;
 use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // --- Composition root ----------------------------------------------------
 
-    let database = Database::default();
+    let database = Database;
 
-    let order_repository = InMemoryOrderRepository;
-    let event_outbox = InMemoryEventOutbox;
+    let order_repository = order_repository_adapter();
+    let event_outbox = event_outbox_adapter();
 
-    let catalog = InMemoryCatalog {
-        products: vec![("mug", 3000, 10), ("t-shirt", 5000, 3)],
-    };
-    let payments = InMemoryPayments::default();
+    let catalog = HttpCatalog;
+    let payments = HttpPayments;
 
     let composition_root_constructor = CompositionRootConstructor {
         database,
-        order_repository: Box::new(order_repository),
-        event_outbox: Box::new(event_outbox),
+        order_repository,
+        event_outbox,
         catalog: Arc::new(catalog),
         payments: Arc::new(payments),
     };
@@ -57,4 +56,14 @@ async fn main() -> anyhow::Result<()> {
     println!("{order_summary:?}");
 
     Ok(())
+}
+
+/// No adapter of EventOutbox yet: write one in `infrastructure/` and build it here.
+fn event_outbox_adapter() -> Box<dyn EventOutbox<Transaction>> {
+    todo!("an adapter of EventOutbox")
+}
+
+/// No adapter of Repository<Order> yet: write one in `infrastructure/` and build it here.
+fn order_repository_adapter() -> Box<dyn Repository<Order, Transaction>> {
+    todo!("an adapter of Repository<Order>")
 }

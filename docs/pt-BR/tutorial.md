@@ -101,10 +101,10 @@ Cria o port 🩷 `Catalog`: o sistema externo com os preços e o estoque.
 cerne g port Catalog
 ```
 
-Cria o `InMemoryCatalog`: um catálogo em memória, para os testes e para este tutorial.
+Cria o `HttpCatalog`: o adapter que conversa com a API do catálogo.
 
 ```bash
-cerne g adapter InMemoryCatalog Catalog
+cerne g adapter HttpCatalog Catalog
 ```
 
 Cria o port 🩷 `Payments`: o sistema externo que cobra o cliente.
@@ -113,10 +113,10 @@ Cria o port 🩷 `Payments`: o sistema externo que cobra o cliente.
 cerne g port Payments
 ```
 
-Cria o `InMemoryPayments`: um sistema de pagamentos em memória, para os testes e para este tutorial.
+Cria o `HttpPayments`: o adapter que conversa com o provedor de pagamentos.
 
 ```bash
-cerne g adapter InMemoryPayments Payments
+cerne g adapter HttpPayments Payments
 ```
 
 Cria o read model 🟩 `OrderSummary`: o resumo do pedido que o cliente vê.
@@ -169,8 +169,8 @@ shop
 │   │       ├── mod.rs
 │   │       └── order_id.rs
 │   ├── infrastructure
-│   │   ├── in_memory_catalog.rs
-│   │   ├── in_memory_payments.rs
+│   │   ├── http_catalog.rs
+│   │   ├── http_payments.rs
 │   │   └── mod.rs
 │   ├── lib.rs
 │   └── main.rs
@@ -178,7 +178,7 @@ shop
     └── board.rs
 ```
 
-Cada camada tem a sua pasta. O `domain/` é puro e síncrono: nada de IO. O `application/` é assíncrono: commands, queries e os ports que eles usam. O `infrastructure/` guarda os adapters, que você escreve: aqui, todos em memória.
+Cada camada tem a sua pasta. O `domain/` é puro e síncrono: nada de IO. O `application/` é assíncrono: commands, queries e os ports que eles usam. O `infrastructure/` guarda os adapters, que você escreve: aqui, todos ficam em `todo!()`.
 
 Falta preencher os post-its.
 
@@ -406,102 +406,78 @@ pub trait Payments: Send + Sync {
 }
 ```
 
-Os adapters em memória fazem o papel dos sistemas de verdade nos testes e neste tutorial:
+Cada adapter conversa com um sistema de verdade, e escrevê-lo é com você: aqui, todo método fica em `todo!()`.
 
-Como o `cerne g adapter InMemoryCatalog Catalog` gerou o `src/infrastructure/in_memory_catalog.rs`:
+Como o `cerne g adapter HttpCatalog Catalog` gerou o `src/infrastructure/http_catalog.rs`:
 
-<!-- generated: src/infrastructure/in_memory_catalog.rs -->
+<!-- generated: src/infrastructure/http_catalog.rs -->
 ```rust
 use crate::application::ports::catalog::Catalog;
 use cerne::async_trait;
 
 /// An adapter of the port `Catalog`.
-pub struct InMemoryCatalog;
+pub struct HttpCatalog;
 
 #[async_trait]
-impl Catalog for InMemoryCatalog {}
+impl Catalog for HttpCatalog {}
 ```
 
 Depois de preenchido:
 
-<!-- file: src/infrastructure/in_memory_catalog.rs -->
+<!-- file: src/infrastructure/http_catalog.rs -->
 ```rust
 use crate::application::ports::catalog::Catalog;
-use cerne::{ApplicationError, Error, async_trait};
+use cerne::{Error, async_trait};
 
-/// A catalog with fixed products: (name, unit price in cents, units in stock).
-pub struct InMemoryCatalog {
-    pub products: Vec<(&'static str, u64, u32)>,
-}
-
-impl InMemoryCatalog {
-    fn product(&self, product: &str) -> Result<(&'static str, u64, u32), Error> {
-        let found = self.products.iter().find(|(name, _, _)| *name == product);
-
-        Ok(*found.ok_or(ApplicationError::NotFound("product"))?)
-    }
-}
+/// The client of the catalog's HTTP API: writing it is yours (with `reqwest` or any other).
+pub struct HttpCatalog;
 
 #[async_trait]
-impl Catalog for InMemoryCatalog {
-    async fn unit_price(&self, product: &str) -> Result<u64, Error> {
-        let (_, unit_price, _) = self.product(product)?;
-
-        Ok(unit_price)
+impl Catalog for HttpCatalog {
+    async fn unit_price(&self, _product: &str) -> Result<u64, Error> {
+        todo!("ask the catalog API for the unit price")
     }
 
-    async fn units_in_stock(&self, product: &str) -> Result<u32, Error> {
-        let (_, _, units_in_stock) = self.product(product)?;
-
-        Ok(units_in_stock)
+    async fn units_in_stock(&self, _product: &str) -> Result<u32, Error> {
+        todo!("ask the catalog API for the units in stock")
     }
 }
 ```
 
-Como o `cerne g adapter InMemoryPayments Payments` gerou o `src/infrastructure/in_memory_payments.rs`:
+Como o `cerne g adapter HttpPayments Payments` gerou o `src/infrastructure/http_payments.rs`:
 
-<!-- generated: src/infrastructure/in_memory_payments.rs -->
+<!-- generated: src/infrastructure/http_payments.rs -->
 ```rust
 use crate::application::ports::payments::Payments;
 use cerne::async_trait;
 
 /// An adapter of the port `Payments`.
-pub struct InMemoryPayments;
+pub struct HttpPayments;
 
 #[async_trait]
-impl Payments for InMemoryPayments {}
+impl Payments for HttpPayments {}
 ```
 
 Depois de preenchido:
 
-<!-- file: src/infrastructure/in_memory_payments.rs -->
+<!-- file: src/infrastructure/http_payments.rs -->
 ```rust
 use crate::application::ports::payments::Payments;
 use crate::domain::value_objects::order_id::OrderId;
 use cerne::{Error, async_trait};
-use std::sync::Mutex;
 
-/// Keeps every charge instead of calling a payment provider.
-#[derive(Default)]
-pub struct InMemoryPayments {
-    pub charges: Mutex<Vec<(OrderId, u64)>>,
-}
+/// The client of the payment provider's HTTP API: writing it is yours. Send the order id as the idempotency key.
+pub struct HttpPayments;
 
 #[async_trait]
-impl Payments for InMemoryPayments {
-    async fn charge(&self, order_id: &OrderId, amount: u64) -> Result<(), Error> {
-        let mut charges = self.charges.lock().unwrap();
-
-        if !charges.iter().any(|(charged, _)| charged == order_id) {
-            charges.push((order_id.clone(), amount));
-        }
-
-        Ok(())
+impl Payments for HttpPayments {
+    async fn charge(&self, _order_id: &OrderId, _amount: u64) -> Result<(), Error> {
+        todo!("charge the customer on the payment provider")
     }
 }
 ```
 
-Dois ports são traits do próprio Cerne: o `Repository<Order, Transaction>`, que carrega e salva o pedido, e o `EventOutbox<Transaction>`, que grava todo evento que um command produz. Os dois recebem a transação que o command abriu. O `cerne new` escreve o `Database` e a `Transaction` dele com um `todo!()`, porque só você sabe como o seu banco abre uma transação: numa aplicação de verdade, o `Database` embrulha um pool do `sqlx`, do `diesel` ou de outro. Aqui ele guarda os pedidos e os eventos em memória, e cada `Transaction` os compartilha.
+Dois ports são traits do próprio Cerne: o `Repository<Order, Transaction>`, que carrega e salva o pedido, e o `EventOutbox<Transaction>`, que grava todo evento que um command produz. Os dois recebem a transação que o command abriu, e os adapters deles ficam sobre o seu banco. O `cerne new` escreve o `Database` e a `Transaction` dele com um `todo!()`, porque só você sabe como o seu banco abre uma transação: numa aplicação de verdade, o `Database` embrulha um pool do `sqlx`, do `diesel` ou de outro. Os adapters dos dois ports são um `todo!()` no `main.rs` (passo 10).
 
 Como o `cerne new shop` gerou o `src/infrastructure/database.rs`:
 
@@ -530,107 +506,13 @@ impl Transaction {
 }
 ```
 
-Depois de preenchido, com os adapters dos dois ports, que o `cerne g adapter` não escreve:
-
-<!-- file: src/infrastructure/database.rs -->
-```rust
-use crate::domain::entities::order::Order;
-use crate::domain::value_objects::order_id::OrderId;
-use cerne::application::{EventOutbox, OutboxEntry, Repository};
-use cerne::domain::Entity;
-use cerne::{ApplicationError, Error, async_trait};
-use std::sync::{Arc, Mutex};
-
-/// What a database would hold, in memory.
-#[derive(Default)]
-pub struct Database {
-    pub orders: Arc<Mutex<Vec<Order>>>,
-    pub event_outbox: Arc<Mutex<Vec<OutboxEntry>>>,
-}
-
-/// In memory there is no real transaction: every write goes straight to the `Database`, and a command that fails
-/// halfway keeps what it already wrote.
-pub struct Transaction {
-    orders: Arc<Mutex<Vec<Order>>>,
-    event_outbox: Arc<Mutex<Vec<OutboxEntry>>>,
-}
-
-impl Database {
-    pub async fn begin(&self) -> Result<Transaction, Error> {
-        let transaction = Transaction {
-            orders: Arc::clone(&self.orders),
-            event_outbox: Arc::clone(&self.event_outbox),
-        };
-
-        Ok(transaction)
-    }
-}
-
-impl Transaction {
-    /// Nothing to make permanent: every write is already in the `Database`.
-    pub async fn commit(self) -> Result<(), Error> {
-        Ok(())
-    }
-}
-
-// --- Repository<Order> -------------------------------------------------------
-
-pub struct InMemoryOrderRepository;
-
-#[async_trait]
-impl Repository<Order, Transaction> for InMemoryOrderRepository {
-    async fn load(&self, transaction: &mut Transaction, order_id: &OrderId) -> Result<Order, Error> {
-        let orders = transaction.orders.lock().unwrap();
-        let order = orders.iter().find(|order| order.id() == Some(order_id));
-
-        Ok(order.cloned().ok_or(ApplicationError::NotFound("order"))?)
-    }
-
-    async fn save(&self, transaction: &mut Transaction, order: Order) -> Result<OrderId, Error> {
-        let mut orders = transaction.orders.lock().unwrap();
-
-        let order_id = match order.id() {
-            Some(order_id) => order_id.clone(),
-            None => OrderId::try_from(orders.len() as u64 + 1)?,
-        };
-
-        orders.retain(|saved_order| saved_order.id() != Some(&order_id));
-        orders.push(order.with_id(order_id.clone()));
-
-        Ok(order_id)
-    }
-}
-
-// --- EventOutbox -------------------------------------------------------------
-
-pub struct InMemoryEventOutbox;
-
-#[async_trait]
-impl EventOutbox<Transaction> for InMemoryEventOutbox {
-    async fn store(&self, transaction: &mut Transaction, outbox_entry: OutboxEntry) -> Result<(), Error> {
-        transaction.event_outbox.lock().unwrap().push(outbox_entry);
-
-        Ok(())
-    }
-}
-```
-
-Como o `cerne new shop`, o `cerne g adapter InMemoryCatalog Catalog` e o `cerne g adapter InMemoryPayments Payments` geraram o `src/infrastructure/mod.rs`:
+Como o `cerne new shop`, o `cerne g adapter HttpCatalog Catalog` e o `cerne g adapter HttpPayments Payments` geraram o `src/infrastructure/mod.rs`:
 
 <!-- generated: src/infrastructure/mod.rs -->
 ```rust
 pub mod database;
-pub mod in_memory_catalog;
-pub mod in_memory_payments;
-```
-
-Depois de preenchido:
-
-<!-- file: src/infrastructure/mod.rs -->
-```rust
-pub mod database;
-pub mod in_memory_catalog;
-pub mod in_memory_payments;
+pub mod http_catalog;
+pub mod http_payments;
 ```
 
 O `CompositionRoot` reúne todos os ports, e o `CompositionRoot::new` só guarda os adapters que recebe: quem os monta é o `main.rs`. O `cerne new` escreveu o `database` e o `event_outbox`, e o `cerne g entity --aggregate` acrescentou o `order_repository`; os dois sistemas externos entram à mão.
@@ -1094,7 +976,7 @@ impl Query<CompositionRoot> for OrderSummaryQuery {
 
 ## 9. O board como teste
 
-O `tests/board.rs` tem um bloco por fluxo, sobre os mesmos adapters em memória do `main.rs`.
+O `tests/board.rs` tem um bloco por fluxo. Todo adapter ainda é um `todo!()`, então o teste confere o que não precisa de IO: o agregado, as invariantes e as transições de estado dele, e as policies que cada evento dispara.
 
 Como o `cerne new shop` gerou o `tests/board.rs`:
 
@@ -1109,134 +991,63 @@ Depois de preenchido:
 ```rust
 //! One block per flow of the board: an actor sends a command, and the test checks its events and the policies that fired.
 
-use cerne::Error;
-use cerne::application::{Command, Query, SyncEventBus};
-use cerne::domain::{DomainError, ValueObject};
-use shop::application::commands::place_order::PlaceOrderCommand;
-use shop::application::queries::order_summary::OrderSummaryQuery;
-use shop::application::read_models::order_summary::OrderSummary;
-use shop::composition_root::{CompositionRoot, CompositionRootConstructor};
+use cerne::domain::{DomainError, DomainEvent, Entity, ValueObject};
+use shop::domain::entities::order::{Order, OrderConstructor, OrderStatus};
+use shop::domain::events::order_placed::OrderPlaced;
 use shop::domain::value_objects::order_id::OrderId;
-use shop::infrastructure::database::{Database, InMemoryEventOutbox, InMemoryOrderRepository};
-use shop::infrastructure::in_memory_catalog::InMemoryCatalog;
-use shop::infrastructure::in_memory_payments::InMemoryPayments;
-use std::sync::Arc;
 
-fn composition_root(payments: Arc<InMemoryPayments>) -> Arc<CompositionRoot> {
-    let database = Database::default();
-
-    let order_repository = InMemoryOrderRepository;
-    let event_outbox = InMemoryEventOutbox;
-
-    let catalog = InMemoryCatalog {
-        products: vec![("mug", 3000, 10)],
-    };
-
-    let composition_root_constructor = CompositionRootConstructor {
-        database,
-        order_repository: Box::new(order_repository),
-        event_outbox: Box::new(event_outbox),
-        catalog: Arc::new(catalog),
-        payments,
-    };
-
-    Arc::new(CompositionRoot::new(composition_root_constructor))
-}
-
-#[tokio::test]
-async fn the_customer_places_an_order_and_the_policy_charges_it() -> anyhow::Result<()> {
-    let payments = Arc::new(InMemoryPayments::default());
-    let composition_root = composition_root(Arc::clone(&payments));
-
-    let sync_event_bus = SyncEventBus::new(Arc::clone(&composition_root), |error| eprintln!("policy: {error}"));
-
+#[test]
+fn the_customer_places_an_order_and_the_policy_charges_it() -> anyhow::Result<()> {
     // --- Customer: places an order -------------------------------------------
 
-    let place_order = PlaceOrderCommand {
-        product: "mug".into(),
-        quantity: 2,
-    };
-
-    let place_order_execution = place_order.execute(&composition_root).await?;
-
-    let order_id = place_order_execution.output;
-
-    sync_event_bus.publish(place_order_execution.events).await;
-
-    // --- Policy: whenever an order is placed, charge the customer -----------
-
-    assert_eq!(*payments.charges.lock().unwrap(), vec![(order_id.clone(), 6000)]);
-
-    let stored_events: Vec<String> = composition_root
-        .database
-        .event_outbox
-        .lock()
-        .unwrap()
-        .iter()
-        .map(|outbox_entry| outbox_entry.event.clone())
-        .collect();
-
-    assert_eq!(stored_events, ["order_placed", "order_paid"]);
-
-    // --- Customer: reads the order -------------------------------------------
-
-    let order_summary_query = OrderSummaryQuery { order_id };
-
-    let order_summary = order_summary_query.execute(&composition_root).await?;
-
-    let paid_order_summary = OrderSummary {
+    let order = Order::new(OrderConstructor {
         product: "mug".into(),
         quantity: 2,
         total: 6000,
-        status: "Paid".into(),
+    })?;
+
+    assert_eq!(order.status, OrderStatus::Placed);
+
+    // --- Policy: whenever an order is placed, charge the customer -----------
+
+    let order_placed = OrderPlaced {
+        order_id: OrderId::new(1)?,
+        total: 6000,
     };
 
-    assert_eq!(order_summary, paid_order_summary);
+    let fired_policies = order_placed.trigger_policies()?;
+    let fired_policy_names: Vec<&str> = fired_policies.iter().map(|fired_policy| fired_policy.name).collect();
+
+    assert_eq!(fired_policy_names, ["whenever an order is placed, charge the customer"]);
+
+    // --- Payments: the order is paid -----------------------------------------
+
+    let paid_order = order.pay()?;
+
+    assert_eq!(paid_order.status, OrderStatus::Paid);
 
     Ok(())
 }
 
-#[tokio::test]
-async fn the_domain_refuses_what_breaks_a_rule_or_an_invariant() -> anyhow::Result<()> {
-    let composition_root = composition_root(Arc::default());
-
-    // --- Business rule: stock covers the quantity ----------------------------
-
-    let too_many_mugs = PlaceOrderCommand {
-        product: "mug".into(),
-        quantity: 11,
-    };
-
-    let refused = too_many_mugs.execute(&composition_root).await;
-
-    assert!(matches!(
-        refused,
-        Err(Error::Domain(DomainError::Violations(violations))) if violations == ["stock covers the quantity"]
-    ));
-
+#[test]
+fn the_domain_refuses_what_breaks_an_invariant() {
     // --- Invariant: quantity is positive -------------------------------------
 
-    let no_mugs = PlaceOrderCommand {
+    let no_mugs = Order::new(OrderConstructor {
         product: "mug".into(),
         quantity: 0,
-    };
+        total: 0,
+    });
 
-    let refused = no_mugs.execute(&composition_root).await;
-
-    assert!(matches!(
-        refused,
-        Err(Error::Domain(DomainError::Violations(violations))) if violations == ["quantity is positive"]
-    ));
+    assert!(matches!(no_mugs, Err(DomainError::Violations(violations)) if violations == ["quantity is positive"]));
 
     // --- Value object: order id is positive ----------------------------------
 
     assert!(OrderId::new(0).is_err());
-
-    Ok(())
 }
 ```
 
-O teste faz o que um ator faz: executa o command, guarda o `output` e publica os `events` no `SyncEventBus`. O `publish(..).await` volta quando a cadeia inteira rodou, então a cobrança já está lá na linha seguinte.
+O teste segue o fluxo passo a passo: o pedido que o command salvaria, a policy que o evento dele dispara e a transição de estado do command que essa policy dispara. Quando os adapters existirem, um teste pode executar os próprios commands e publicar os eventos deles no `SyncEventBus`.
 
 ```bash
 cargo test
@@ -1244,7 +1055,7 @@ cargo test
 
 ## 10. A aplicação: `main.rs`
 
-O `main.rs` monta todos os adapters, o composition root e o event bus, e depois tem um bloco por ator. O `cerne new` escreve uma função com um `todo!()` para cada adapter que falta; no arquivo preenchido, elas dão lugar aos adapters em memória.
+O `main.rs` monta todos os adapters, o composition root e o event bus, e depois tem um bloco por ator. O `cerne new` escreve uma função com um `todo!()` para cada adapter que falta, e aqui elas ficam: o `main` compila e para no primeiro `todo!()` que executa, o `begin` do `Database`.
 
 Como o `cerne new shop` e o `cerne g entity Order product:String quantity:u32 total:u64 status=Placed:Placed,Paid --aggregate` geraram o `src/main.rs`:
 
@@ -1299,33 +1110,32 @@ Depois de preenchido:
 
 <!-- file: src/main.rs -->
 ```rust
-use cerne::application::{Command, Query, SyncEventBus};
+use cerne::application::{Command, EventOutbox, Query, Repository, SyncEventBus};
 use shop::application::commands::place_order::PlaceOrderCommand;
 use shop::application::queries::order_summary::OrderSummaryQuery;
 use shop::composition_root::{CompositionRoot, CompositionRootConstructor};
-use shop::infrastructure::database::{Database, InMemoryEventOutbox, InMemoryOrderRepository};
-use shop::infrastructure::in_memory_catalog::InMemoryCatalog;
-use shop::infrastructure::in_memory_payments::InMemoryPayments;
+use shop::domain::entities::order::Order;
+use shop::infrastructure::database::{Database, Transaction};
+use shop::infrastructure::http_catalog::HttpCatalog;
+use shop::infrastructure::http_payments::HttpPayments;
 use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // --- Composition root ----------------------------------------------------
 
-    let database = Database::default();
+    let database = Database;
 
-    let order_repository = InMemoryOrderRepository;
-    let event_outbox = InMemoryEventOutbox;
+    let order_repository = order_repository_adapter();
+    let event_outbox = event_outbox_adapter();
 
-    let catalog = InMemoryCatalog {
-        products: vec![("mug", 3000, 10), ("t-shirt", 5000, 3)],
-    };
-    let payments = InMemoryPayments::default();
+    let catalog = HttpCatalog;
+    let payments = HttpPayments;
 
     let composition_root_constructor = CompositionRootConstructor {
         database,
-        order_repository: Box::new(order_repository),
-        event_outbox: Box::new(event_outbox),
+        order_repository,
+        event_outbox,
         catalog: Arc::new(catalog),
         payments: Arc::new(payments),
     };
@@ -1359,6 +1169,16 @@ async fn main() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+/// No adapter of EventOutbox yet: write one in `infrastructure/` and build it here.
+fn event_outbox_adapter() -> Box<dyn EventOutbox<Transaction>> {
+    todo!("an adapter of EventOutbox")
+}
+
+/// No adapter of Repository<Order> yet: write one in `infrastructure/` and build it here.
+fn order_repository_adapter() -> Box<dyn Repository<Order, Transaction>> {
+    todo!("an adapter of Repository<Order>")
+}
 ```
 
 ```bash
@@ -1370,7 +1190,7 @@ $ cargo run
 OrderSummary { product: "mug", quantity: 2, total: 6000, status: "Paid" }
 ```
 
-O pedido já está `Paid`: o `SyncEventBus` executou o `ChargeOrderCommand` antes de o `publish(..).await` voltar. Um servidor web, um consumidor de fila ou um CLI ficariam no lugar desses blocos: cada um executa o command e publica os eventos dele, do mesmo jeito.
+Quando os adapters estiverem escritos, o pedido já estará `Paid` quando o cliente o ler: o `SyncEventBus` executa o `ChargeOrderCommand` antes de o `publish(..).await` voltar. Um servidor web, um consumidor de fila ou um CLI ficariam no lugar desses blocos: cada um executa o command e publica os eventos dele, do mesmo jeito.
 
 ## 11. Quando algo dá errado
 
@@ -1382,7 +1202,7 @@ Todo erro é um `cerne::Error`, numa de três categorias. Um adapter de HTTP (ou
 | `ApplicationError::NotFound` | o repositório (ou um adapter) não achou nada |
 | `InfrastructureError` | banco, rede, fila |
 
-No teste do passo 9, o `PlaceOrderCommand { product: "mug".into(), quantity: 11 }` volta como `DomainError::Violations(["stock covers the quantity"])`.
+No teste do passo 9, um pedido com `quantity: 0` volta como `DomainError::Violations(["quantity is positive"])`. Um command devolve o mesmo erro dentro de um `cerne::Error::Domain`, e uma regra de negócio quebrada também: o `PlaceOrderCommand { product: "mug".into(), quantity: 11 }` volta como `DomainError::Violations(["stock covers the quantity"])`.
 
 ## Outras opções
 
