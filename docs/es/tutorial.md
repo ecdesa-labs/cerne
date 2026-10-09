@@ -886,14 +886,15 @@ impl DomainEvent<CompositionRoot> for OrderPlaced {
 }
 ```
 
-La policy no ejecuta el command: lo ejecuta el event bus. Quien envió el `PlaceOrderCommand` publica sus eventos con `sync_event_bus.send(PublishEvents(events))`, y, para cada evento, el bus llama a `trigger_policies`, ejecuta el command de cada policy que se disparó y publica los eventos que devuelve ese command, hasta que termina la cadena. El bus no abre transacciones: cada command abre la suya.
+La policy no ejecuta el command: lo ejecuta el event bus. Quien envió el `PlaceOrderCommand` publica sus eventos con `sync_event_bus.publish(events)`, y, para cada evento, el bus llama a `trigger_policies`, ejecuta el command de cada policy que se disparó y publica los eventos que devuelve ese command, hasta que termina la cadena. El bus no abre transacciones: cada command abre la suya. El command solo devuelve sus eventos: nunca los publica.
 
 | | `SyncEventBus` | `AsyncEventBus` |
 |---|---|---|
-| Orden | una cadena a la vez: el siguiente `PublishEvents` espera a que termine la cadena actual | cada evento empieza en cuanto llega |
-| `send(..).await` | vuelve cuando se ejecutó toda la cadena | vuelve en cuanto empezaron los eventos |
+| Orden | una cadena a la vez: el siguiente `publish` espera a que termine la cadena actual | cada evento empieza en cuanto llega |
+| `publish` | vuelve, después del `.await`, cuando se ejecutó toda la cadena | vuelve enseguida, sin `.await`: los eventos ya empezaron |
+| Hilos | una cadena, así que un core a la vez | cada evento en su propia task de Tokio, en todos los cores |
 
-Los dos son actores de Actix, por eso `main` se ejecuta en `#[actix::main]` y los tests en `#[actix::test]`.
+Los dos funcionan sobre Tokio, por eso `main` se ejecuta en `#[tokio::main]` y los tests en `#[tokio::test]`. El `AsyncEventBus` solo usa todos los cores en el runtime multi-thread, el predeterminado de `#[tokio::main]`; `#[tokio::test]` se ejecuta en un solo hilo.
 
 El bus espera lo mejor. Un command que falla, o un evento cuyas invariantes fallan, va al `on_error` con que se construyó el bus, y el bus sigue: nada se ejecuta de nuevo, y nada marca el evento. Cómo sobrevive cada policy a un fallo lo decides tú. Piensa en una policy que envía un e-mail por una API de notificaciones: si la API está caída, el command falla, y el e-mail se pierde, a menos que hagas algo. Puedes leer de nuevo la tabla `event_outbox` y publicar lo que quedó atrás, o dejar que el propio command lo intente de nuevo; entonces la API puede recibir el mismo e-mail dos veces, a menos que acepte una clave de idempotencia. Cerne guarda todo evento en el outbox; leerlo de vuelta es cosa tuya.
 
@@ -1098,9 +1099,8 @@ Después de rellenarlo:
 ```rust
 //! One block per flow of the board: an actor sends a command, and the test checks its events and the policies that fired.
 
-use actix::Actor;
 use cerne::Error;
-use cerne::application::{Command, PublishEvents, Query, SyncEventBus};
+use cerne::application::{Command, Query, SyncEventBus};
 use cerne::domain::{DomainError, ValueObject};
 use shop::application::commands::place_order::PlaceOrderCommand;
 use shop::application::queries::order_summary::OrderSummaryQuery;
@@ -1133,12 +1133,12 @@ fn composition_root(payments: Arc<InMemoryPayments>) -> Arc<CompositionRoot> {
     Arc::new(CompositionRoot::new(composition_root_constructor))
 }
 
-#[actix::test]
+#[tokio::test]
 async fn the_customer_places_an_order_and_the_policy_charges_it() -> anyhow::Result<()> {
     let payments = Arc::new(InMemoryPayments::default());
     let composition_root = composition_root(Arc::clone(&payments));
 
-    let sync_event_bus = SyncEventBus::new(Arc::clone(&composition_root), |error| eprintln!("policy: {error}")).start();
+    let sync_event_bus = SyncEventBus::new(Arc::clone(&composition_root), |error| eprintln!("policy: {error}"));
 
     // --- Customer: places an order -------------------------------------------
 
@@ -1151,7 +1151,7 @@ async fn the_customer_places_an_order_and_the_policy_charges_it() -> anyhow::Res
 
     let order_id = place_order_execution.output;
 
-    sync_event_bus.send(PublishEvents(place_order_execution.events)).await?;
+    sync_event_bus.publish(place_order_execution.events).await;
 
     // --- Policy: whenever an order is placed, charge the customer -----------
 
@@ -1186,7 +1186,7 @@ async fn the_customer_places_an_order_and_the_policy_charges_it() -> anyhow::Res
     Ok(())
 }
 
-#[actix::test]
+#[tokio::test]
 async fn the_domain_refuses_what_breaks_a_rule_or_an_invariant() -> anyhow::Result<()> {
     let composition_root = composition_root(Arc::default());
 
@@ -1226,7 +1226,7 @@ async fn the_domain_refuses_what_breaks_a_rule_or_an_invariant() -> anyhow::Resu
 }
 ```
 
-El test hace lo que hace un actor: ejecuta el command, guarda el `output` y publica los `events` en el `SyncEventBus`. `send(..).await` vuelve cuando se ejecutó toda la cadena, así que el cobro ya está ahí en la línea siguiente.
+El test hace lo que hace un actor: ejecuta el command, guarda el `output` y publica los `events` en el `SyncEventBus`. `publish(..).await` vuelve cuando se ejecutó toda la cadena, así que el cobro ya está ahí en la línea siguiente.
 
 ```bash
 cargo test
@@ -1240,13 +1240,12 @@ El `src/main.rs` tal como lo generaron `cerne new shop` y `cerne g entity Order 
 
 <!-- generated: src/main.rs -->
 ```rust
-use actix::Actor;
 use cerne::application::{EventOutbox, Repository, SyncEventBus};
 use shop::composition_root::{CompositionRoot, CompositionRootConstructor};
 use shop::domain::entities::order::Order;
 use std::sync::Arc;
 
-#[actix::main]
+#[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // --- Composition root ----------------------------------------------------
 
@@ -1263,10 +1262,10 @@ async fn main() -> anyhow::Result<()> {
     // --- Event bus: the policies of every event ------------------------------
 
     #[expect(unused_variables, reason = "the blocks of the actors publish their events on it")]
-    let sync_event_bus = SyncEventBus::new(composition_root, |error| eprintln!("policy: {error}")).start();
+    let sync_event_bus = SyncEventBus::new(composition_root, |error| eprintln!("policy: {error}"));
 
     // One block per actor: execute the command, then publish its events with
-    // `sync_event_bus.send(PublishEvents(execution.events)).await?`.
+    // `sync_event_bus.publish(execution.events).await;`.
 
     Ok(())
 }
@@ -1286,8 +1285,7 @@ Después de rellenarlo:
 
 <!-- file: src/main.rs -->
 ```rust
-use actix::Actor;
-use cerne::application::{Command, PublishEvents, Query, SyncEventBus};
+use cerne::application::{Command, Query, SyncEventBus};
 use shop::application::commands::place_order::PlaceOrderCommand;
 use shop::application::queries::order_summary::OrderSummaryQuery;
 use shop::composition_root::{CompositionRoot, CompositionRootConstructor};
@@ -1296,7 +1294,7 @@ use shop::infrastructure::in_memory_database::{InMemoryDatabase, InMemoryEventOu
 use shop::infrastructure::in_memory_payments::InMemoryPayments;
 use std::sync::Arc;
 
-#[actix::main]
+#[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // --- Composition root ----------------------------------------------------
 
@@ -1322,7 +1320,7 @@ async fn main() -> anyhow::Result<()> {
 
     // --- Event bus: the policies of every event ------------------------------
 
-    let sync_event_bus = SyncEventBus::new(Arc::clone(&composition_root), |error| eprintln!("policy: {error}")).start();
+    let sync_event_bus = SyncEventBus::new(Arc::clone(&composition_root), |error| eprintln!("policy: {error}"));
 
     // --- Customer: places an order -------------------------------------------
 
@@ -1335,7 +1333,7 @@ async fn main() -> anyhow::Result<()> {
 
     let order_id = place_order_execution.output;
 
-    sync_event_bus.send(PublishEvents(place_order_execution.events)).await?;
+    sync_event_bus.publish(place_order_execution.events).await;
 
     // --- Customer: reads the order -------------------------------------------
 
@@ -1358,7 +1356,7 @@ $ cargo run
 OrderSummary { product: "mug", quantity: 2, total: 6000, status: "Paid" }
 ```
 
-El pedido ya está `Paid`: el `SyncEventBus` ejecutó el `ChargeOrderCommand` antes de que volviera `send(..).await`. Un servidor web, un consumidor de cola o un CLI ocuparían el lugar de estos bloques: cada uno ejecuta el command y publica sus eventos, de la misma forma.
+El pedido ya está `Paid`: el `SyncEventBus` ejecutó el `ChargeOrderCommand` antes de que volviera `publish(..).await`. Un servidor web, un consumidor de cola o un CLI ocuparían el lugar de estos bloques: cada uno ejecuta el command y publica sus eventos, de la misma forma.
 
 ## 11. Cuando algo sale mal
 
@@ -1376,7 +1374,7 @@ En el test del paso 9, `PlaceOrderCommand { product: "mug".into(), quantity: 11 
 
 - **Una base de datos real:** escribe sobre ella un adapter de `Repository<Order>` y de `EventOutbox` (con `sqlx`, `diesel` o cualquier otro), y un `begin` que abre una transacción y los construye sobre ella. La tabla `event_outbox` es tuya: leerla de vuelta para publicar lo que quedó atrás es cómo una policy sobrevive a una caída.
 - **HTTP, una cola, un CLI:** cada petición ejecuta un bloque de actor de `main.rs`: ejecuta el command, responde con su `output` y publica sus `events`.
-- **Event bus asíncrono:** `AsyncEventBus::new(..).start()` en lugar del `SyncEventBus`: cada evento empieza en cuanto llega, y `send(..).await` no espera la cadena.
+- **Event bus asíncrono:** `AsyncEventBus::new(..)` en lugar del `SyncEventBus`: cada evento empieza en su propia task en cuanto llega, y `async_event_bus.publish(..)` vuelve sin esperar la cadena.
 
 ## CLI
 

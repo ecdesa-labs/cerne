@@ -2,6 +2,20 @@
 
 Every change that breaks compatibility is listed here. While Cerne is in `0.x`, a minor version (`0.1` → `0.2`) may break it.
 
+## 0.3.0
+
+The event buses are no longer Actix actors: they are plain structs on Tokio, so an application runs on `#[tokio::main]` (Axum, Actix Web or none) instead of `#[actix::main]`.
+
+### `cerne`
+
+- **Breaking:** `PublishEvents` is gone, and so are `.start()`, `.send(..)` and `.do_send(..)`. Build the bus with `SyncEventBus::new(composition_root, on_error)` and publish with `sync_event_bus.publish(execution.events).await`: it still runs one chain at a time, in the order the calls arrived, and returns when the chain ends. `async_event_bus.publish(execution.events)` is not `async`: it starts every event in its own Tokio task and returns at once. On the multi-thread runtime, the tasks run on every core.
+- **Breaking:** `publish` returns nothing: the errors go to `on_error`, as before. `on_error` must now be `Send + Sync`.
+- **Breaking:** `cerne` depends on `tokio` (`rt` and `sync`) instead of `actix`. Run `main` on `#[tokio::main]` and the tests on `#[tokio::test]`.
+
+### `cerne-cli`
+
+- **Breaking:** `cerne new` writes `#[tokio::main]` in `main.rs`, and the project depends on `tokio` (`macros` and `rt-multi-thread`) instead of `actix`.
+
 ## 0.2.0
 
 Cerne no longer brings infrastructure: the library keeps the ports, and the adapters are the application's. The outbox stores events instead of commands, and an event bus (an Actix actor) runs the policies.

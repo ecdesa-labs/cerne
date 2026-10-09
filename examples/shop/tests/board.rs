@@ -1,8 +1,7 @@
 //! One block per flow of the board: an actor sends a command, and the test checks its events and the policies that fired.
 
-use actix::Actor;
 use cerne::Error;
-use cerne::application::{Command, PublishEvents, Query, SyncEventBus};
+use cerne::application::{Command, Query, SyncEventBus};
 use cerne::domain::{DomainError, ValueObject};
 use shop::application::commands::place_order::PlaceOrderCommand;
 use shop::application::queries::order_summary::OrderSummaryQuery;
@@ -35,12 +34,12 @@ fn composition_root(payments: Arc<InMemoryPayments>) -> Arc<CompositionRoot> {
     Arc::new(CompositionRoot::new(composition_root_constructor))
 }
 
-#[actix::test]
+#[tokio::test]
 async fn the_customer_places_an_order_and_the_policy_charges_it() -> anyhow::Result<()> {
     let payments = Arc::new(InMemoryPayments::default());
     let composition_root = composition_root(Arc::clone(&payments));
 
-    let sync_event_bus = SyncEventBus::new(Arc::clone(&composition_root), |error| eprintln!("policy: {error}")).start();
+    let sync_event_bus = SyncEventBus::new(Arc::clone(&composition_root), |error| eprintln!("policy: {error}"));
 
     // --- Customer: places an order -------------------------------------------
 
@@ -53,9 +52,7 @@ async fn the_customer_places_an_order_and_the_policy_charges_it() -> anyhow::Res
 
     let order_id = place_order_execution.output;
 
-    sync_event_bus
-        .send(PublishEvents(place_order_execution.events))
-        .await?;
+    sync_event_bus.publish(place_order_execution.events).await;
 
     // --- Policy: whenever an order is placed, charge the customer -----------
 
@@ -90,7 +87,7 @@ async fn the_customer_places_an_order_and_the_policy_charges_it() -> anyhow::Res
     Ok(())
 }
 
-#[actix::test]
+#[tokio::test]
 async fn the_domain_refuses_what_breaks_a_rule_or_an_invariant() -> anyhow::Result<()> {
     let composition_root = composition_root(Arc::default());
 

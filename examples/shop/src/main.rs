@@ -1,5 +1,4 @@
-use actix::Actor;
-use cerne::application::{Command, PublishEvents, Query, SyncEventBus};
+use cerne::application::{Command, Query, SyncEventBus};
 use shop::application::commands::place_order::PlaceOrderCommand;
 use shop::application::queries::order_summary::OrderSummaryQuery;
 use shop::composition_root::{CompositionRoot, CompositionRootConstructor};
@@ -8,7 +7,7 @@ use shop::infrastructure::in_memory_database::{InMemoryDatabase, InMemoryEventOu
 use shop::infrastructure::in_memory_payments::InMemoryPayments;
 use std::sync::Arc;
 
-#[actix::main]
+#[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // --- Composition root ----------------------------------------------------
 
@@ -34,7 +33,7 @@ async fn main() -> anyhow::Result<()> {
 
     // --- Event bus: the policies of every event ------------------------------
 
-    let sync_event_bus = SyncEventBus::new(Arc::clone(&composition_root), |error| eprintln!("policy: {error}")).start();
+    let sync_event_bus = SyncEventBus::new(Arc::clone(&composition_root), |error| eprintln!("policy: {error}"));
 
     // --- Customer: places an order -------------------------------------------
 
@@ -47,9 +46,7 @@ async fn main() -> anyhow::Result<()> {
 
     let order_id = place_order_execution.output;
 
-    sync_event_bus
-        .send(PublishEvents(place_order_execution.events))
-        .await?;
+    sync_event_bus.publish(place_order_execution.events).await;
 
     // --- Customer: reads the order -------------------------------------------
 

@@ -26,8 +26,8 @@ The goal: whoever reads the code knows which part of the Event Storming board th
 - **No infrastructure in the library or the CLI:** Cerne brings ports (`Repository`, `EventOutbox`), never adapters. An adapter missing from the generated `main` is a `fn <port>_adapter()` with a `todo!()`.
 - **Whatever is a repository ends in `_repository`:** the field of the `CompositionRoot` is `order_repository: Box<dyn Repository<Order>>`, and a command reads `composition_root.order_repository.load(..)`. Never just `orders`.
 - **The `CompositionRoot` has a constructor, like an entity, and nothing is built in `new`:** `CompositionRoot::new` takes a `CompositionRootConstructor` with every adapter already built and only keeps them. `main` builds them; `begin`, which the command calls, builds a new `CompositionRoot` with the repositories and the event outbox on its transaction and hands over the external systems with `Arc::clone`. The order is: build each adapter into a variable, with no `Box` or `Arc`; run the migration, if there is one; build the constructor into a variable, which is the only place each adapter is wrapped (`order_repository: Box::new(order_repository)`, `catalog: Arc::new(catalog)`); then `CompositionRoot::new(composition_root_constructor)`.
-- **Method names say the part of the flow:** `trigger_policies`, `begin`, `commit`, `PublishEvents`.
+- **Method names say the part of the flow:** `trigger_policies`, `begin`, `commit`, `publish`.
 - **A create command receives no id:** the repository decides it on insert.
 - **Errors:** the domain returns `EnforcementResult<T>`; commands, queries and ports return `Result<T, cerne::Error>`.
-- **A synchronous domain, an asynchronous application:** `Command`, `Query` and the ports use `#[async_trait]`, and the event buses are Actix actors; entities, events, invariants, rules and policies are never async.
+- **A synchronous domain, an asynchronous application:** `Command`, `Query` and the ports use `#[async_trait]`, and the event buses run on Tokio; entities, events, invariants, rules and policies are never async.
 - **Code, tests and messages in English.**
