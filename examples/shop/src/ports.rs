@@ -21,11 +21,7 @@ pub struct Ports {
 }
 
 impl Ports {
-    pub fn new(
-        database: SqliteDatabase,
-        catalog: Arc<dyn Catalog>,
-        payments: Arc<dyn Payments>,
-    ) -> Self {
+    pub fn new(database: SqliteDatabase, catalog: Arc<dyn Catalog>, payments: Arc<dyn Payments>) -> Self {
         Self {
             orders: Box::new(SqliteOrderRepository::new(database.clone())),
             outbox: Box::new(SqliteOutbox::new(database.clone())),

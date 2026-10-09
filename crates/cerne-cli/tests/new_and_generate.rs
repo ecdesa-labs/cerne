@@ -169,32 +169,17 @@ fn generated_project_passes_clippy_without_touching_anything() {
 
     // --- cerne new -----------------------------------------------------------
 
-    assert!(cerne(
-        &["new", "loja", "--db", "memory", "--http", "jsonrpc"],
-        &tmp
-    ));
-    assert!(
-        !cerne(&["new", "loja"], &tmp),
-        "new must not overwrite a project"
-    );
+    assert!(cerne(&["new", "loja", "--db", "memory", "--http", "jsonrpc"], &tmp));
+    assert!(!cerne(&["new", "loja"], &tmp), "new must not overwrite a project");
 
     let project = tmp.join("loja");
 
-    assert!(
-        !cerne(&["g", "http", "rest"], &project),
-        "the project already speaks jsonrpc"
-    );
+    assert!(!cerne(&["g", "http", "rest"], &project), "the project already speaks jsonrpc");
 
     // --- cerne g -------------------------------------------------------------
 
-    assert!(cerne(
-        &["g", "entity", "Order", "qty:i32", "id:u64", "--aggregate"],
-        &project
-    ));
-    assert!(cerne(
-        &["g", "entity", "OrderItem", "qty:i32", "sku:String"],
-        &project
-    ));
+    assert!(cerne(&["g", "entity", "Order", "qty:i32", "id:u64", "--aggregate"], &project));
+    assert!(cerne(&["g", "entity", "OrderItem", "qty:i32", "sku:String"], &project));
     assert!(cerne(&["g", "entity", "Tag"], &project));
     assert!(cerne(
         &[
@@ -207,84 +192,27 @@ fn generated_project_passes_clippy_without_touching_anything() {
         ],
         &project
     ));
-    assert!(cerne(
-        &["g", "value_object", "Amount", "value:u64"],
-        &project
-    ));
-    assert!(cerne(
-        &[
-            "g",
-            "value_object",
-            "Money",
-            "amount:u64",
-            "currency:String"
-        ],
-        &project
-    ));
-    assert!(cerne(
-        &["g", "event", "OrderPlaced", "order_id:u64"],
-        &project
-    ));
+    assert!(cerne(&["g", "value_object", "Amount", "value:u64"], &project));
+    assert!(cerne(&["g", "value_object", "Money", "amount:u64", "currency:String"], &project));
+    assert!(cerne(&["g", "event", "OrderPlaced", "order_id:u64"], &project));
     assert!(cerne(&["g", "event", "Pinged"], &project));
-    assert!(cerne(
-        &["g", "command", "PlaceOrder", "order_id:u64", "qty:i32"],
-        &project
-    ));
-    assert!(cerne(
-        &["g", "command", "ShipOrder", "order_id:u64", "--policy"],
-        &project
-    ));
+    assert!(cerne(&["g", "command", "PlaceOrder", "order_id:u64", "qty:i32"], &project));
+    assert!(cerne(&["g", "command", "ShipOrder", "order_id:u64", "--policy"], &project));
     assert!(cerne(&["g", "port", "Notifier"], &project));
-    assert!(cerne(
-        &["g", "adapter", "SmtpNotifier", "Notifier"],
-        &project
-    ));
+    assert!(cerne(&["g", "adapter", "SmtpNotifier", "Notifier"], &project));
     assert!(!cerne(&["g", "adapter", "Smtp", "Mailer"], &project));
-    assert!(
-        !cerne(
-            &["g", "endpoint", "PlaceOrder", "POST", "/orders"],
-            &project
-        ),
-        "endpoint is for REST projects"
-    );
+    assert!(!cerne(&["g", "endpoint", "PlaceOrder", "POST", "/orders"], &project), "endpoint is for REST projects");
 
-    assert!(
-        !cerne(&["g", "query", "OrderSummary", "order_id:u64"], &project),
-        "a query needs its read model first"
-    );
-    assert!(cerne(
-        &[
-            "g",
-            "read_model",
-            "OrderSummary",
-            "order_id:u64",
-            "total:u64"
-        ],
-        &project
-    ));
-    assert!(cerne(
-        &["g", "query", "OrderSummary", "order_id:u64"],
-        &project
-    ));
+    assert!(!cerne(&["g", "query", "OrderSummary", "order_id:u64"], &project), "a query needs its read model first");
+    assert!(cerne(&["g", "read_model", "OrderSummary", "order_id:u64", "total:u64"], &project));
+    assert!(cerne(&["g", "query", "OrderSummary", "order_id:u64"], &project));
 
-    assert!(
-        !cerne(&["g", "entity", "Order"], &project),
-        "g must not overwrite a post-it"
-    );
+    assert!(!cerne(&["g", "entity", "Order"], &project), "g must not overwrite a post-it");
     assert!(!cerne(&["g", "value_object", "Empty"], &project));
     assert!(!cerne(&["g", "event", "Bad", "qty"], &project));
-    assert!(!cerne(
-        &["g", "event", "Bad", "status:Pending,Paid"],
-        &project
-    ));
-    assert!(!cerne(
-        &["g", "entity", "Bad", "status:pending,Paid"],
-        &project
-    ));
-    assert!(!cerne(
-        &["g", "entity", "Bad", "status=Done:Pending,Paid"],
-        &project
-    ));
+    assert!(!cerne(&["g", "event", "Bad", "status:Pending,Paid"], &project));
+    assert!(!cerne(&["g", "entity", "Bad", "status:pending,Paid"], &project));
+    assert!(!cerne(&["g", "entity", "Bad", "status=Done:Pending,Paid"], &project));
     assert!(!cerne(&["g", "entity", "Bad", "qty=1:i32"], &project));
 
     assert_eq!(
@@ -294,24 +222,17 @@ fn generated_project_passes_clippy_without_touching_anything() {
 
     let payment = fs::read_to_string(project.join("src/domain/entities/payment.rs")).unwrap();
 
-    assert!(payment.contains(
-        "#[derive(Debug, Clone, Copy, Default, PartialEq)]\npub enum PaymentPaymentStatus {\n    #[default]\n    Pending,"
-    ));
+    assert!(payment.contains("#[derive(Debug, Clone, Copy, Default, PartialEq)]\npub enum PaymentPaymentStatus {\n    #[default]\n    Pending,"));
     assert!(payment.contains("#[derive(Debug, Clone, Copy, PartialEq)]\npub enum PaymentMethod {"));
-    assert!(
-        payment.contains("#[aggregate]\n#[derive(Debug, Clone, PartialEq)]\npub struct Payment {")
-    );
-    assert!(payment.contains("    #[skip_constructor]\n    pub payment_status: PaymentPaymentStatus,\n    pub method: PaymentMethod,"));
+    assert!(payment.contains("#[aggregate]\n#[derive(Debug, Clone, PartialEq)]\npub struct Payment {"));
+    assert!(payment.contains(
+        "    #[skip_constructor]\n    pub payment_status: PaymentPaymentStatus,\n    pub method: PaymentMethod,"
+    ));
 
     let rpc = fs::read_to_string(project.join("src/infrastructure/http/rpc.rs")).unwrap();
 
-    assert!(rpc.contains(
-        r#""place_order" => methods.command::<PlaceOrderCommand>(request.params).await,"#
-    ));
-    assert!(
-        !rpc.contains("ship_order"),
-        "a policy command has no actor to call it"
-    );
+    assert!(rpc.contains(r#""place_order" => methods.command::<PlaceOrderCommand>(request.params).await,"#));
+    assert!(!rpc.contains("ship_order"), "a policy command has no actor to call it");
     assert!(!rpc.contains("match_single_binding"));
 
     let ports = fs::read_to_string(project.join("src/ports.rs")).unwrap();
@@ -323,18 +244,12 @@ fn generated_project_passes_clippy_without_touching_anything() {
 
     fs::write(project.join("tests/repository.rs"), REPOSITORY_TEST).unwrap();
 
-    let memory_and_jsonrpc_passed = cargo(
-        &project,
-        &workspace,
-        &["clippy", "--all-targets", "--", "-D", "warnings"],
-    ) && cargo(&project, &workspace, &["test"]);
+    let memory_and_jsonrpc_passed = cargo(&project, &workspace, &["clippy", "--all-targets", "--", "-D", "warnings"])
+        && cargo(&project, &workspace, &["test"]);
 
     // --- Postgres and REST: cargo clippy, and cargo test with DATABASE_URL ---
 
-    assert!(cerne(
-        &["new", "vitrine", "--db", "postgres", "--http", "rest"],
-        &tmp
-    ));
+    assert!(cerne(&["new", "vitrine", "--db", "postgres", "--http", "rest"], &tmp));
     assert!(!cerne(&["new", "bad", "--db", "mysql"], &tmp));
 
     let vitrine = tmp.join("vitrine");
@@ -353,43 +268,21 @@ fn generated_project_passes_clippy_without_touching_anything() {
         ],
         &vitrine
     ));
-    assert!(cerne(
-        &["g", "command", "AddProduct", "name:String", "price:u64"],
-        &vitrine
-    ));
-    assert!(cerne(
-        &["g", "endpoint", "AddProduct", "POST", "/products"],
-        &vitrine
-    ));
-    assert!(cerne(
-        &["g", "read_model", "Catalog", "total:u64"],
-        &vitrine
-    ));
+    assert!(cerne(&["g", "command", "AddProduct", "name:String", "price:u64"], &vitrine));
+    assert!(cerne(&["g", "endpoint", "AddProduct", "POST", "/products"], &vitrine));
+    assert!(cerne(&["g", "read_model", "Catalog", "total:u64"], &vitrine));
     assert!(cerne(&["g", "query", "Catalog", "page:u32"], &vitrine));
-    assert!(cerne(
-        &["g", "endpoint", "Catalog", "GET", "/catalog"],
-        &vitrine
-    ));
-    assert!(!cerne(
-        &["g", "endpoint", "Missing", "POST", "/missing"],
-        &vitrine
-    ));
+    assert!(cerne(&["g", "endpoint", "Catalog", "GET", "/catalog"], &vitrine));
+    assert!(!cerne(&["g", "endpoint", "Missing", "POST", "/missing"], &vitrine));
 
-    fs::write(
-        vitrine.join("tests/repository.rs"),
-        POSTGRES_REPOSITORY_TEST,
-    )
-    .unwrap();
+    fs::write(vitrine.join("tests/repository.rs"), POSTGRES_REPOSITORY_TEST).unwrap();
 
-    let postgres_and_rest_passed = cargo(
-        &vitrine,
-        &workspace,
-        &["clippy", "--all-targets", "--", "-D", "warnings"],
-    ) && match env::var("DATABASE_URL") {
-        // Without a Postgres (the CI job postgres starts one), the repository only goes through clippy.
-        Err(_) => true,
-        Ok(database_url) => cargo_on_postgres(&vitrine, &workspace, &["test"], &database_url),
-    };
+    let postgres_and_rest_passed = cargo(&vitrine, &workspace, &["clippy", "--all-targets", "--", "-D", "warnings"])
+        && match env::var("DATABASE_URL") {
+            // Without a Postgres (the CI job postgres starts one), the repository only goes through clippy.
+            Err(_) => true,
+            Ok(database_url) => cargo_on_postgres(&vitrine, &workspace, &["test"], &database_url),
+        };
 
     // --- SQLite file, no HTTP: cargo run runs the generated migrations ------
 
@@ -397,35 +290,20 @@ fn generated_project_passes_clippy_without_touching_anything() {
 
     let caixa = tmp.join("caixa");
 
-    assert!(cerne(
-        &["g", "entity", "Sale", "total:u64", "--aggregate"],
-        &caixa
-    ));
-    assert!(cerne(
-        &["g", "command", "RegisterSale", "total:u64"],
-        &caixa
-    ));
+    assert!(cerne(&["g", "entity", "Sale", "total:u64", "--aggregate"], &caixa));
+    assert!(cerne(&["g", "command", "RegisterSale", "total:u64"], &caixa));
     assert!(cerne(&["g", "read_model", "Till", "total:u64"], &caixa));
     assert!(cerne(&["g", "query", "Till", "total:u64"], &caixa));
 
-    let sqlite_passed = cargo(
-        &caixa,
-        &workspace,
-        &["clippy", "--all-targets", "--", "-D", "warnings"],
-    ) && cargo(&caixa, &workspace, &["run"]);
+    let sqlite_passed = cargo(&caixa, &workspace, &["clippy", "--all-targets", "--", "-D", "warnings"])
+        && cargo(&caixa, &workspace, &["run"]);
 
     // --- cerne g http rest: the same project, now with REST -----------------
 
     assert!(!cerne(&["g", "http", "soap"], &caixa));
     assert!(cerne(&["g", "http", "rest"], &caixa));
-    assert!(
-        !cerne(&["g", "http", "rest"], &caixa),
-        "the project already speaks rest"
-    );
-    assert!(cerne(
-        &["g", "endpoint", "RegisterSale", "POST", "/sales"],
-        &caixa
-    ));
+    assert!(!cerne(&["g", "http", "rest"], &caixa), "the project already speaks rest");
+    assert!(cerne(&["g", "endpoint", "RegisterSale", "POST", "/sales"], &caixa));
     assert!(cerne(&["g", "endpoint", "Till", "GET", "/till"], &caixa));
 
     let caixa_cargo_toml = fs::read_to_string(caixa.join("Cargo.toml")).unwrap();
@@ -440,25 +318,20 @@ fn generated_project_passes_clippy_without_touching_anything() {
 
     // The query is the one part the actor's developer writes: here, it echoes the query string.
     let till_query = caixa.join("src/application/queries/till.rs");
-    let till_query_written = fs::read_to_string(&till_query).unwrap().replace(
-        r#"todo!("read the ports and build the Till read model")"#,
-        "Ok(Till { total: self.total })",
-    );
+    let till_query_written = fs::read_to_string(&till_query)
+        .unwrap()
+        .replace(r#"todo!("read the ports and build the Till read model")"#, "Ok(Till { total: self.total })");
 
     fs::write(&till_query, till_query_written).unwrap();
     fs::write(caixa.join("tests/rest.rs"), REST_TEST).unwrap();
     fs::write(
         caixa.join("Cargo.toml"),
-        caixa_cargo_toml
-            + "\n[dev-dependencies]\ntower = { version = \"0.5\", features = [\"util\"] }\n",
+        caixa_cargo_toml + "\n[dev-dependencies]\ntower = { version = \"0.5\", features = [\"util\"] }\n",
     )
     .unwrap();
 
-    let rest_passed = cargo(
-        &caixa,
-        &workspace,
-        &["clippy", "--all-targets", "--", "-D", "warnings"],
-    ) && cargo(&caixa, &workspace, &["test"]);
+    let rest_passed = cargo(&caixa, &workspace, &["clippy", "--all-targets", "--", "-D", "warnings"])
+        && cargo(&caixa, &workspace, &["test"]);
 
     // --- cerne g http jsonrpc: the commands and queries already there get their method
 
@@ -467,25 +340,16 @@ fn generated_project_passes_clippy_without_touching_anything() {
     let balcao = tmp.join("balcao");
 
     assert!(cerne(&["g", "command", "OpenTab", "table:u32"], &balcao));
-    assert!(cerne(
-        &["g", "command", "PrintBill", "table:u32", "--policy"],
-        &balcao
-    ));
+    assert!(cerne(&["g", "command", "PrintBill", "table:u32", "--policy"], &balcao));
     assert!(cerne(&["g", "read_model", "Tab", "total:u64"], &balcao));
     assert!(cerne(&["g", "query", "Tab", "table:u32"], &balcao));
     assert!(cerne(&["g", "http", "jsonrpc"], &balcao));
 
     let balcao_rpc = fs::read_to_string(balcao.join("src/infrastructure/http/rpc.rs")).unwrap();
 
-    assert!(
-        balcao_rpc
-            .contains(r#""open_tab" => methods.command::<OpenTabCommand>(request.params).await,"#)
-    );
+    assert!(balcao_rpc.contains(r#""open_tab" => methods.command::<OpenTabCommand>(request.params).await,"#));
     assert!(balcao_rpc.contains(r#""tab" => methods.query::<TabQuery>(request.params).await,"#));
-    assert!(
-        !balcao_rpc.contains("print_bill"),
-        "a policy command has no actor to call it"
-    );
+    assert!(!balcao_rpc.contains("print_bill"), "a policy command has no actor to call it");
     assert!(
         fs::read_to_string(balcao.join("src/infrastructure/mod.rs"))
             .unwrap()
@@ -517,42 +381,20 @@ fn generated_project_passes_clippy_without_touching_anything() {
             .exists(),
         "no database, no repository"
     );
-    assert!(cerne(
-        &[
-            "g",
-            "command",
-            "PlaceOrder",
-            "product:String",
-            "quantity:u32"
-        ],
-        &nucleo
-    ));
-    assert!(cerne(
-        &["g", "command", "ShipOrder", "order_id:OrderId", "--policy"],
-        &nucleo
-    ));
-    assert!(cerne(
-        &["g", "endpoint", "PlaceOrder", "POST", "/orders"],
-        &nucleo
-    ));
+    assert!(cerne(&["g", "command", "PlaceOrder", "product:String", "quantity:u32"], &nucleo));
+    assert!(cerne(&["g", "command", "ShipOrder", "order_id:OrderId", "--policy"], &nucleo));
+    assert!(cerne(&["g", "endpoint", "PlaceOrder", "POST", "/orders"], &nucleo));
 
     let nucleo_cargo_toml = fs::read_to_string(nucleo.join("Cargo.toml")).unwrap();
 
     assert!(nucleo_cargo_toml.contains("default-features = false"));
     assert!(!nucleo_cargo_toml.contains("sqlx"));
 
-    let no_database_passed = cargo(
-        &nucleo,
-        &workspace,
-        &["clippy", "--all-targets", "--", "-D", "warnings"],
-    );
+    let no_database_passed = cargo(&nucleo, &workspace, &["clippy", "--all-targets", "--", "-D", "warnings"]);
 
     assert!(!cerne(&["g", "db", "mysql"], &nucleo));
     assert!(cerne(&["g", "db", "sqlite"], &nucleo));
-    assert!(
-        !cerne(&["g", "db", "postgres"], &nucleo),
-        "the project already has a database"
-    );
+    assert!(!cerne(&["g", "db", "postgres"], &nucleo), "the project already has a database");
     assert!(
         nucleo
             .join("src/infrastructure/sqlite_order_repository.rs")
@@ -567,11 +409,8 @@ fn generated_project_passes_clippy_without_touching_anything() {
 
     fs::write(nucleo.join("tests/repository.rs"), NUCLEO_REPOSITORY_TEST).unwrap();
 
-    let database_added_passed = cargo(
-        &nucleo,
-        &workspace,
-        &["clippy", "--all-targets", "--", "-D", "warnings"],
-    ) && cargo(&nucleo, &workspace, &["test"]);
+    let database_added_passed = cargo(&nucleo, &workspace, &["clippy", "--all-targets", "--", "-D", "warnings"])
+        && cargo(&nucleo, &workspace, &["test"]);
 
     fs::remove_dir_all(&tmp).unwrap();
 
@@ -635,11 +474,7 @@ fn fenced_blocks(markdown: &str) -> Vec<(String, String, String)> {
         if let Some(language) = line.strip_prefix("```") {
             let code: Vec<&str> = lines.by_ref().take_while(|l| *l != "```").collect();
 
-            blocks.push((
-                previous.to_string(),
-                language.to_string(),
-                code.join("\n") + "\n",
-            ));
+            blocks.push((previous.to_string(), language.to_string(), code.join("\n") + "\n"));
         }
 
         previous = line;
@@ -684,10 +519,7 @@ fn tutorial_builds_and_passes_its_tests() {
         {
             let generated = fs::read_to_string(project.join(path)).unwrap();
 
-            assert_eq!(
-                generated, code,
-                "the tutorial shows {path} as the CLI generates it"
-            );
+            assert_eq!(generated, code, "the tutorial shows {path} as the CLI generates it");
         }
 
         // --- The files of the tutorial ---------------------------------------
@@ -700,11 +532,8 @@ fn tutorial_builds_and_passes_its_tests() {
         }
     }
 
-    let tutorial_passed = cargo(
-        &project,
-        &workspace,
-        &["clippy", "--all-targets", "--", "-D", "warnings"],
-    ) && cargo(&project, &workspace, &["test"]);
+    let tutorial_passed = cargo(&project, &workspace, &["clippy", "--all-targets", "--", "-D", "warnings"])
+        && cargo(&project, &workspace, &["test"]);
 
     fs::remove_dir_all(&tmp).unwrap();
 
@@ -715,8 +544,7 @@ fn tutorial_builds_and_passes_its_tests() {
 fn every_tutorial_translation_has_the_same_code() {
     let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let code = |translation: &str| -> Vec<(String, String)> {
-        let tutorial =
-            fs::read_to_string(workspace.join(format!("docs/{translation}/tutorial.md"))).unwrap();
+        let tutorial = fs::read_to_string(workspace.join(format!("docs/{translation}/tutorial.md"))).unwrap();
 
         // The diagrams and the comments of the commands are translated; the code is not.
         fenced_blocks(&tutorial)

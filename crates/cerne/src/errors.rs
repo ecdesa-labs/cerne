@@ -49,9 +49,7 @@ mod tests {
 
     #[test]
     fn infrastructure_error_keeps_the_message_of_its_cause() {
-        let error = Error::from(InfrastructureError::from(anyhow::anyhow!(
-            "database is down"
-        )));
+        let error = Error::from(InfrastructureError::from(anyhow::anyhow!("database is down")));
 
         assert_eq!(error.to_string(), "database is down");
     }

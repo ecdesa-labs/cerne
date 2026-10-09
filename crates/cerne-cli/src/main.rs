@@ -23,43 +23,30 @@ usage:
   cerne g adapter <Name> <Port>";
 
 /// What `cerne new` writes: one folder per layer, each `mod.rs` ready for the generators to append to.
-const PROJECT: [(&str, &str); 16] = [
+const PROJECT: [(&str, &str); 17] = [
     ("Cargo.toml", include_str!("../templates/Cargo.toml.jinja")),
     (".gitignore", "/target\n*.db\n*.db-shm\n*.db-wal\n"),
+    ("rustfmt.toml", include_str!("../templates/rustfmt.toml.jinja")),
     ("src/lib.rs", include_str!("../templates/lib.rs.jinja")),
     ("src/main.rs", MAIN),
     ("src/ports.rs", include_str!("../templates/ports.rs.jinja")),
-    (
-        "src/domain/mod.rs",
-        "pub mod entities;\npub mod events;\npub mod value_objects;\n",
-    ),
+    ("src/domain/mod.rs", "pub mod entities;\npub mod events;\npub mod value_objects;\n"),
     ("src/domain/entities/mod.rs", ""),
     ("src/domain/events/mod.rs", ""),
     ("src/domain/value_objects/mod.rs", ""),
-    (
-        "src/application/mod.rs",
-        "pub mod commands;\npub mod ports;\npub mod queries;\npub mod read_models;\n",
-    ),
+    ("src/application/mod.rs", "pub mod commands;\npub mod ports;\npub mod queries;\npub mod read_models;\n"),
     ("src/application/commands/mod.rs", ""),
     ("src/application/ports/mod.rs", ""),
     ("src/application/queries/mod.rs", ""),
     ("src/application/read_models/mod.rs", ""),
-    (
-        "src/infrastructure/mod.rs",
-        "{% if http %}pub mod http;\n{% endif %}",
-    ),
-    (
-        "tests/board.rs",
-        include_str!("../templates/board.rs.jinja"),
-    ),
+    ("src/infrastructure/mod.rs", "{% if http %}pub mod http;\n{% endif %}"),
+    ("tests/board.rs", include_str!("../templates/board.rs.jinja")),
 ];
 
 const MAIN: &str = include_str!("../templates/main.rs.jinja");
 const DATABASE_SETUP: &str = include_str!("../templates/database_setup.rs.jinja");
-const OUTBOX_MIGRATION: (&str, &str) = (
-    "migrations/1_create_cerne_outbox.sql",
-    include_str!("../templates/outbox_migration.sql.jinja"),
-);
+const OUTBOX_MIGRATION: (&str, &str) =
+    ("migrations/1_create_cerne_outbox.sql", include_str!("../templates/outbox_migration.sql.jinja"));
 const HTTP_MOD: &str = include_str!("../templates/http_mod.rs.jinja");
 const RPC: &str = include_str!("../templates/rpc.rs.jinja");
 const VALUE_OBJECT: &str = include_str!("../templates/value_object.rs.jinja");
@@ -139,11 +126,7 @@ fn new_project(name: &str, flags: &[&str]) -> CliResult {
         if choice.is_empty() { "none" } else { choice }
     }
 
-    println!(
-        "created {name} (database: {}, http: {})",
-        none(db),
-        none(http)
-    );
+    println!("created {name} (database: {}, http: {})", none(db), none(http));
 
     Ok(())
 }
@@ -151,11 +134,7 @@ fn new_project(name: &str, flags: &[&str]) -> CliResult {
 /// What the templates of `cerne new` read: the name, the database and the HTTP of the project. Without a database
 /// (`db` empty), the project depends on no adapter of `cerne`.
 fn project_context(name: &str, db: &str, http: &str) -> Result<Value, minijinja::Error> {
-    let module = if db == "postgres" {
-        "postgres"
-    } else {
-        "sqlite"
-    };
+    let module = if db == "postgres" { "postgres" } else { "sqlite" };
     let prefix = pascal_case(module);
 
     let cerne_features: Vec<String> = [(db == "postgres", "postgres"), (!http.is_empty(), "axum")]
@@ -300,25 +279,13 @@ fn generate(kind: &str, name: &str, args: &[&str]) -> CliResult {
 
             Ok(())
         }
-        "value_object" if fields.is_empty() => {
-            Err("a value object needs at least one field, like value:u64".into())
+        "value_object" if fields.is_empty() => Err("a value object needs at least one field, like value:u64".into()),
+        "value_object" => {
+            add_file(&format!("src/domain/value_objects/{file}.rs"), VALUE_OBJECT, context! { name, fields, uses })
         }
-        "value_object" => add_file(
-            &format!("src/domain/value_objects/{file}.rs"),
-            VALUE_OBJECT,
-            context! { name, fields, uses },
-        ),
-        "event" => add_file(
-            &format!("src/domain/events/{file}.rs"),
-            EVENT,
-            context! { name, fields, uses },
-        ),
+        "event" => add_file(&format!("src/domain/events/{file}.rs"), EVENT, context! { name, fields, uses }),
         "command" => {
-            add_file(
-                &format!("src/application/commands/{file}.rs"),
-                COMMAND,
-                context! { name, fields, policy, uses },
-            )?;
+            add_file(&format!("src/application/commands/{file}.rs"), COMMAND, context! { name, fields, policy, uses })?;
 
             let command = format!("{name}Command");
             let command_use = format!("use crate::application::commands::{file}::{command};");
@@ -336,46 +303,29 @@ fn generate(kind: &str, name: &str, args: &[&str]) -> CliResult {
                 add_rpc_method(&file, &command_use, &format!("command::<{command}>"))
             }
         }
-        "read_model" => add_file(
-            &format!("src/application/read_models/{file}.rs"),
-            READ_MODEL,
-            context! { name, fields, uses },
-        ),
-        "query" if !Path::new(&format!("src/application/read_models/{file}.rs")).exists() => Err(format!(
-            "the query {name}Query returns the read model {name}: run cerne g read_model {name} first"
-        )
-        .into()),
+        "read_model" => {
+            add_file(&format!("src/application/read_models/{file}.rs"), READ_MODEL, context! { name, fields, uses })
+        }
+        "query" if !Path::new(&format!("src/application/read_models/{file}.rs")).exists() => {
+            Err(format!("the query {name}Query returns the read model {name}: run cerne g read_model {name} first")
+                .into())
+        }
         "query" => {
-            add_file(
-                &format!("src/application/queries/{file}.rs"),
-                QUERY,
-                context! { name, file, fields, uses },
-            )?;
+            add_file(&format!("src/application/queries/{file}.rs"), QUERY, context! { name, file, fields, uses })?;
 
             let query_use = format!("use crate::application::queries::{file}::{name}Query;");
 
             add_rpc_method(&file, &query_use, &format!("query::<{name}Query>"))
         }
-        "port" => add_file(
-            &format!("src/application/ports/{file}.rs"),
-            PORT,
-            context! { name },
-        ),
+        "port" => add_file(&format!("src/application/ports/{file}.rs"), PORT, context! { name }),
         _ => Err(format!("unknown generator {kind}\n{USAGE}").into()),
     }
 }
 
 /// With a database, the SQL repository of the aggregate; without one, only a note: `cerne g db` adds it later.
-fn add_repository_if_there_is_a_database(
-    name: &str,
-    file: &str,
-    id_type: &str,
-    fields: &[Value],
-) -> CliResult {
+fn add_repository_if_there_is_a_database(name: &str, file: &str, id_type: &str, fields: &[Value]) -> CliResult {
     if project()?.db.is_empty() {
-        println!(
-            "no database yet: {name} has no repository; cerne g db <memory|sqlite|postgres> adds it"
-        );
+        println!("no database yet: {name} has no repository; cerne g db <memory|sqlite|postgres> adds it");
 
         return Ok(());
     }
@@ -414,10 +364,7 @@ fn add_repository(name: &str, file: &str, id_type: &str, fields: &[Value]) -> Cl
         .enumerate()
         .map(|(position, name)| format!("{name} = ${}", position + 2))
         .collect();
-    let update_sql = format!(
-        "UPDATE {table} SET {}\n             WHERE id = $1",
-        assignments.join(", ")
-    );
+    let update_sql = format!("UPDATE {table} SET {}\n             WHERE id = $1", assignments.join(", "));
 
     let id_integer = is_integer(id_type);
     let id_column = match (id_integer, project.module) {
@@ -431,10 +378,7 @@ fn add_repository(name: &str, file: &str, id_type: &str, fields: &[Value]) -> Cl
             cast(r#"column::<i64>(&row, "id")?"#, "i64", id_type),
         )
     } else {
-        (
-            "String::from(id.clone())".to_string(),
-            r#"column::<String>(&row, "id")?"#.to_string(),
-        )
+        ("String::from(id.clone())".to_string(), r#"column::<String>(&row, "id")?"#.to_string())
     };
 
     let enums: Vec<&Value> = columns
@@ -455,21 +399,11 @@ fn add_repository(name: &str, file: &str, id_type: &str, fields: &[Value]) -> Cl
         fields => columns.clone(),
     };
 
-    add_file(
-        &format!("src/infrastructure/{repository_file}.rs"),
-        REPOSITORY,
-        aggregate.clone(),
-    )?;
+    add_file(&format!("src/infrastructure/{repository_file}.rs"), REPOSITORY, aggregate.clone())?;
 
     let migration_file = format!("migrations/{migration}");
 
-    fs::write(
-        &migration_file,
-        render(
-            AGGREGATE_MIGRATION,
-            &context! { table, id_column, fields => columns },
-        )?,
-    )?;
+    fs::write(&migration_file, render(AGGREGATE_MIGRATION, &context! { table, id_column, fields => columns })?)?;
 
     println!("created {migration_file}");
 
@@ -489,9 +423,7 @@ fn add_repository(name: &str, file: &str, id_type: &str, fields: &[Value]) -> Cl
         "src/ports.rs",
         "",
         PORTS_NEW,
-        &[&format!(
-            "{table}: Box::new({repository}::new(database.clone())),"
-        )],
+        &[&format!("{table}: Box::new({repository}::new(database.clone())),")],
         Before,
     )
 }
@@ -507,43 +439,18 @@ fn column(entity: &str, field: &Value) -> Value {
     let (sql, bind, read, json, function) = if !variants.is_undefined() {
         let function = snake_case(&ty);
 
-        (
-            "TEXT",
-            format!("{function}_name({value})"),
-            format!("{function}_from(&{})?", read("String")),
-            false,
-            function,
-        )
+        ("TEXT", format!("{function}_name({value})"), format!("{function}_from(&{})?", read("String")), false, function)
     } else if is_integer(&ty) {
-        (
-            "BIGINT",
-            cast(&value, &ty, "i64"),
-            cast(&read("i64"), "i64", &ty),
-            false,
-            String::new(),
-        )
+        ("BIGINT", cast(&value, &ty, "i64"), cast(&read("i64"), "i64", &ty), false, String::new())
     } else if ty == "f32" || ty == "f64" {
-        (
-            "DOUBLE PRECISION",
-            cast(&value, &ty, "f64"),
-            cast(&read("f64"), "f64", &ty),
-            false,
-            String::new(),
-        )
+        ("DOUBLE PRECISION", cast(&value, &ty, "f64"), cast(&read("f64"), "f64", &ty), false, String::new())
     } else if ty == "bool" {
         ("BOOLEAN", value, read("bool"), false, String::new())
     } else if ty == "String" {
-        (
-            "TEXT",
-            format!("{value}.clone()"),
-            read("String"),
-            false,
-            String::new(),
-        )
+        ("TEXT", format!("{value}.clone()"), read("String"), false, String::new())
     } else {
         // Any other type (a value object, a struct) is stored as JSON: it must be `Serialize` and `Deserialize`.
-        let infrastructure =
-            "map_err(|error| InfrastructureError::from(anyhow::Error::from(error)))?";
+        let infrastructure = "map_err(|error| InfrastructureError::from(anyhow::Error::from(error)))?";
 
         (
             "TEXT",
@@ -574,10 +481,7 @@ fn generate_endpoint(name: &str, method: &str, path: &str) -> CliResult {
 
     let (template, post_it) = match method {
         "GET" => (ENDPOINT_QUERY, format!("src/application/queries/{file}.rs")),
-        "POST" | "PUT" | "PATCH" | "DELETE" => (
-            ENDPOINT_COMMAND,
-            format!("src/application/commands/{file}.rs"),
-        ),
+        "POST" | "PUT" | "PATCH" | "DELETE" => (ENDPOINT_COMMAND, format!("src/application/commands/{file}.rs")),
         _ => return Err(format!("{method} is not one of GET|POST|PUT|PATCH|DELETE").into()),
     };
 
@@ -587,19 +491,13 @@ fn generate_endpoint(name: &str, method: &str, path: &str) -> CliResult {
         return Err(format!("{post_it} not found: run cerne g {generator} {name} first").into());
     }
 
-    add_file(
-        &format!("src/infrastructure/http/{file}.rs"),
-        template,
-        context! { name, file, method, path },
-    )?;
+    add_file(&format!("src/infrastructure/http/{file}.rs"), template, context! { name, file, method, path })?;
 
     insert_lines(
         "src/infrastructure/http/mod.rs",
         "",
         ROUTER_STATE,
-        &[&format!(
-            ".route({path:?}, axum::routing::{routing}({file}::{file}))"
-        )],
+        &[&format!(".route({path:?}, axum::routing::{routing}({file}::{file}))")],
         Before,
     )
 }
@@ -663,10 +561,7 @@ fn generate_http(http: &str) -> CliResult {
 
     let infrastructure_mod = fs::read_to_string("src/infrastructure/mod.rs")?;
 
-    fs::write(
-        "src/infrastructure/mod.rs",
-        format!("pub mod http;\n{infrastructure_mod}"),
-    )?;
+    fs::write("src/infrastructure/mod.rs", format!("pub mod http;\n{infrastructure_mod}"))?;
 
     // --- main.rs: rewritten only if it is still the one cerne new wrote -------
 
@@ -712,7 +607,8 @@ fn generate_http(http: &str) -> CliResult {
 /// The lines a project without a database has in `ports.rs` and `main.rs`, which `cerne g db` swaps for the database.
 const NO_DATABASE_PORTS_DOC: &str = "/// No database yet (`cerne g db` adds one): the outbox lives in memory, and a transaction is only the same ports. If
 /// the process dies, the commands the policies fired and that did not run yet are lost.";
-const DATABASE_PORTS_DOC: &str = "/// The repositories and the outbox live in the database, so they follow its transaction. External systems do not:
+const DATABASE_PORTS_DOC: &str =
+    "/// The repositories and the outbox live in the database, so they follow its transaction. External systems do not:
 /// `begin` hands the same adapters to the new ports.";
 const NO_DATABASE_SETUP: &str =
     "    // No database yet (`cerne g db` adds one): the commands of the policies wait in memory.
@@ -742,10 +638,13 @@ fn generate_db(db: &str) -> CliResult {
     let cargo_toml = fs::read_to_string("Cargo.toml")?;
     let mut cargo_lines: Vec<String> = cargo_toml.lines().map(String::from).collect();
 
-    let Some(cerne_line) = cargo_lines.iter().position(|line| {
-        line.starts_with("cerne = ") && line.contains(", default-features = false")
-    }) else {
-        return Err("Cargo.toml has no line cerne = { .., default-features = false, .. }: add the database by hand".into());
+    let Some(cerne_line) = cargo_lines
+        .iter()
+        .position(|line| line.starts_with("cerne = ") && line.contains(", default-features = false"))
+    else {
+        return Err(
+            "Cargo.toml has no line cerne = { .., default-features = false, .. }: add the database by hand".into()
+        );
     };
 
     cargo_lines[cerne_line] = if db == "postgres" {
@@ -793,21 +692,13 @@ fn generate_db(db: &str) -> CliResult {
 
     let ports_rs = fs::read_to_string("src/ports.rs")?
         .replace(NO_DATABASE_PORTS_DOC, DATABASE_PORTS_DOC)
-        .replace(
-            "Box::new(in_memory_outbox.clone())",
-            &format!("Box::new({outbox}::new(database.clone()))"),
-        )
-        .replace(
-            "in_memory_outbox: InMemoryOutbox",
-            &format!("database: {database}"),
-        )
+        .replace("Box::new(in_memory_outbox.clone())", &format!("Box::new({outbox}::new(database.clone()))"))
+        .replace("in_memory_outbox: InMemoryOutbox", &format!("database: {database}"))
         .replace("in_memory_outbox", "database")
         .replace("InMemoryOutbox, ", "");
 
     if ports_rs.contains("InMemoryOutbox") {
-        return Err(
-            "src/ports.rs still uses InMemoryOutbox: swap it for the database by hand".into(),
-        );
+        return Err("src/ports.rs still uses InMemoryOutbox: swap it for the database by hand".into());
     }
 
     let database_use = format!("use cerne::{module}::{{{database}, {outbox}}};");
@@ -826,15 +717,9 @@ fn generate_db(db: &str) -> CliResult {
         let main_rs = main_rs
             .replace(NO_DATABASE_SETUP, &database_setup)
             .replace("Ports::new(in_memory_outbox", "Ports::new(database")
-            .replace(
-                "{InMemoryOutbox, OutboxPolicyProcessor}",
-                "OutboxPolicyProcessor",
-            );
+            .replace("{InMemoryOutbox, OutboxPolicyProcessor}", "OutboxPolicyProcessor");
 
-        fs::write(
-            "src/main.rs",
-            format!("use cerne::{module}::{database};\n{main_rs}"),
-        )?;
+        fs::write("src/main.rs", format!("use cerne::{module}::{database};\n{main_rs}"))?;
         rustfmt(Path::new("src/main.rs"));
 
         println!("updated src/main.rs");
@@ -847,17 +732,10 @@ fn generate_db(db: &str) -> CliResult {
     // --- The SQL repository of every aggregate that already exists -----------
 
     for aggregate in existing_aggregates()? {
-        add_repository(
-            &aggregate.name,
-            &aggregate.file,
-            &aggregate.id_type,
-            &aggregate.fields,
-        )?;
+        add_repository(&aggregate.name, &aggregate.file, &aggregate.id_type, &aggregate.fields)?;
     }
 
-    println!(
-        "tests that build Ports::new(InMemoryOutbox::new()) now need the database, as src/main.rs builds it"
-    );
+    println!("tests that build Ports::new(InMemoryOutbox::new()) now need the database, as src/main.rs builds it");
 
     Ok(())
 }
@@ -893,9 +771,7 @@ fn existing_aggregates() -> Result<Vec<ExistingAggregate>, Box<dyn Error>> {
             .lines()
             .find_map(|line| line.strip_prefix(&format!("pub struct {name}Id(")))
             .and_then(|rest| rest.strip_suffix(");"))
-            .ok_or(format!(
-                "src/domain/value_objects/{file}_id.rs has no pub struct {name}Id(..);"
-            ))?;
+            .ok_or(format!("src/domain/value_objects/{file}_id.rs has no pub struct {name}Id(..);"))?;
 
         let fields: Vec<Value> = struct_body(&entity, &format!("pub struct {name} {{"))
             .iter()
@@ -962,25 +838,16 @@ fn post_it_files(folder: &str) -> Result<Vec<String>, Box<dyn Error>> {
 /// `cerne g adapter SmtpNotifier Notifier`: a struct in `infrastructure/` that implements the port `Notifier`.
 fn generate_adapter(name: &str, port: &str) -> CliResult {
     if !is_pascal_case(name) || !is_pascal_case(port) {
-        return Err(format!(
-            "{name} and {port} must be PascalCase names, like SmtpNotifier Notifier"
-        )
-        .into());
+        return Err(format!("{name} and {port} must be PascalCase names, like SmtpNotifier Notifier").into());
     }
 
     let port_file = snake_case(port);
 
     if !Path::new(&format!("src/application/ports/{port_file}.rs")).exists() {
-        return Err(
-            format!("the port {port} does not exist: run cerne g port {port} first").into(),
-        );
+        return Err(format!("the port {port} does not exist: run cerne g port {port} first").into());
     }
 
-    add_file(
-        &format!("src/infrastructure/{}.rs", snake_case(name)),
-        ADAPTER,
-        context! { name, port, port_file },
-    )
+    add_file(&format!("src/infrastructure/{}.rs", snake_case(name)), ADAPTER, context! { name, port, port_file })
 }
 
 /// In a JSON-RPC project, the arm `"place_order" => methods.command::<PlaceOrderCommand>(..)`.
@@ -995,9 +862,7 @@ fn add_rpc_method(file: &str, post_it_use: &str, call: &str) -> CliResult {
         rpc,
         post_it_use,
         RPC_LAST_ARM,
-        &[&format!(
-            "{file:?} => methods.{call}(request.params).await,"
-        )],
+        &[&format!("{file:?} => methods.{call}(request.params).await,")],
         Before,
     )?;
 
@@ -1021,11 +886,7 @@ fn add_file(path: &str, template: &str, post_it: Value) -> CliResult {
     let mod_rs = file.with_file_name("mod.rs");
 
     if !mod_rs.exists() {
-        return Err(format!(
-            "{} not found: run cerne g inside a cerne project",
-            mod_rs.display()
-        )
-        .into());
+        return Err(format!("{} not found: run cerne g inside a cerne project", mod_rs.display()).into());
     }
 
     if file.exists() {
@@ -1060,13 +921,7 @@ use Position::{After, Before};
 
 /// Adds `lines` right before (or after) the line that contains `anchor`, with its indentation, and the `use` lines at
 /// the top. The anchor is a line `cerne new` wrote; nothing else in the file changes.
-fn insert_lines(
-    path: &str,
-    uses: &str,
-    anchor: &str,
-    lines: &[&str],
-    position: Position,
-) -> CliResult {
+fn insert_lines(path: &str, uses: &str, anchor: &str, lines: &[&str], position: Position) -> CliResult {
     let content = fs::read_to_string(path).map_err(|_| format!("{path} not found"))?;
     let mut file_lines: Vec<String> = content.lines().map(String::from).collect();
 
@@ -1169,9 +1024,7 @@ fn render(template: &str, data: &Value) -> Result<String, minijinja::Error> {
 }
 
 /// `qty:i32 id:u64` → `[(qty, i32), (id, u64)]`, in the order given.
-fn parse_fields<'a>(
-    args: impl Iterator<Item = &'a &'a str>,
-) -> Result<Vec<(&'a str, &'a str)>, String> {
+fn parse_fields<'a>(args: impl Iterator<Item = &'a &'a str>) -> Result<Vec<(&'a str, &'a str)>, String> {
     args.map(|arg| match arg.split_once(':') {
         Some((name, ty)) if !name.is_empty() && !ty.is_empty() => Ok((name, ty)),
         _ => Err(format!("{arg} is not a field: use name:type, like qty:i32")),
@@ -1202,29 +1055,21 @@ fn field(owner: &str, kind: &str, name: &str, ty: &str) -> Result<Value, String>
     }
 
     if !is_enum {
-        return Err(format!(
-            "{name}: = only works with enum values, like status=Pending:Pending,Accepted"
-        ));
+        return Err(format!("{name}: = only works with enum values, like status=Pending:Pending,Accepted"));
     }
 
     if kind != "entity" {
-        return Err(format!(
-            "{name}:{ty}: enum values only work in cerne g entity"
-        ));
+        return Err(format!("{name}:{ty}: enum values only work in cerne g entity"));
     }
 
     let variants: Vec<&str> = ty.split(',').collect();
 
     if !variants.iter().all(|variant| is_pascal_case(variant)) {
-        return Err(format!(
-            "{name}:{ty}: every value must be PascalCase, like status:Pending,Accepted"
-        ));
+        return Err(format!("{name}:{ty}: every value must be PascalCase, like status:Pending,Accepted"));
     }
 
     if initial.is_some_and(|initial| !variants.contains(&initial)) {
-        return Err(format!(
-            "{name}: the initial value must be one of {ty}, like status=Pending:Pending,Accepted"
-        ));
+        return Err(format!("{name}: the initial value must be one of {ty}, like status=Pending:Pending,Accepted"));
     }
 
     let title = pascal_case(name);
@@ -1240,29 +1085,17 @@ fn value_object_uses(fields: &[(&str, &str)]) -> Vec<String> {
         .map(|(_, ty)| *ty)
         .filter(|ty| is_pascal_case(ty))
         .filter(|ty| Path::new(&format!("src/domain/value_objects/{}.rs", snake_case(ty))).exists())
-        .map(|ty| {
-            format!(
-                "use crate::domain::value_objects::{}::{ty};",
-                snake_case(ty)
-            )
-        })
+        .map(|ty| format!("use crate::domain::value_objects::{}::{ty};", snake_case(ty)))
         .collect()
 }
 
 fn is_integer(ty: &str) -> bool {
-    matches!(
-        ty,
-        "i8" | "i16" | "i32" | "i64" | "isize" | "u8" | "u16" | "u32" | "u64" | "usize"
-    )
+    matches!(ty, "i8" | "i16" | "i32" | "i64" | "isize" | "u8" | "u16" | "u32" | "u64" | "usize")
 }
 
 /// `value as i64`, unless the value already is an `i64` (clippy refuses a cast to the same type).
 fn cast(value: &str, from: &str, to: &str) -> String {
-    if from == to {
-        value.to_string()
-    } else {
-        format!("{value} as {to}")
-    }
+    if from == to { value.to_string() } else { format!("{value} as {to}") }
 }
 
 fn is_pascal_case(name: &str) -> bool {

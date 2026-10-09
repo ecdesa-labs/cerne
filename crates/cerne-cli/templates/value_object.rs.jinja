@@ -19,7 +19,7 @@ impl ValueObject for {{ name }} {
     type Constructor = {{ field.ty }};
 
     fn new({{ field.name }}: {{ field.ty }}) -> EnforcementResult<Self> {
-        Invariants::new(vec![]).enforce()?;
+        Invariants::enforce([])?;
 
         Ok(Self({{ field.name }}))
     }
@@ -45,7 +45,7 @@ impl ValueObject for {{ name }} {
     type Constructor = {{ name }}Constructor;
 
     fn new(constructor: {{ name }}Constructor) -> EnforcementResult<Self> {
-        Invariants::new(vec![]).enforce()?;
+        Invariants::enforce([])?;
 
         Ok(Self {
 {% for field in fields %}

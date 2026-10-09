@@ -14,15 +14,11 @@ async fn a_transaction_that_reads_then_writes_waits_for_the_other_writers() {
         .unwrap();
 
     database
-        .execute(sqlx::query(
-            "CREATE TABLE counters (name TEXT PRIMARY KEY, value BIGINT NOT NULL)",
-        ))
+        .execute(sqlx::query("CREATE TABLE counters (name TEXT PRIMARY KEY, value BIGINT NOT NULL)"))
         .await
         .unwrap();
     database
-        .execute(sqlx::query(
-            "INSERT INTO counters VALUES ('transfers', 0), ('outbox', 0)",
-        ))
+        .execute(sqlx::query("INSERT INTO counters VALUES ('transfers', 0), ('outbox', 0)"))
         .await
         .unwrap();
 
@@ -31,9 +27,7 @@ async fn a_transaction_that_reads_then_writes_waits_for_the_other_writers() {
     let transaction = database.begin().await.unwrap();
 
     transaction
-        .fetch_one(sqlx::query(
-            "SELECT value FROM counters WHERE name = 'transfers'",
-        ))
+        .fetch_one(sqlx::query("SELECT value FROM counters WHERE name = 'transfers'"))
         .await
         .unwrap();
 
@@ -42,9 +36,7 @@ async fn a_transaction_that_reads_then_writes_waits_for_the_other_writers() {
     let outbox_database = database.clone();
     let outbox_write = tokio::spawn(async move {
         outbox_database
-            .execute(sqlx::query(
-                "UPDATE counters SET value = value + 1 WHERE name = 'outbox'",
-            ))
+            .execute(sqlx::query("UPDATE counters SET value = value + 1 WHERE name = 'outbox'"))
             .await
     });
 
@@ -53,9 +45,7 @@ async fn a_transaction_that_reads_then_writes_waits_for_the_other_writers() {
     // --- The command writes and commits ----------------------------------------
 
     let command_write = transaction
-        .execute(sqlx::query(
-            "UPDATE counters SET value = value + 1 WHERE name = 'transfers'",
-        ))
+        .execute(sqlx::query("UPDATE counters SET value = value + 1 WHERE name = 'transfers'"))
         .await;
     let command_commit = transaction.commit().await;
 

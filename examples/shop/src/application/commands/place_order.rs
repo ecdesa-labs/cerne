@@ -3,7 +3,7 @@ use crate::domain::events::order_placed::OrderPlaced;
 use crate::domain::value_objects::order_id::OrderId;
 use crate::ports::Ports;
 use cerne::application::{Command, Executed};
-use cerne::domain::{BusinessRule, BusinessRules, Entity};
+use cerne::domain::{BusinessRules, Entity, business_rule};
 use cerne::{Error, async_trait};
 use serde::{Deserialize, Serialize};
 
@@ -28,11 +28,7 @@ impl Command<Ports> for PlaceOrderCommand {
 
         let stock_covers_the_quantity = units_in_stock >= self.quantity;
 
-        BusinessRules::new(vec![BusinessRule::new(
-            "stock covers the quantity",
-            move || stock_covers_the_quantity,
-        )])
-        .check()?;
+        BusinessRules::check([business_rule!("stock covers the quantity", stock_covers_the_quantity)])?;
 
         // --- Aggregate -------------------------------------------------------
 

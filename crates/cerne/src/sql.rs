@@ -85,9 +85,11 @@ macro_rules! sql_adapters {
                     return Err(infrastructure(anyhow::anyhow!("there is no transaction to commit")));
                 };
 
-                let transaction = transaction.lock().await.take().ok_or_else(|| {
-                    infrastructure(anyhow::anyhow!("the transaction was already committed"))
-                })?;
+                let transaction = transaction
+                    .lock()
+                    .await
+                    .take()
+                    .ok_or_else(|| infrastructure(anyhow::anyhow!("the transaction was already committed")))?;
 
                 transaction.commit().await.map_err(infrastructure)?;
 

@@ -5,9 +5,7 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as Tokens;
 use quote::{format_ident, quote};
-use syn::{
-    Data, DeriveInput, Error, Fields, GenericArgument, Meta, PathArguments, Type, parse_macro_input,
-};
+use syn::{Data, DeriveInput, Error, Fields, GenericArgument, Meta, PathArguments, Type, parse_macro_input};
 
 /// Writes the identity and the constructor of a 🟨 entity.
 #[proc_macro_attribute]
@@ -51,10 +49,7 @@ fn takes_no_arguments(attribute: &str, arguments: TokenStream) -> syn::Result<()
         return Ok(());
     }
 
-    Err(Error::new_spanned(
-        Tokens::from(arguments),
-        format!("#[{attribute}] takes no arguments"),
-    ))
+    Err(Error::new_spanned(Tokens::from(arguments), format!("#[{attribute}] takes no arguments")))
 }
 
 /// The struct as written (without `#[skip_constructor]`), its `<Name>Constructor`, `impl Entity` and, for an
@@ -69,24 +64,15 @@ fn entity_with_its_identity_and_constructor(
     let constructor = format_ident!("{name}Constructor");
 
     if !entity.generics.params.is_empty() {
-        return Err(Error::new_spanned(
-            &entity.generics,
-            format!("#[{attribute}] does not take generics"),
-        ));
+        return Err(Error::new_spanned(&entity.generics, format!("#[{attribute}] does not take generics")));
     }
 
     let Data::Struct(data) = &mut entity.data else {
-        return Err(Error::new_spanned(
-            &entity.ident,
-            format!("#[{attribute}] goes on a struct with named fields"),
-        ));
+        return Err(Error::new_spanned(&entity.ident, format!("#[{attribute}] goes on a struct with named fields")));
     };
 
     let Fields::Named(fields) = &mut data.fields else {
-        return Err(Error::new_spanned(
-            &entity.ident,
-            format!("#[{attribute}] goes on a struct with named fields"),
-        ));
+        return Err(Error::new_spanned(&entity.ident, format!("#[{attribute}] goes on a struct with named fields")));
     };
 
     // --- The fields: the id, the constructor's and the skipped ---------------
@@ -129,9 +115,7 @@ fn entity_with_its_identity_and_constructor(
     let Some(id_type) = id_type else {
         return Err(Error::new_spanned(
             &entity.ident,
-            format!(
-                "#[{attribute}] needs a field id: Option<{name}Id>, None until the repository saves it"
-            ),
+            format!("#[{attribute}] needs a field id: Option<{name}Id>, None until the repository saves it"),
         ));
     };
 
@@ -191,15 +175,11 @@ fn entity_with_its_identity_and_constructor(
 /// `TryFrom<u64> for OrderId` goes through `ValueObject::new`, and `From<OrderId> for u64` gives the value back.
 fn value_object_with_its_conversions(mut value_object: DeriveInput) -> syn::Result<Tokens> {
     let name = value_object.ident.clone();
-    let one_unnamed_field = format!(
-        "#[value_object] goes on a struct with one unnamed field, like pub struct {name}(u64)"
-    );
+    let one_unnamed_field =
+        format!("#[value_object] goes on a struct with one unnamed field, like pub struct {name}(u64)");
 
     if !value_object.generics.params.is_empty() {
-        return Err(Error::new_spanned(
-            &value_object.generics,
-            "#[value_object] does not take generics",
-        ));
+        return Err(Error::new_spanned(&value_object.generics, "#[value_object] does not take generics"));
     }
 
     let Data::Struct(data) = &value_object.data else {

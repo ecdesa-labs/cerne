@@ -1,7 +1,7 @@
 use crate::application::commands::charge_order::ChargeOrderCommand;
 use crate::domain::value_objects::order_id::OrderId;
 use crate::ports::Ports;
-use cerne::domain::{DomainEvent, EnforcementResult, FiredPolicy, Policies, Policy};
+use cerne::domain::{DomainEvent, EnforcementResult, FiredPolicy, Policies, policy};
 
 pub struct OrderPlaced {
     pub order_id: OrderId,
@@ -15,17 +15,9 @@ impl DomainEvent<Ports> for OrderPlaced {
         let order_id = self.order_id.clone();
         let total = self.total;
 
-        let charge_the_customer_policy = Policy::new(
-            "whenever an order is placed, charge the customer",
-            || true,
-            move || {
-                Box::new(ChargeOrderCommand {
-                    order_id: order_id.clone(),
-                    total,
-                })
-            },
-        );
+        let charge_the_customer_policy =
+            policy!("whenever an order is placed, charge the customer", true, ChargeOrderCommand { order_id, total });
 
-        Ok(Policies::new(vec![charge_the_customer_policy]).trigger())
+        Ok(Policies::trigger([charge_the_customer_policy]))
     }
 }

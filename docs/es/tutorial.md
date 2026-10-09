@@ -154,6 +154,7 @@ shop
 ├── migrations
 │   ├── 1791416037_create_orders.sql
 │   └── 1_create_cerne_outbox.sql
+├── rustfmt.toml
 ├── src
 │   ├── application
 │   │   ├── commands
@@ -223,7 +224,7 @@ impl ValueObject for OrderId {
     type Constructor = u64;
 
     fn new(value: u64) -> EnforcementResult<Self> {
-        Invariants::new(vec![]).enforce()?;
+        Invariants::enforce([])?;
 
         Ok(Self(value))
     }
@@ -234,7 +235,7 @@ Después de rellenarlo:
 
 <!-- file: src/domain/value_objects/order_id.rs -->
 ```rust
-use cerne::domain::{EnforcementResult, Invariant, Invariants, ValueObject, value_object};
+use cerne::domain::{EnforcementResult, Invariants, ValueObject, invariant, value_object};
 use serde::{Deserialize, Serialize};
 
 /// In JSON it is the `u64` itself, and reading it back goes through `new`: the invariants hold there too.
@@ -248,17 +249,14 @@ impl ValueObject for OrderId {
     fn new(value: u64) -> EnforcementResult<Self> {
         let order_id_is_positive = value > 0;
 
-        Invariants::new(vec![Invariant::new("order id is positive", move || {
-            order_id_is_positive
-        })])
-        .enforce()?;
+        Invariants::enforce([invariant!("order id is positive", order_id_is_positive)])?;
 
         Ok(Self(value))
     }
 }
 ```
 
-Cada invariante es un nombre más una closure. La condición va a una variable antes de la closure, con el nombre de la frase del tablero. `enforce` las ejecuta todas y, si alguna falla, devuelve `DomainError::Violations` con el nombre de cada una que falló.
+Cada invariante es un nombre más una condición, escrita con `invariant!`. La condición va antes a una variable, con el nombre de la frase del tablero. `Invariants::enforce` las ejecuta todas y, si alguna falla, devuelve `DomainError::Violations` con el nombre de cada una que falló.
 
 `#[value_object]` escribe lo que un value object de un solo valor tiene en común: el `TryFrom<u64> for OrderId`, que pasa por `new`, el `From<OrderId> for u64`, que devuelve el `u64`, y, como `OrderId` deriva `Serialize` y `Deserialize`, el `#[serde(try_from = "u64", into = "u64")]`. `new`, con las invariantes, es tuyo. El repositorio SQL usa el `From` para guardar el id en su columna.
 
@@ -297,7 +295,7 @@ pub struct Order {
 
 impl Validate for Order {
     fn validate(self) -> EnforcementResult<Self> {
-        Invariants::new(vec![]).enforce()?;
+        Invariants::enforce([])?;
 
         Ok(self)
     }
@@ -313,7 +311,7 @@ Después de rellenarlo:
 <!-- file: src/domain/entities/order.rs -->
 ```rust
 use crate::domain::value_objects::order_id::OrderId;
-use cerne::domain::{EnforcementResult, Invariant, Invariants, Validate, aggregate};
+use cerne::domain::{EnforcementResult, Invariants, Validate, aggregate, invariant};
 
 // --- Status ------------------------------------------------------------------
 
@@ -344,11 +342,10 @@ impl Validate for Order {
         let order_has_a_product = !self.product.is_empty();
         let quantity_is_positive = self.quantity > 0;
 
-        Invariants::new(vec![
-            Invariant::new("order has a product", move || order_has_a_product),
-            Invariant::new("quantity is positive", move || quantity_is_positive),
-        ])
-        .enforce()?;
+        Invariants::enforce([
+            invariant!("order has a product", order_has_a_product),
+            invariant!("quantity is positive", quantity_is_positive),
+        ])?;
 
         Ok(self)
     }
@@ -609,11 +606,7 @@ pub struct Ports {
 }
 
 impl Ports {
-    pub fn new(
-        database: SqliteDatabase,
-        catalog: Arc<dyn Catalog>,
-        payments: Arc<dyn Payments>,
-    ) -> Self {
+    pub fn new(database: SqliteDatabase, catalog: Arc<dyn Catalog>, payments: Arc<dyn Payments>) -> Self {
         Self {
             orders: Box::new(SqliteOrderRepository::new(database.clone())),
             outbox: Box::new(SqliteOutbox::new(database.clone())),
@@ -702,7 +695,7 @@ use crate::domain::events::order_placed::OrderPlaced;
 use crate::domain::value_objects::order_id::OrderId;
 use crate::ports::Ports;
 use cerne::application::{Command, Executed};
-use cerne::domain::{BusinessRule, BusinessRules, Entity};
+use cerne::domain::{BusinessRules, Entity, business_rule};
 use cerne::{Error, async_trait};
 use serde::{Deserialize, Serialize};
 
@@ -727,11 +720,7 @@ impl Command<Ports> for PlaceOrderCommand {
 
         let stock_covers_the_quantity = units_in_stock >= self.quantity;
 
-        BusinessRules::new(vec![BusinessRule::new(
-            "stock covers the quantity",
-            move || stock_covers_the_quantity,
-        )])
-        .check()?;
+        BusinessRules::check([business_rule!("stock covers the quantity", stock_covers_the_quantity)])?;
 
         // --- Aggregate -------------------------------------------------------
 
@@ -761,13 +750,13 @@ impl Command<Ports> for PlaceOrderCommand {
 ```
 
 - **Ports:** toda lectura que necesita el command, antes de cualquier decisión.
-- **Business rules:** cada condición en una variable, después `BusinessRules::new(..).check()?`. Una regla de negocio necesita el mundo de fuera (aquí, el stock); una invariante solo necesita la propia entidad.
+- **Business rules:** cada condición en una variable, después `BusinessRules::check([business_rule!(..)])?`. Una regla de negocio necesita el mundo de fuera (aquí, el stock); una invariante solo necesita la propia entidad.
 - **Aggregate:** el cambio, después el `save`, que devuelve el id.
 - **Domain events:** cada evento en una variable, después `Ok(Executed { output, events })`. El `output` vuelve a quien envió el command (aquí, el id del pedido nuevo); los `events` van a la outbox.
 
 ## 6. Evento de dominio y policy: `OrderPlaced` 🟧 🟪
 
-Un evento dice lo que ocurrió, en pasado. Su `trigger_policies` enumera las policies que reaccionan a él: cada una tiene un nombre, una condición (`when`) y el command que dispara (`then`).
+Un evento dice lo que ocurrió, en pasado. Su `trigger_policies` enumera las policies que reaccionan a él: cada una es un `policy!` con tres argumentos: un nombre, una condición (`true` para una policy que siempre dispara) y el command que dispara. El command solo se construye si la condición se cumple, y se lleva los valores que usa: aquí, `order_id` y `total`, leídos del evento antes. `Policies::trigger` devuelve las policies que dispararon.
 
 El `src/domain/events/order_placed.rs` tal como lo generó `cerne g event OrderPlaced order_id:OrderId total:u64`:
 
@@ -786,7 +775,7 @@ impl DomainEvent<Ports> for OrderPlaced {
     fn trigger_policies(&self) -> EnforcementResult<Vec<FiredPolicy<Ports>>> {
         // --- Policies --------------------------------------------------------
 
-        Ok(Policies::new(vec![]).trigger())
+        Ok(Policies::trigger([]))
     }
 }
 ```
@@ -798,7 +787,7 @@ Después de rellenarlo:
 use crate::application::commands::charge_order::ChargeOrderCommand;
 use crate::domain::value_objects::order_id::OrderId;
 use crate::ports::Ports;
-use cerne::domain::{DomainEvent, EnforcementResult, FiredPolicy, Policies, Policy};
+use cerne::domain::{DomainEvent, EnforcementResult, FiredPolicy, Policies, policy};
 
 pub struct OrderPlaced {
     pub order_id: OrderId,
@@ -812,18 +801,10 @@ impl DomainEvent<Ports> for OrderPlaced {
         let order_id = self.order_id.clone();
         let total = self.total;
 
-        let charge_the_customer_policy = Policy::new(
-            "whenever an order is placed, charge the customer",
-            || true,
-            move || {
-                Box::new(ChargeOrderCommand {
-                    order_id: order_id.clone(),
-                    total,
-                })
-            },
-        );
+        let charge_the_customer_policy =
+            policy!("whenever an order is placed, charge the customer", true, ChargeOrderCommand { order_id, total });
 
-        Ok(Policies::new(vec![charge_the_customer_policy]).trigger())
+        Ok(Policies::trigger([charge_the_customer_policy]))
     }
 }
 ```
@@ -881,7 +862,7 @@ use crate::domain::events::order_paid::OrderPaid;
 use crate::domain::value_objects::order_id::OrderId;
 use crate::ports::Ports;
 use cerne::application::{Command, Executed};
-use cerne::domain::{BusinessRule, BusinessRules};
+use cerne::domain::{BusinessRules, business_rule};
 use cerne::{Error, async_trait};
 use serde::{Deserialize, Serialize};
 
@@ -905,11 +886,7 @@ impl Command<Ports> for ChargeOrderCommand {
 
         let order_is_still_placed = order.status == OrderStatus::Placed;
 
-        BusinessRules::new(vec![BusinessRule::new(
-            "order is still placed",
-            move || order_is_still_placed,
-        )])
-        .check()?;
+        BusinessRules::check([business_rule!("order is still placed", order_is_still_placed)])?;
 
         // --- External system: Payments ---------------------------------------
 
@@ -1057,8 +1034,7 @@ async fn the_customer_places_an_order_and_the_policy_charges_it() -> Result<(), 
     let payments = Arc::new(InMemoryPayments::default());
     let ports = ports(Arc::clone(&payments)).await?;
 
-    let outbox_policy_processor =
-        OutboxPolicyProcessor::new(Arc::clone(&ports), command_registry());
+    let outbox_policy_processor = OutboxPolicyProcessor::new(Arc::clone(&ports), command_registry());
 
     // --- Customer: places an order -------------------------------------------
 
@@ -1074,10 +1050,7 @@ async fn the_customer_places_an_order_and_the_policy_charges_it() -> Result<(), 
     let command_runs = outbox_policy_processor.run_pending().await?;
 
     assert_eq!(command_runs.len(), 1);
-    assert_eq!(
-        *payments.charges.lock().unwrap(),
-        vec![(order_id.clone(), 6000)]
-    );
+    assert_eq!(*payments.charges.lock().unwrap(), vec![(order_id.clone(), 6000)]);
 
     // --- Customer: reads the order -------------------------------------------
 
@@ -1224,14 +1197,11 @@ async fn main() -> anyhow::Result<()> {
 
     // --- Outbox: the commands of the policies --------------------------------
 
-    let outbox_policy_processor =
-        OutboxPolicyProcessor::new(Arc::clone(&ports), command_registry());
+    let outbox_policy_processor = OutboxPolicyProcessor::new(Arc::clone(&ports), command_registry());
 
     tokio::spawn(async move {
         outbox_policy_processor
-            .run_every(Duration::from_millis(200), |error| {
-                eprintln!("outbox: {error}")
-            })
+            .run_every(Duration::from_millis(200), |error| eprintln!("outbox: {error}"))
             .await
     });
 

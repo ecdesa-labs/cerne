@@ -30,8 +30,7 @@ async fn the_customer_places_an_order_and_the_policy_charges_it() -> Result<(), 
     let payments = Arc::new(InMemoryPayments::default());
     let ports = ports(Arc::clone(&payments)).await?;
 
-    let outbox_policy_processor =
-        OutboxPolicyProcessor::new(Arc::clone(&ports), command_registry());
+    let outbox_policy_processor = OutboxPolicyProcessor::new(Arc::clone(&ports), command_registry());
 
     // --- Customer: places an order -------------------------------------------
 
@@ -47,10 +46,7 @@ async fn the_customer_places_an_order_and_the_policy_charges_it() -> Result<(), 
     let command_runs = outbox_policy_processor.run_pending().await?;
 
     assert_eq!(command_runs.len(), 1);
-    assert_eq!(
-        *payments.charges.lock().unwrap(),
-        vec![(order_id.clone(), 6000)]
-    );
+    assert_eq!(*payments.charges.lock().unwrap(), vec![(order_id.clone(), 6000)]);
 
     // --- Customer: reads the order -------------------------------------------
 

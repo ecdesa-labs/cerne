@@ -9,7 +9,7 @@ use crate::value_objects::ValueObject;
 /// `<Name>Constructor`; the invariants are yours, in [`Validate`].
 ///
 /// ```
-/// use cerne::domain::{EnforcementResult, Entity, Invariant, Invariants, Validate, ValueObject, entity};
+/// use cerne::domain::{EnforcementResult, Entity, Invariants, Validate, ValueObject, entity, invariant};
 ///
 /// #[derive(Debug, Clone, PartialEq)]
 /// struct OrderItemId(u64);
@@ -32,10 +32,7 @@ use crate::value_objects::ValueObject;
 ///     fn validate(self) -> EnforcementResult<Self> {
 ///         let quantity_is_positive = self.qty > 0;
 ///
-///         Invariants::new(vec![Invariant::new("positive quantity", move || {
-///             quantity_is_positive
-///         })])
-///         .enforce()?;
+///         Invariants::enforce([invariant!("positive quantity", quantity_is_positive)])?;
 ///
 ///         Ok(self)
 ///     }
@@ -89,7 +86,8 @@ pub trait Aggregate: Entity {}
 mod tests {
     use super::*;
     use crate::errors::DomainError;
-    use crate::invariants::{Invariant, Invariants};
+    use crate::invariant;
+    use crate::invariants::Invariants;
     use cerne_macros::{aggregate, entity};
 
     #[derive(Debug, Clone, PartialEq)]
@@ -122,10 +120,7 @@ mod tests {
         fn validate(self) -> EnforcementResult<Self> {
             let quantity_is_not_negative = self.qty >= 0;
 
-            Invariants::new(vec![Invariant::new("non negative quantity", move || {
-                quantity_is_not_negative
-            })])
-            .enforce()?;
+            Invariants::enforce([invariant!("non negative quantity", quantity_is_not_negative)])?;
 
             Ok(self)
         }
@@ -153,7 +148,7 @@ mod tests {
             Ok(Order {
                 id: None,
                 qty: 3,
-                status: OrderStatus::Placed,
+                status: OrderStatus::Placed
             })
         );
     }

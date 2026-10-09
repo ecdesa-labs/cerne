@@ -7,7 +7,7 @@ use crate::policies::FiredPolicy;
 ///
 /// ```
 /// use cerne::application::{Command, Executed};
-/// use cerne::domain::{DomainEvent, EnforcementResult, FiredPolicy, Policies, Policy};
+/// use cerne::domain::{DomainEvent, EnforcementResult, FiredPolicy, Policies, policy};
 /// use cerne::{Error, async_trait};
 ///
 /// struct Ports;
@@ -34,10 +34,9 @@ use crate::policies::FiredPolicy;
 ///     fn trigger_policies(&self) -> EnforcementResult<Vec<FiredPolicy<Ports>>> {
 ///         let order_id = self.order_id;
 ///
-///         Ok(Policies::new(vec![Policy::new("reserve stock", || true, move || {
-///             Box::new(ReserveStockCommand { order_id })
-///         })])
-///         .trigger())
+///         let reserve_stock_policy = policy!("reserve stock", true, ReserveStockCommand { order_id });
+///
+///         Ok(Policies::trigger([reserve_stock_policy]))
 ///     }
 /// }
 ///
@@ -55,8 +54,10 @@ mod tests {
     use super::*;
     use crate::commands::{Command, Executed};
     use crate::errors::{DomainError, Error};
-    use crate::invariants::{Invariant, Invariants};
-    use crate::policies::{Policies, Policy};
+    use crate::invariant;
+    use crate::invariants::Invariants;
+    use crate::policies::Policies;
+    use crate::policy;
     use async_trait::async_trait;
     use serde::Serialize;
 
@@ -102,21 +103,12 @@ mod tests {
             let has_items = !self.items.is_empty();
             let is_large = self.items.len() > 10;
 
-            Invariants::new(vec![
-                Invariant::new("order has an id", move || has_id),
-                Invariant::new("order has items", move || has_items),
-            ])
-            .enforce()?;
+            Invariants::enforce([invariant!("order has an id", has_id), invariant!("order has items", has_items)])?;
 
-            Ok(Policies::new(vec![
-                Policy::new("reserve stock", || true, || Box::new(NoopCommand)),
-                Policy::new(
-                    "request manual review",
-                    move || is_large,
-                    || Box::new(NoopCommand),
-                ),
-            ])
-            .trigger())
+            let reserve_stock_policy = policy!("reserve stock", true, NoopCommand);
+            let request_manual_review_policy = policy!("request manual review", is_large, NoopCommand);
+
+            Ok(Policies::trigger([reserve_stock_policy, request_manual_review_policy]))
         }
     }
 
@@ -131,22 +123,13 @@ mod tests {
     fn event_triggers_conditional_policy_when_it_holds() {
         let event = OrderPlaced::new("order-1", vec!["book"; 11]);
 
-        assert_eq!(
-            event.fired(),
-            Ok(vec!["reserve stock", "request manual review"])
-        );
+        assert_eq!(event.fired(), Ok(vec!["reserve stock", "request manual review"]));
     }
 
     #[test]
     fn invalid_event_triggers_nothing() {
         let event = OrderPlaced::new("", vec![]);
 
-        assert_eq!(
-            event.fired(),
-            Err(DomainError::Violations(vec![
-                "order has an id",
-                "order has items"
-            ]))
-        );
+        assert_eq!(event.fired(), Err(DomainError::Violations(vec!["order has an id", "order has items"])));
     }
 }

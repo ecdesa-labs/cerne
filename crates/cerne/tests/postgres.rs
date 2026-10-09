@@ -44,23 +44,14 @@ async fn the_outbox_stores_hands_out_and_marks_commands_in_a_transaction() {
 
     let transaction = database.begin().await.unwrap();
 
-    Outbox::<()>::store(
-        &PostgresOutbox::new(transaction.clone()),
-        entry("ship_order"),
-    )
-    .await
-    .unwrap();
+    Outbox::<()>::store(&PostgresOutbox::new(transaction.clone()), entry("ship_order"))
+        .await
+        .unwrap();
     transaction.commit().await.unwrap();
 
     let stored_command = Outbox::<()>::next_pending(&outbox).await.unwrap().unwrap();
 
-    assert_eq!(
-        (
-            stored_command.command.as_str(),
-            stored_command.json.as_str()
-        ),
-        ("ship_order", "{}")
-    );
+    assert_eq!((stored_command.command.as_str(), stored_command.json.as_str()), ("ship_order", "{}"));
 
     Outbox::<()>::mark_done(&outbox, stored_command.id)
         .await

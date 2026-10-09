@@ -5,7 +5,7 @@ use cerne::domain::{Entity, Validate, ValueObject};
 use cerne::sqlite::{SqliteDatabase, column};
 use cerne::{ApplicationError, Error, InfrastructureError, async_trait};
 
-/// The `Order` aggregates in the table `orders` (`migrations/1791490542_create_orders.sql`).
+/// The `Order` aggregates in the table `orders` (`migrations/1791498533_create_orders.sql`).
 pub struct SqliteOrderRepository {
     database: SqliteDatabase,
 }
@@ -19,8 +19,7 @@ impl SqliteOrderRepository {
 #[async_trait]
 impl Repository<Order> for SqliteOrderRepository {
     async fn load(&self, id: &OrderId) -> Result<Order, Error> {
-        let select =
-            sqlx::query("SELECT * FROM orders WHERE id = $1").bind(u64::from(id.clone()) as i64);
+        let select = sqlx::query("SELECT * FROM orders WHERE id = $1").bind(u64::from(id.clone()) as i64);
 
         let row = self
             .database
@@ -84,8 +83,6 @@ fn order_status_from(name: &str) -> Result<OrderStatus, Error> {
     match name {
         "Placed" => Ok(OrderStatus::Placed),
         "Paid" => Ok(OrderStatus::Paid),
-        _ => Err(InfrastructureError::from(anyhow::anyhow!(
-            "unknown OrderStatus {name}"
-        )))?,
+        _ => Err(InfrastructureError::from(anyhow::anyhow!("unknown OrderStatus {name}")))?,
     }
 }

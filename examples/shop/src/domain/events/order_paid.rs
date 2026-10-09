@@ -10,6 +10,6 @@ impl DomainEvent<Ports> for OrderPaid {
     fn trigger_policies(&self) -> EnforcementResult<Vec<FiredPolicy<Ports>>> {
         // --- Policies --------------------------------------------------------
 
-        Ok(Policies::new(vec![]).trigger())
+        Ok(Policies::trigger([]))
     }
 }

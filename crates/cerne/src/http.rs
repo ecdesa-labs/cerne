@@ -17,18 +17,13 @@ use serde_json::{Value, json};
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
         let (status, body) = match &self {
-            Error::Domain(DomainError::Violations(violations)) => (
-                StatusCode::UNPROCESSABLE_ENTITY,
-                json!({ "error": "domain", "violations": violations }),
-            ),
-            Error::Application(ApplicationError::NotFound(what)) => (
-                StatusCode::NOT_FOUND,
-                json!({ "error": "not_found", "message": format!("{what} not found") }),
-            ),
-            Error::Infrastructure(_) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                json!({ "error": "infrastructure" }),
-            ),
+            Error::Domain(DomainError::Violations(violations)) => {
+                (StatusCode::UNPROCESSABLE_ENTITY, json!({ "error": "domain", "violations": violations }))
+            }
+            Error::Application(ApplicationError::NotFound(what)) => {
+                (StatusCode::NOT_FOUND, json!({ "error": "not_found", "message": format!("{what} not found") }))
+            }
+            Error::Infrastructure(_) => (StatusCode::INTERNAL_SERVER_ERROR, json!({ "error": "infrastructure" })),
         };
 
         (status, axum::Json(body)).into_response()
@@ -66,18 +61,14 @@ pub mod jsonrpc {
         pub fn from_body(body: &[u8]) -> Result<Self, ErrorObject> {
             let json: Value = serde_json::from_slice(body).map_err(ErrorObject::parse_error)?;
 
-            let request: Request =
-                serde_json::from_value(json).map_err(ErrorObject::invalid_request)?;
+            let request: Request = serde_json::from_value(json).map_err(ErrorObject::invalid_request)?;
 
             let speaks_jsonrpc_2 = request.jsonrpc == "2.0";
 
             if !speaks_jsonrpc_2 {
                 return Err(ErrorObject {
                     code: -32600,
-                    message: format!(
-                        "invalid request: jsonrpc must be \"2.0\", not {:?}",
-                        request.jsonrpc
-                    ),
+                    message: format!("invalid request: jsonrpc must be \"2.0\", not {:?}", request.jsonrpc),
                     data: None,
                 });
             }
@@ -238,13 +229,10 @@ pub mod jsonrpc {
 
     /// By name (an object), by position (an array, in the order of the fields) or absent; anything else is `-32602`.
     fn read_params<T: DeserializeOwned>(params: Value) -> Result<T, ErrorObject> {
-        let params_are_by_name_or_by_position =
-            matches!(params, Value::Object(_) | Value::Array(_) | Value::Null);
+        let params_are_by_name_or_by_position = matches!(params, Value::Object(_) | Value::Array(_) | Value::Null);
 
         if !params_are_by_name_or_by_position {
-            return Err(ErrorObject::invalid_params(
-                "params must be an array (by position) or an object (by name)",
-            ));
+            return Err(ErrorObject::invalid_params("params must be an array (by position) or an object (by name)"));
         }
 
         serde_json::from_value(params).map_err(ErrorObject::invalid_params)

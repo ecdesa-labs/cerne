@@ -1,4 +1,4 @@
-use cerne::domain::{EnforcementResult, Invariant, Invariants, ValueObject, value_object};
+use cerne::domain::{EnforcementResult, Invariants, ValueObject, invariant, value_object};
 use serde::{Deserialize, Serialize};
 
 /// In JSON it is the `u64` itself, and reading it back goes through `new`: the invariants hold there too.
@@ -12,10 +12,7 @@ impl ValueObject for OrderId {
     fn new(value: u64) -> EnforcementResult<Self> {
         let order_id_is_positive = value > 0;
 
-        Invariants::new(vec![Invariant::new("order id is positive", move || {
-            order_id_is_positive
-        })])
-        .enforce()?;
+        Invariants::enforce([invariant!("order id is positive", order_id_is_positive)])?;
 
         Ok(Self(value))
     }

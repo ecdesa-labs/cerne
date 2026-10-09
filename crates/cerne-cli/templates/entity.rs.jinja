@@ -46,7 +46,7 @@ pub struct {{ name }} {
 
 impl Validate for {{ name }} {
     fn validate(self) -> EnforcementResult<Self> {
-        Invariants::new(vec![]).enforce()?;
+        Invariants::enforce([])?;
 
         Ok(self)
     }

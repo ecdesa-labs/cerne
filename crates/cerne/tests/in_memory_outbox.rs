@@ -2,10 +2,9 @@
 //! commands of the policies waiting in memory.
 
 use cerne::application::{
-    Command, CommandRegistry, CommandRun, Executed, InMemoryOutbox, Outbox, OutboxPolicyProcessor,
-    TransactionalPorts,
+    Command, CommandRegistry, CommandRun, Executed, InMemoryOutbox, Outbox, OutboxPolicyProcessor, TransactionalPorts,
 };
-use cerne::domain::{DomainEvent, EnforcementResult, FiredPolicy, Policies, Policy};
+use cerne::domain::{DomainEvent, EnforcementResult, FiredPolicy, Policies, policy};
 use cerne::{DomainError, Error, async_trait};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
@@ -107,13 +106,10 @@ impl DomainEvent<Ports> for OrderPlaced {
 
         let sku = self.sku.clone();
 
-        let reserve_stock_policy = Policy::new(
-            "whenever an order is placed, reserve stock",
-            || true,
-            move || Box::new(ReserveStockCommand { sku: sku.clone() }),
-        );
+        let reserve_stock_policy =
+            policy!("whenever an order is placed, reserve stock", true, ReserveStockCommand { sku });
 
-        Ok(Policies::new(vec![reserve_stock_policy]).trigger())
+        Ok(Policies::trigger([reserve_stock_policy]))
     }
 }
 
@@ -125,8 +121,7 @@ async fn the_outbox_in_memory_runs_the_commands_of_the_policies() -> Result<(), 
     let warehouse = Arc::new(Mutex::new(vec![]));
     let ports = Arc::new(Ports::new(in_memory_outbox.clone(), Arc::clone(&warehouse)));
 
-    let outbox_policy_processor =
-        OutboxPolicyProcessor::new(Arc::clone(&ports), command_registry());
+    let outbox_policy_processor = OutboxPolicyProcessor::new(Arc::clone(&ports), command_registry());
 
     // --- Customer: places two orders -----------------------------------------
 
@@ -138,10 +133,7 @@ async fn the_outbox_in_memory_runs_the_commands_of_the_policies() -> Result<(), 
     ports.execute_in_transaction(mug).await?;
     ports.execute_in_transaction(missing).await?;
 
-    assert!(
-        warehouse.lock().unwrap().is_empty(),
-        "the policies only stored their commands"
-    );
+    assert!(warehouse.lock().unwrap().is_empty(), "the policies only stored their commands");
 
     // --- Policy: whenever an order is placed, reserve stock ------------------
 
@@ -161,10 +153,7 @@ async fn the_outbox_in_memory_runs_the_commands_of_the_policies() -> Result<(), 
     assert_eq!(command_runs, reserved_and_failed);
     assert_eq!(*warehouse.lock().unwrap(), vec!["mug".to_string()]);
     assert_eq!(in_memory_outbox.failures().len(), 1);
-    assert!(
-        outbox_policy_processor.run_pending().await?.is_empty(),
-        "nothing runs twice"
-    );
+    assert!(outbox_policy_processor.run_pending().await?.is_empty(), "nothing runs twice");
 
     Ok(())
 }

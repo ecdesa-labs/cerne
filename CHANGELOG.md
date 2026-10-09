@@ -8,6 +8,10 @@ Every change that breaks compatibility is listed here. While Cerne is in `0.x`, 
 
 - `#[entity]` and `#[aggregate]` (in `cerne::domain`, from the new crate `cerne-macros`): on a struct with an `id: Option<<Name>Id>`, they write `impl Entity`, a `<Name>Constructor` with every field but the id, and, for `#[aggregate]`, `impl Aggregate`. A field marked `#[skip_constructor]` stays out of the constructor and starts at its `Default`.
 - `#[value_object]`: on a struct of one unnamed field (`OrderId(u64)`), it writes `TryFrom<u64> for OrderId` (through `ValueObject::new`) and `From<OrderId> for u64`, and, if the struct derives `Deserialize` or `Serialize`, `#[serde(try_from = "u64", into = "u64")]`.
+- `invariant!("quantity is positive", quantity_is_positive)` and `business_rule!(..)`: an `Invariant` or a `BusinessRule` from a name and a condition, without writing the `move ||` closure.
+- `policy!("whenever an order is placed, charge the customer", true, ChargeOrderCommand { order_id, total })`: a `Policy` from a name, a condition and the command, without writing the closures. The command is only built if the policy fires, and it takes the values it uses: no `.clone()` inside.
+- **Breaking:** `Policies::new(vec![..]).trigger()` is now `Policies::trigger([..])`, and the `then` of `Policy::new` is a `FnOnce`.
+- **Breaking:** `Invariants::new(vec![..]).enforce()` is now `Invariants::enforce([..])`, and `BusinessRules::new(vec![..]).check()` is now `BusinessRules::check([..])`. Both take any `IntoIterator`, an array or a `Vec`.
 - **Breaking:** `validate` left `Entity` for a trait of its own, `Validate`, which `Entity` requires. Move `fn validate` to an `impl Validate for <Name>`, and import `Validate` wherever `.validate()` is called.
 - **Breaking:** `Entity::Props` and `ValueObject::Props` are now `Entity::Constructor` and `ValueObject::Constructor`.
 
@@ -16,6 +20,8 @@ Every change that breaks compatibility is listed here. While Cerne is in `0.x`, 
 - **Breaking:** `cerne g entity` writes `#[entity]` (or `#[aggregate]`, with `--aggregate`) and an `impl Validate` instead of `impl Entity`, `impl Aggregate` and `<Name>Props`. `Order::new` takes an `OrderConstructor`. An enum field with an initial value (`status=Placed:Placed,Paid`) is `#[skip_constructor]`, and its enum derives `Default` with `#[default]` on the initial value.
 - `cerne g value_object` with one field, and the id of `cerne g entity`, write `#[value_object]` instead of `#[serde(try_from, into)]`, `impl TryFrom` and `impl From`.
 - **Breaking:** `cerne g value_object` with more than one field writes a `<Name>Constructor` instead of `<Name>Props`.
+- `cerne g entity` and `cerne g value_object` write `Invariants::enforce([])?`, and `cerne g event` writes `Policies::trigger([])`.
+- `cerne new` writes a `rustfmt.toml`: lines of up to 120 columns, with the arguments of a call on one line while they fit, one item per line in a list past 80 columns, and struct literals and method chains broken as before.
 - `cerne g db` finds the aggregates by their `#[aggregate]`, no longer by `impl Aggregate for`.
 
 ## 0.1.0

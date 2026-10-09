@@ -2,7 +2,7 @@
 #![cfg(all(feature = "axum", feature = "sqlite"))]
 
 use cerne::application::{Command, Executed, Outbox, Query, ReadModel, TransactionalPorts};
-use cerne::domain::{BusinessRule, BusinessRules};
+use cerne::domain::{BusinessRules, business_rule};
 use cerne::http::jsonrpc::{ErrorObject, Methods, Request};
 use cerne::sqlite::{SqliteDatabase, SqliteOutbox};
 use cerne::{Error, async_trait};
@@ -67,11 +67,10 @@ impl Command<Ports> for SendMoneyCommand {
         let amount_is_positive = self.amount > 0;
         let sender_is_not_recipient = self.sender != self.recipient;
 
-        BusinessRules::new(vec![
-            BusinessRule::new("amount is positive", move || amount_is_positive),
-            BusinessRule::new("sender is not recipient", move || sender_is_not_recipient),
-        ])
-        .check()?;
+        BusinessRules::check([
+            business_rule!("amount is positive", amount_is_positive),
+            business_rule!("sender is not recipient", sender_is_not_recipient),
+        ])?;
 
         // --- Domain events ---------------------------------------------------
 
@@ -175,8 +174,7 @@ async fn the_violations_go_in_the_message_that_a_wallet_shows() {
         error,
         ErrorObject {
             code: -32001,
-            message: "the domain refused the request: amount is positive, sender is not recipient"
-                .into(),
+            message: "the domain refused the request: amount is positive, sender is not recipient".into(),
             data: Some(json!({ "violations": ["amount is positive", "sender is not recipient"] })),
         }
     );
@@ -209,8 +207,7 @@ fn a_jsonrpc_other_than_2_0_is_an_invalid_request() {
 
 #[test]
 fn a_jsonrpc_2_0_body_is_a_request() {
-    let body =
-        r#"{ "jsonrpc": "2.0", "method": "send_money", "params": ["alice", "bob", 100], "id": 7 }"#;
+    let body = r#"{ "jsonrpc": "2.0", "method": "send_money", "params": ["alice", "bob", 100], "id": 7 }"#;
 
     let request = Request::from_body(body.as_bytes()).unwrap();
 

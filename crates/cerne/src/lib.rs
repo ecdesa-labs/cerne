@@ -58,6 +58,8 @@ pub use errors::{ApplicationError, DomainError, Error, InfrastructureError};
 pub mod domain {
     use super::*;
 
+    #[doc(inline)]
+    pub use crate::{business_rule, invariant, policy};
     pub use business_rules::*;
     pub use domain_events::*;
 
@@ -145,7 +147,7 @@ pub mod domain {
     /// `new`, so the invariants hold there too. `impl ValueObject`, with the invariants, is not written.
     ///
     /// ```
-    /// use cerne::domain::{EnforcementResult, Invariant, Invariants, ValueObject, value_object};
+    /// use cerne::domain::{EnforcementResult, Invariants, ValueObject, invariant, value_object};
     /// use serde::{Deserialize, Serialize};
     ///
     /// #[value_object]
@@ -158,10 +160,7 @@ pub mod domain {
     ///     fn new(value: u64) -> EnforcementResult<Self> {
     ///         let order_id_is_positive = value > 0;
     ///
-    ///         Invariants::new(vec![Invariant::new("order id is positive", move || {
-    ///             order_id_is_positive
-    ///         })])
-    ///         .enforce()?;
+    ///         Invariants::enforce([invariant!("order id is positive", order_id_is_positive)])?;
     ///
     ///         Ok(Self(value))
     ///     }

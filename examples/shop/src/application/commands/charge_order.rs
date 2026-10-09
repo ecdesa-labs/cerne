@@ -3,7 +3,7 @@ use crate::domain::events::order_paid::OrderPaid;
 use crate::domain::value_objects::order_id::OrderId;
 use crate::ports::Ports;
 use cerne::application::{Command, Executed};
-use cerne::domain::{BusinessRule, BusinessRules};
+use cerne::domain::{BusinessRules, business_rule};
 use cerne::{Error, async_trait};
 use serde::{Deserialize, Serialize};
 
@@ -27,11 +27,7 @@ impl Command<Ports> for ChargeOrderCommand {
 
         let order_is_still_placed = order.status == OrderStatus::Placed;
 
-        BusinessRules::new(vec![BusinessRule::new(
-            "order is still placed",
-            move || order_is_still_placed,
-        )])
-        .check()?;
+        BusinessRules::check([business_rule!("order is still placed", order_is_still_placed)])?;
 
         // --- External system: Payments ---------------------------------------
 

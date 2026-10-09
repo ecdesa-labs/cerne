@@ -26,14 +26,11 @@ async fn main() -> anyhow::Result<()> {
 
     // --- Outbox: the commands of the policies --------------------------------
 
-    let outbox_policy_processor =
-        OutboxPolicyProcessor::new(Arc::clone(&ports), command_registry());
+    let outbox_policy_processor = OutboxPolicyProcessor::new(Arc::clone(&ports), command_registry());
 
     tokio::spawn(async move {
         outbox_policy_processor
-            .run_every(Duration::from_millis(200), |error| {
-                eprintln!("outbox: {error}")
-            })
+            .run_every(Duration::from_millis(200), |error| eprintln!("outbox: {error}"))
             .await
     });
 

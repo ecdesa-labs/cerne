@@ -46,10 +46,7 @@ pub trait Outbox<Ports: 'static>: Send + Sync {
     /// that fired.
     ///
     /// If the invariants of any event fail, no command is stored.
-    async fn send_events(
-        &self,
-        events: Vec<Box<dyn DomainEvent<Ports>>>,
-    ) -> Result<Vec<&'static str>, Error> {
+    async fn send_events(&self, events: Vec<Box<dyn DomainEvent<Ports>>>) -> Result<Vec<&'static str>, Error> {
         let mut fired = vec![];
         for event in events {
             fired.extend(event.trigger_policies()?);
@@ -132,20 +129,14 @@ impl<Ports: 'static> CommandRegistry<Ports> {
         self
     }
 
-    pub fn decode(
-        &self,
-        stored_command: &StoredCommand,
-    ) -> Result<Box<dyn Command<Ports, Output = ()>>, Error> {
-        let decode = self.decoders.get(&stored_command.command).ok_or_else(|| {
-            infrastructure(format!(
-                "{} is not in the command registry",
-                stored_command.command
-            ))
-        })?;
+    pub fn decode(&self, stored_command: &StoredCommand) -> Result<Box<dyn Command<Ports, Output = ()>>, Error> {
+        let decode = self
+            .decoders
+            .get(&stored_command.command)
+            .ok_or_else(|| infrastructure(format!("{} is not in the command registry", stored_command.command)))?;
 
-        let command = decode(&stored_command.json).map_err(|error| {
-            infrastructure(format!("cannot read {}: {error}", stored_command.command))
-        })?;
+        let command = decode(&stored_command.json)
+            .map_err(|error| infrastructure(format!("cannot read {}: {error}", stored_command.command)))?;
 
         Ok(command)
     }
@@ -248,11 +239,7 @@ impl<Ports: TransactionalPorts> OutboxPolicyProcessor<Ports> {
         }
     }
 
-    async fn execute(
-        &self,
-        stored_command: &StoredCommand,
-        transaction: &Ports,
-    ) -> Result<(), Error> {
+    async fn execute(&self, stored_command: &StoredCommand, transaction: &Ports) -> Result<(), Error> {
         let command = self.command_registry.decode(stored_command)?;
 
         let execution = command.execute(transaction).await?;

@@ -1,5 +1,5 @@
 use crate::domain::value_objects::order_id::OrderId;
-use cerne::domain::{EnforcementResult, Invariant, Invariants, Validate, aggregate};
+use cerne::domain::{EnforcementResult, Invariants, Validate, aggregate, invariant};
 
 // --- Status ------------------------------------------------------------------
 
@@ -30,11 +30,10 @@ impl Validate for Order {
         let order_has_a_product = !self.product.is_empty();
         let quantity_is_positive = self.quantity > 0;
 
-        Invariants::new(vec![
-            Invariant::new("order has a product", move || order_has_a_product),
-            Invariant::new("quantity is positive", move || quantity_is_positive),
-        ])
-        .enforce()?;
+        Invariants::enforce([
+            invariant!("order has a product", order_has_a_product),
+            invariant!("quantity is positive", quantity_is_positive),
+        ])?;
 
         Ok(self)
     }

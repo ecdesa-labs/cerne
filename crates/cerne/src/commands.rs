@@ -10,8 +10,8 @@ use async_trait::async_trait;
 /// ```
 /// use cerne::application::{Command, Executed, Repository};
 /// use cerne::domain::{
-///     Aggregate, BusinessRule, BusinessRules, DomainEvent, EnforcementResult, Entity, FiredPolicy, Validate,
-///     ValueObject,
+///     Aggregate, BusinessRules, DomainEvent, EnforcementResult, Entity, FiredPolicy, Validate, ValueObject,
+///     business_rule,
 /// };
 /// use cerne::{Error, async_trait};
 ///
@@ -91,7 +91,7 @@ use async_trait::async_trait;
 ///
 ///         let enough_stock = stock.available >= self.qty;
 ///
-///         BusinessRules::new(vec![BusinessRule::new("enough stock", move || enough_stock)]).check()?;
+///         BusinessRules::check([business_rule!("enough stock", enough_stock)])?;
 ///
 ///         // --- Aggregate -------------------------------------------------------
 ///
@@ -128,10 +128,12 @@ pub struct Executed<Output, Ports> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::business_rules::{BusinessRule, BusinessRules};
+    use crate::business_rule;
+    use crate::business_rules::BusinessRules;
     use crate::entities::Validate;
     use crate::errors::{DomainError, EnforcementResult};
-    use crate::invariants::{Invariant, Invariants};
+    use crate::invariant;
+    use crate::invariants::Invariants;
     use crate::policies::FiredPolicy;
     use crate::value_objects::ValueObject;
     use cerne_macros::entity;
@@ -159,10 +161,7 @@ mod tests {
         fn validate(self) -> EnforcementResult<Self> {
             let at_most_1000_items = self.qty <= 1000;
 
-            Invariants::new(vec![Invariant::new("at most 1000 items", move || {
-                at_most_1000_items
-            })])
-            .enforce()?;
+            Invariants::enforce([invariant!("at most 1000 items", at_most_1000_items)])?;
 
             Ok(self)
         }
@@ -191,10 +190,7 @@ mod tests {
         async fn execute(&self, ports: &Ports) -> Result<Executed<(), Ports>, Error> {
             let quantity_is_positive = self.qty > 0;
 
-            BusinessRules::new(vec![BusinessRule::new("positive quantity", move || {
-                quantity_is_positive
-            })])
-            .check()?;
+            BusinessRules::check([business_rule!("positive quantity", quantity_is_positive)])?;
 
             let mut order = ports.order.lock().unwrap();
             *order = Order {

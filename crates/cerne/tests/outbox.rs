@@ -3,10 +3,9 @@
 #![cfg(feature = "sqlite")]
 
 use cerne::application::{
-    Command, CommandRegistry, CommandRun, Executed, Outbox, OutboxPolicyProcessor,
-    TransactionalPorts,
+    Command, CommandRegistry, CommandRun, Executed, Outbox, OutboxPolicyProcessor, TransactionalPorts,
 };
-use cerne::domain::{DomainEvent, EnforcementResult, FiredPolicy, Policies, Policy};
+use cerne::domain::{DomainEvent, EnforcementResult, FiredPolicy, Policies, policy};
 use cerne::sqlite::{SqliteDatabase, SqliteOutbox};
 use cerne::{DomainError, Error, async_trait};
 use serde::{Deserialize, Serialize};
@@ -87,9 +86,7 @@ async fn log(ports: &Ports) -> Vec<String> {
 async fn outbox_statuses(ports: &Ports) -> Vec<(String, String)> {
     let rows = ports
         .database
-        .fetch_all(sqlx::query(
-            "SELECT command, status FROM cerne_outbox ORDER BY id",
-        ))
+        .fetch_all(sqlx::query("SELECT command, status FROM cerne_outbox ORDER BY id"))
         .await
         .unwrap();
 
@@ -174,23 +171,17 @@ impl Command<Ports> for ShipOrderCommand {
 
 impl DomainEvent<Ports> for OrderPlaced {
     fn trigger_policies(&self) -> EnforcementResult<Vec<FiredPolicy<Ports>>> {
-        Ok(Policies::new(vec![Policy::new(
-            "reserve stock",
-            || true,
-            || Box::new(ReserveStockCommand { sku: "book".into() }),
-        )])
-        .trigger())
+        let reserve_stock_policy = policy!("reserve stock", true, ReserveStockCommand { sku: "book".into() });
+
+        Ok(Policies::trigger([reserve_stock_policy]))
     }
 }
 
 impl DomainEvent<Ports> for StockReserved {
     fn trigger_policies(&self) -> EnforcementResult<Vec<FiredPolicy<Ports>>> {
-        Ok(Policies::new(vec![Policy::new(
-            "ship order",
-            || true,
-            || Box::new(ShipOrderCommand { fails: false }),
-        )])
-        .trigger())
+        let ship_order_policy = policy!("ship order", true, ShipOrderCommand { fails: false });
+
+        Ok(Policies::trigger([ship_order_policy]))
     }
 }
 
@@ -228,10 +219,7 @@ async fn the_aggregate_and_the_outbox_commit_together() {
 
     assert_eq!(fired_policies, vec!["reserve stock"]);
     assert_eq!(log(&ports).await, vec!["order placed"]);
-    assert_eq!(
-        outbox_statuses(&ports).await,
-        vec![("reserve_stock".into(), "pending".into())]
-    );
+    assert_eq!(outbox_statuses(&ports).await, vec![("reserve_stock".into(), "pending".into())]);
 }
 
 #[tokio::test]
@@ -257,41 +245,27 @@ async fn without_commit_neither_the_aggregate_nor_the_outbox_is_written() {
 #[tokio::test]
 async fn run_pending_runs_the_whole_chain_through_the_outbox() {
     let ports = ports().await;
-    let outbox_policy_processor =
-        OutboxPolicyProcessor::new(Arc::clone(&ports), command_registry());
+    let outbox_policy_processor = OutboxPolicyProcessor::new(Arc::clone(&ports), command_registry());
     place_order(&ports).await;
 
     let command_runs = outbox_policy_processor.run_pending().await.unwrap();
 
-    assert_eq!(
-        command_runs,
-        vec![done("reserve_stock"), done("ship_order")]
-    );
-    assert_eq!(
-        log(&ports).await,
-        vec!["order placed", "book reserved", "order shipped"]
-    );
+    assert_eq!(command_runs, vec![done("reserve_stock"), done("ship_order")]);
+    assert_eq!(log(&ports).await, vec!["order placed", "book reserved", "order shipped"]);
     assert_eq!(
         outbox_statuses(&ports).await,
-        vec![
-            ("reserve_stock".into(), "done".into()),
-            ("ship_order".into(), "done".into())
-        ]
+        vec![("reserve_stock".into(), "done".into()), ("ship_order".into(), "done".into())]
     );
 }
 
 #[tokio::test]
 async fn a_failing_command_rolls_back_and_is_marked_failed() {
     let ports = ports().await;
-    let outbox_policy_processor =
-        OutboxPolicyProcessor::new(Arc::clone(&ports), command_registry());
+    let outbox_policy_processor = OutboxPolicyProcessor::new(Arc::clone(&ports), command_registry());
     let ship_order = r#"{"fails":true}"#;
     ports
         .database
-        .execute(
-            sqlx::query("INSERT INTO cerne_outbox (command, json) VALUES ('ship_order', $1)")
-                .bind(ship_order),
-        )
+        .execute(sqlx::query("INSERT INTO cerne_outbox (command, json) VALUES ('ship_order', $1)").bind(ship_order))
         .await
         .unwrap();
 
@@ -301,14 +275,11 @@ async fn a_failing_command_rolls_back_and_is_marked_failed() {
         command_runs,
         vec![CommandRun {
             command: "ship_order".into(),
-            error: Some(r#"violated: ["carrier is available"]"#.into()),
+            error: Some(r#"violated: ["carrier is available"]"#.into())
         }]
     );
     assert!(log(&ports).await.is_empty(), "the log line was rolled back");
-    assert_eq!(
-        outbox_statuses(&ports).await,
-        vec![("ship_order".into(), "failed".into())]
-    );
+    assert_eq!(outbox_statuses(&ports).await, vec![("ship_order".into(), "failed".into())]);
     assert!(
         outbox_policy_processor
             .run_pending()
@@ -321,14 +292,10 @@ async fn a_failing_command_rolls_back_and_is_marked_failed() {
 #[tokio::test]
 async fn a_command_missing_from_the_registry_is_marked_failed() {
     let ports = ports().await;
-    let outbox_policy_processor =
-        OutboxPolicyProcessor::new(Arc::clone(&ports), CommandRegistry::new());
+    let outbox_policy_processor = OutboxPolicyProcessor::new(Arc::clone(&ports), CommandRegistry::new());
     place_order(&ports).await;
 
     let command_runs = outbox_policy_processor.run_pending().await.unwrap();
 
-    assert_eq!(
-        command_runs[0].error.as_deref(),
-        Some("reserve_stock is not in the command registry")
-    );
+    assert_eq!(command_runs[0].error.as_deref(), Some("reserve_stock is not in the command registry"));
 }
