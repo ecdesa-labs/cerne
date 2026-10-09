@@ -14,6 +14,7 @@ Every change that breaks compatibility is listed here. While Cerne is in `0.x`, 
 - **Breaking:** `Invariants::new(vec![..]).enforce()` is now `Invariants::enforce([..])`, and `BusinessRules::new(vec![..]).check()` is now `BusinessRules::check([..])`. Both take any `IntoIterator`, an array or a `Vec`.
 - **Breaking:** `validate` left `Entity` for a trait of its own, `Validate`, which `Entity` requires. Move `fn validate` to an `impl Validate for <Name>`, and import `Validate` wherever `.validate()` is called.
 - **Breaking:** `Entity::Props` and `ValueObject::Props` are now `Entity::Constructor` and `ValueObject::Constructor`.
+- **Breaking:** `TransactionalPorts` is now `TransactionalCompositionRoot`, and the type parameter `Ports` of `Command`, `Query`, `DomainEvent`, `Outbox` and `CommandRegistry` is named `CompositionRoot`.
 
 ### `cerne-cli`
 
@@ -23,7 +24,9 @@ Every change that breaks compatibility is listed here. While Cerne is in `0.x`, 
 - `cerne g entity` and `cerne g value_object` write `Invariants::enforce([])?`, and `cerne g event` writes `Policies::trigger([])`.
 - `cerne new` writes a `rustfmt.toml`: lines of up to 120 columns, with the arguments of a call on one line while they fit, one item per line in a list past 80 columns, and struct literals and method chains broken as before.
 - `cerne g db` finds the aggregates by their `#[aggregate]`, no longer by `impl Aggregate for`.
-- **Breaking:** the field that `cerne g aggregate` (and `cerne g db`) adds to the `Ports` for the repository of an aggregate is `<name>_repository`, no longer the table name: `order_repository` instead of `orders`. Rename the field and every `ports.orders` in the commands and queries.
+- **Breaking:** the field that `cerne g aggregate` (and `cerne g db`) adds to the `CompositionRoot` for the repository of an aggregate is `<name>_repository`, no longer the table name: `order_repository` instead of `orders`. Rename the field and every `ports.orders` in the commands and queries.
+- **Breaking:** what `cerne new` wrote as the struct `Ports` in `src/ports.rs` is the struct `CompositionRoot` in `src/composition_root.rs`, and the generated code names it `composition_root`: `impl Command<CompositionRoot>`, `composition_root: &CompositionRoot`, `composition_root.order_repository`. Rename the file, the module, the struct and the variables.
+- **Breaking:** `cerne new` writes a `CompositionRootConstructor` next to the `CompositionRoot`, and `CompositionRoot::new` takes it: `CompositionRoot::new(composition_root_constructor)` instead of `Ports::new(database)`. `src/main.rs` and `begin` build the constructor in a variable first. In an existing project, add the struct with the arguments `new` took, and build it wherever `CompositionRoot::new` is called.
 
 ## 0.1.0
 

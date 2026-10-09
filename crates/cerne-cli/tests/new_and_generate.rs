@@ -4,37 +4,38 @@ use std::{env, fs};
 
 /// What the e2e test writes into the generated project: the generated repository, on SQLite in memory.
 const REPOSITORY_TEST: &str = r#"
-use cerne::application::TransactionalPorts;
+use cerne::application::TransactionalCompositionRoot;
 use cerne::domain::Entity;
 use cerne::sqlite::SqliteDatabase;
 use loja::domain::entities::order::{Order, OrderConstructor};
-use loja::ports::Ports;
+use loja::composition_root::{CompositionRoot, CompositionRootConstructor};
 
 #[tokio::test]
 async fn the_generated_repository_inserts_loads_and_updates() {
     let database = SqliteDatabase::in_memory().await.unwrap();
     database.migrate(&sqlx::migrate!()).await.unwrap();
-    let ports = Ports::new(database);
+    let composition_root_constructor = CompositionRootConstructor { database };
+    let composition_root = CompositionRoot::new(composition_root_constructor);
 
-    let transaction = ports.begin().await.unwrap();
+    let transaction = composition_root.begin().await.unwrap();
     let order_id = transaction.order_repository.save(Order::new(OrderConstructor { qty: 3 }).unwrap()).await.unwrap();
     transaction.commit().await.unwrap();
 
-    let order = ports.order_repository.load(&order_id).await.unwrap();
-    ports.order_repository.save(Order { qty: 5, ..order }).await.unwrap();
+    let order = composition_root.order_repository.load(&order_id).await.unwrap();
+    composition_root.order_repository.save(Order { qty: 5, ..order }).await.unwrap();
 
-    assert_eq!(ports.order_repository.load(&order_id).await.unwrap().qty, 5);
+    assert_eq!(composition_root.order_repository.load(&order_id).await.unwrap().qty, 5);
 }
 "#;
 
 /// What the e2e test writes into the Postgres project: the generated repository, on a database of its own created in
 /// the Postgres of `DATABASE_URL` (the CI starts one).
 const POSTGRES_REPOSITORY_TEST: &str = r#"
-use cerne::application::TransactionalPorts;
+use cerne::application::TransactionalCompositionRoot;
 use cerne::domain::Entity;
 use cerne::postgres::PostgresDatabase;
 use vitrine::domain::entities::product::{Product, ProductKind, ProductConstructor};
-use vitrine::ports::Ports;
+use vitrine::composition_root::{CompositionRoot, CompositionRootConstructor};
 
 #[tokio::test]
 async fn the_generated_repository_inserts_loads_and_updates_on_postgres() {
@@ -48,7 +49,8 @@ async fn the_generated_repository_inserts_loads_and_updates_on_postgres() {
     let (server_url, _) = database_url.rsplit_once('/').unwrap();
     let database = PostgresDatabase::connect(&format!("{server_url}/{database_name}"), 2).await.unwrap();
     database.migrate(&sqlx::migrate!()).await.unwrap();
-    let ports = Ports::new(database);
+    let composition_root_constructor = CompositionRootConstructor { database };
+    let composition_root = CompositionRoot::new(composition_root_constructor);
 
     let product = Product::new(ProductConstructor {
         name: "Mug".into(),
@@ -59,20 +61,20 @@ async fn the_generated_repository_inserts_loads_and_updates_on_postgres() {
     })
     .unwrap();
 
-    let transaction = ports.begin().await.unwrap();
+    let transaction = composition_root.begin().await.unwrap();
     let product_id = transaction.product_repository.save(product).await.unwrap();
     transaction.commit().await.unwrap();
 
-    let product = ports.product_repository.load(&product_id).await.unwrap();
-    ports.product_repository.save(Product { price: 35, kind: ProductKind::Digital, available: false, ..product }).await.unwrap();
+    let product = composition_root.product_repository.load(&product_id).await.unwrap();
+    composition_root.product_repository.save(Product { price: 35, kind: ProductKind::Digital, available: false, ..product }).await.unwrap();
 
-    let product = ports.product_repository.load(&product_id).await.unwrap();
+    let product = composition_root.product_repository.load(&product_id).await.unwrap();
 
     assert_eq!((product.name.as_str(), product.price, product.weight), ("Mug", 35, 0.4));
     assert!(matches!(product.kind, ProductKind::Digital));
     assert!(!product.available);
 
-    drop(ports);
+    drop(composition_root);
     server.execute(sqlx::query(&format!("DROP DATABASE {database_name} WITH (FORCE)"))).await.unwrap();
 }
 "#;
@@ -81,25 +83,26 @@ async fn the_generated_repository_inserts_loads_and_updates_on_postgres() {
 /// What the e2e test writes into the project that got its database from `cerne g db`: the repository of the
 /// aggregate that existed before the database.
 const NUCLEO_REPOSITORY_TEST: &str = r#"
-use cerne::application::TransactionalPorts;
+use cerne::application::TransactionalCompositionRoot;
 use cerne::domain::Entity;
 use cerne::sqlite::SqliteDatabase;
 use nucleo::domain::entities::order::{Order, OrderConstructor, OrderStatus};
-use nucleo::ports::Ports;
+use nucleo::composition_root::{CompositionRoot, CompositionRootConstructor};
 
 #[tokio::test]
 async fn the_aggregate_from_before_the_database_gets_a_repository() {
     let database = SqliteDatabase::in_memory().await.unwrap();
     database.migrate(&sqlx::migrate!()).await.unwrap();
-    let ports = Ports::new(database);
+    let composition_root_constructor = CompositionRootConstructor { database };
+    let composition_root = CompositionRoot::new(composition_root_constructor);
 
     let order = Order::new(OrderConstructor { product: "mug".into(), quantity: 2 }).unwrap();
 
-    let transaction = ports.begin().await.unwrap();
+    let transaction = composition_root.begin().await.unwrap();
     let order_id = transaction.order_repository.save(order).await.unwrap();
     transaction.commit().await.unwrap();
 
-    let order = ports.order_repository.load(&order_id).await.unwrap();
+    let order = composition_root.order_repository.load(&order_id).await.unwrap();
 
     assert_eq!((order.product.as_str(), order.quantity, order.status), ("mug", 2, OrderStatus::Placed));
 }
@@ -109,7 +112,7 @@ const REST_TEST: &str = r##"
 use axum::body::Body;
 use axum::http::Request;
 use caixa::infrastructure::http::router;
-use caixa::ports::Ports;
+use caixa::composition_root::{CompositionRoot, CompositionRootConstructor};
 use cerne::sqlite::SqliteDatabase;
 use std::sync::Arc;
 use tower::ServiceExt;
@@ -117,7 +120,8 @@ use tower::ServiceExt;
 async fn send(request: Request<Body>) -> (u16, String) {
     let database = SqliteDatabase::in_memory().await.unwrap();
     database.migrate(&sqlx::migrate!()).await.unwrap();
-    let router = router(Arc::new(Ports::new(database)));
+    let composition_root_constructor = CompositionRootConstructor { database };
+    let router = router(Arc::new(CompositionRoot::new(composition_root_constructor)));
 
     let response = router.oneshot(request).await.unwrap();
     let status = response.status().as_u16();
@@ -235,10 +239,10 @@ fn generated_project_passes_clippy_without_touching_anything() {
     assert!(!rpc.contains("ship_order"), "a policy command has no actor to call it");
     assert!(!rpc.contains("match_single_binding"));
 
-    let ports = fs::read_to_string(project.join("src/ports.rs")).unwrap();
+    let composition_root = fs::read_to_string(project.join("src/composition_root.rs")).unwrap();
 
-    assert!(ports.contains("pub order_repository: Box<dyn Repository<Order>>,"));
-    assert!(ports.contains("register::<ShipOrderCommand>()"));
+    assert!(composition_root.contains("pub order_repository: Box<dyn Repository<Order>>,"));
+    assert!(composition_root.contains("register::<ShipOrderCommand>()"));
 
     // --- cargo clippy and cargo test, with the generated repository on SQLite in memory
 
@@ -313,7 +317,7 @@ fn generated_project_passes_clippy_without_touching_anything() {
     assert!(
         fs::read_to_string(caixa.join("src/main.rs"))
             .unwrap()
-            .contains("axum::serve(listener, router(ports))")
+            .contains("axum::serve(listener, router(composition_root))")
     );
 
     // The query is the one part the actor's developer writes: here, it echoes the query string.
@@ -402,7 +406,7 @@ fn generated_project_passes_clippy_without_touching_anything() {
     );
     assert!(nucleo.join("migrations/1_create_cerne_outbox.sql").exists());
     assert!(
-        !fs::read_to_string(nucleo.join("src/ports.rs"))
+        !fs::read_to_string(nucleo.join("src/composition_root.rs"))
             .unwrap()
             .contains("InMemoryOutbox")
     );

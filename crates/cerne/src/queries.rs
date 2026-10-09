@@ -4,14 +4,14 @@ use async_trait::async_trait;
 /// The green post-it: what the actor looks at before deciding. A query only reads: it never changes state and
 /// produces no events.
 ///
-/// `Ports` is the same composition root the commands use. `ReadModel` is what the actor sees, shaped for the screen,
+/// `CompositionRoot` is the same composition root the commands use. `ReadModel` is what the actor sees, shaped for the screen,
 /// not like the aggregate.
 ///
 /// ```
 /// use cerne::application::{Query, ReadModel};
 /// use cerne::{Error, async_trait};
 ///
-/// struct Ports {
+/// struct CompositionRoot {
 ///     stock: Vec<(&'static str, i32)>,
 /// }
 ///
@@ -29,13 +29,13 @@ use async_trait::async_trait;
 /// }
 ///
 /// #[async_trait]
-/// impl Query<Ports> for ProductAvailabilityQuery {
+/// impl Query<CompositionRoot> for ProductAvailabilityQuery {
 ///     type ReadModel = ProductAvailability;
 ///
-///     async fn execute(&self, ports: &Ports) -> Result<ProductAvailability, Error> {
+///     async fn execute(&self, composition_root: &CompositionRoot) -> Result<ProductAvailability, Error> {
 ///         // --- Ports -----------------------------------------------------------
 ///
-///         let available = ports.stock.iter().find(|(sku, _)| *sku == self.sku).map_or(0, |(_, units)| *units);
+///         let available = composition_root.stock.iter().find(|(sku, _)| *sku == self.sku).map_or(0, |(_, units)| *units);
 ///
 ///         // --- Read model ------------------------------------------------------
 ///
@@ -47,20 +47,20 @@ use async_trait::async_trait;
 ///
 /// # #[tokio::main]
 /// # async fn main() -> Result<(), Error> {
-/// let ports = Ports { stock: vec![("book", 3)] };
+/// let composition_root = CompositionRoot { stock: vec![("book", 3)] };
 ///
-/// let product_availability = ProductAvailabilityQuery { sku: "book" }.execute(&ports).await?;
+/// let product_availability = ProductAvailabilityQuery { sku: "book" }.execute(&composition_root).await?;
 ///
 /// assert_eq!(product_availability, ProductAvailability { sku: "book", in_stock: true });
 /// # Ok(())
 /// # }
 /// ```
 #[async_trait]
-pub trait Query<Ports>: Send + Sync {
+pub trait Query<CompositionRoot>: Send + Sync {
     type ReadModel: ReadModel;
 
     /// Reads the ports and builds the read model; changes nothing.
-    async fn execute(&self, ports: &Ports) -> Result<Self::ReadModel, Error>;
+    async fn execute(&self, composition_root: &CompositionRoot) -> Result<Self::ReadModel, Error>;
 }
 
 /// The data a query gives back: plain fields, no behavior, no invariants.

@@ -1,7 +1,7 @@
 {% for line in uses %}
 {{ line }}
 {% endfor %}
-use crate::ports::Ports;
+use crate::composition_root::CompositionRoot;
 use cerne::application::{Command, Executed};
 use cerne::{Error, async_trait};
 use serde::{Deserialize, Serialize};
@@ -21,10 +21,10 @@ pub struct {{ name }}Command {
 }
 
 #[async_trait]
-impl Command<Ports> for {{ name }}Command {
+impl Command<CompositionRoot> for {{ name }}Command {
     type Output = ();
 
-    async fn execute(&self, _ports: &Ports) -> Result<Executed<(), Ports>, Error> {
+    async fn execute(&self, _ports: &CompositionRoot) -> Result<Executed<(), CompositionRoot>, Error> {
         // --- Ports -----------------------------------------------------------
 
         // --- Business rules --------------------------------------------------

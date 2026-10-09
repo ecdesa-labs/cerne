@@ -29,7 +29,7 @@ const PROJECT: [(&str, &str); 17] = [
     ("rustfmt.toml", include_str!("../templates/rustfmt.toml.jinja")),
     ("src/lib.rs", include_str!("../templates/lib.rs.jinja")),
     ("src/main.rs", MAIN),
-    ("src/ports.rs", include_str!("../templates/ports.rs.jinja")),
+    ("src/composition_root.rs", include_str!("../templates/composition_root.rs.jinja")),
     ("src/domain/mod.rs", "pub mod entities;\npub mod events;\npub mod value_objects;\n"),
     ("src/domain/entities/mod.rs", ""),
     ("src/domain/events/mod.rs", ""),
@@ -63,11 +63,11 @@ const PORT: &str = include_str!("../templates/port.rs.jinja");
 const ADAPTER: &str = include_str!("../templates/adapter.rs.jinja");
 
 /// The lines `cerne g` adds to files that already exist, right before (or after) a line that `cerne new` wrote.
-const PORTS_STRUCT: &str = "pub outbox: Box<dyn Outbox<Ports>>,";
-const PORTS_NEW: &str = "outbox: Box::new(";
+const COMPOSITION_ROOT_STRUCT: &str = "pub outbox: Box<dyn Outbox<CompositionRoot>>,";
+const COMPOSITION_ROOT_NEW: &str = "outbox: Box::new(";
 const COMMAND_REGISTRY: &str = "CommandRegistry::new()";
 const RPC_LAST_ARM: &str = "method => methods.not_found(method),";
-const ROUTER_STATE: &str = ".with_state(ports)";
+const ROUTER_STATE: &str = ".with_state(composition_root)";
 
 type CliResult = Result<(), Box<dyn Error>>;
 
@@ -293,7 +293,7 @@ fn generate(kind: &str, name: &str, args: &[&str]) -> CliResult {
             if policy {
                 // A policy fires it: the outbox must be able to read it back.
                 insert_lines(
-                    "src/ports.rs",
+                    "src/composition_root.rs",
                     &command_use,
                     COMMAND_REGISTRY,
                     &[&format!("    .register::<{command}>()")],
@@ -333,7 +333,7 @@ fn add_repository_if_there_is_a_database(name: &str, file: &str, id_type: &str, 
     add_repository(name, file, id_type, fields)
 }
 
-/// The SQL repository of an aggregate, its migration, and its field in the `Ports`.
+/// The SQL repository of an aggregate, its migration, and its field in the `CompositionRoot`.
 fn add_repository(name: &str, file: &str, id_type: &str, fields: &[Value]) -> CliResult {
     let project = project()?;
     let table = format!("{file}s");
@@ -408,22 +408,24 @@ fn add_repository(name: &str, file: &str, id_type: &str, fields: &[Value]) -> Cl
     println!("created {migration_file}");
 
     insert_lines(
-        "src/ports.rs",
+        "src/composition_root.rs",
         &format!(
             "use crate::domain::entities::{file}::{name};\nuse crate::infrastructure::{repository_file}::{repository};"
         ),
-        PORTS_STRUCT,
+        COMPOSITION_ROOT_STRUCT,
         &[&format!("pub {file}_repository: Box<dyn Repository<{name}>>,")],
         Before,
     )?;
 
-    add_to_use("src/ports.rs", "cerne::application", "Repository")?;
+    add_to_use("src/composition_root.rs", "cerne::application", "Repository")?;
 
     insert_lines(
-        "src/ports.rs",
+        "src/composition_root.rs",
         "",
-        PORTS_NEW,
-        &[&format!("{file}_repository: Box::new({repository}::new(database.clone())),")],
+        COMPOSITION_ROOT_NEW,
+        &[&format!(
+            "{file}_repository: Box::new({repository}::new(constructor.database.clone())),"
+        )],
         Before,
     )
 }
@@ -581,11 +583,11 @@ fn generate_http(http: &str) -> CliResult {
 
     // --- JSON-RPC: one method per command and query of an actor --------------
 
-    let ports_rs = fs::read_to_string("src/ports.rs")?;
+    let composition_root_rs = fs::read_to_string("src/composition_root.rs")?;
 
     for file in post_it_files("src/application/commands")? {
         let command = format!("{}Command", pascal_case(&file));
-        let fired_by_a_policy = ports_rs.contains(&format!("register::<{command}>()"));
+        let fired_by_a_policy = composition_root_rs.contains(&format!("register::<{command}>()"));
 
         if !fired_by_a_policy {
             let command_use = format!("use crate::application::commands::{file}::{command};");
@@ -604,19 +606,20 @@ fn generate_http(http: &str) -> CliResult {
     Ok(())
 }
 
-/// The lines a project without a database has in `ports.rs` and `main.rs`, which `cerne g db` swaps for the database.
-const NO_DATABASE_PORTS_DOC: &str = "/// No database yet (`cerne g db` adds one): the outbox lives in memory, and a transaction is only the same ports. If
-/// the process dies, the commands the policies fired and that did not run yet are lost.";
-const DATABASE_PORTS_DOC: &str =
+/// The lines a project without a database has in `composition_root.rs` and `main.rs`, which `cerne g db` swaps for the
+/// database.
+const NO_DATABASE_COMPOSITION_ROOT_DOC: &str = "/// No database yet (`cerne g db` adds one): the outbox lives in memory, and a transaction is only the same composition root.
+/// If the process dies, the commands the policies fired and that did not run yet are lost.";
+const DATABASE_COMPOSITION_ROOT_DOC: &str =
     "/// The repositories and the outbox live in the database, so they follow its transaction. External systems do not:
-/// `begin` hands the same adapters to the new ports.";
+/// `begin` hands the same adapters to the new composition root.";
 const NO_DATABASE_SETUP: &str =
     "    // No database yet (`cerne g db` adds one): the commands of the policies wait in memory.
     let in_memory_outbox = InMemoryOutbox::new();";
 
 /// `cerne g db memory|sqlite|postgres`: the database of a project created without `--db`, as `cerne new --db` writes
-/// it: `sqlx` and the adapters of `cerne`, the outbox table, the `Ports` on the database, and the SQL repository of
-/// every aggregate that already exists.
+/// it: `sqlx` and the adapters of `cerne`, the outbox table, the `CompositionRoot` on the database, and the SQL
+/// repository of every aggregate that already exists.
 fn generate_db(db: &str) -> CliResult {
     if !["memory", "sqlite", "postgres"].contains(&db) {
         return Err(format!("cerne g db takes memory|sqlite|postgres, not {db}").into());
@@ -688,25 +691,28 @@ fn generate_db(db: &str) -> CliResult {
 
     println!("created {migration}");
 
-    // --- ports.rs: the in-memory outbox becomes the database -----------------
+    // --- composition_root.rs: the in-memory outbox becomes the database ------
 
-    let ports_rs = fs::read_to_string("src/ports.rs")?
-        .replace(NO_DATABASE_PORTS_DOC, DATABASE_PORTS_DOC)
-        .replace("Box::new(in_memory_outbox.clone())", &format!("Box::new({outbox}::new(database.clone()))"))
+    let composition_root_rs = fs::read_to_string("src/composition_root.rs")?
+        .replace(NO_DATABASE_COMPOSITION_ROOT_DOC, DATABASE_COMPOSITION_ROOT_DOC)
+        .replace(
+            "Box::new(constructor.in_memory_outbox.clone())",
+            &format!("Box::new({outbox}::new(constructor.database.clone()))"),
+        )
         .replace("in_memory_outbox: InMemoryOutbox", &format!("database: {database}"))
         .replace("in_memory_outbox", "database")
         .replace("InMemoryOutbox, ", "");
 
-    if ports_rs.contains("InMemoryOutbox") {
-        return Err("src/ports.rs still uses InMemoryOutbox: swap it for the database by hand".into());
+    if composition_root_rs.contains("InMemoryOutbox") {
+        return Err("src/composition_root.rs still uses InMemoryOutbox: swap it for the database by hand".into());
     }
 
     let database_use = format!("use cerne::{module}::{{{database}, {outbox}}};");
 
-    fs::write("src/ports.rs", format!("{database_use}\n{ports_rs}"))?;
-    rustfmt(Path::new("src/ports.rs"));
+    fs::write("src/composition_root.rs", format!("{database_use}\n{composition_root_rs}"))?;
+    rustfmt(Path::new("src/composition_root.rs"));
 
-    println!("updated src/ports.rs");
+    println!("updated src/composition_root.rs");
 
     // --- main.rs: the database instead of the in-memory outbox ---------------
 
@@ -716,7 +722,7 @@ fn generate_db(db: &str) -> CliResult {
     if main_rs.contains(NO_DATABASE_SETUP) {
         let main_rs = main_rs
             .replace(NO_DATABASE_SETUP, &database_setup)
-            .replace("Ports::new(in_memory_outbox", "Ports::new(database")
+            .replace("CompositionRootConstructor { in_memory_outbox }", "CompositionRootConstructor { database }")
             .replace("{InMemoryOutbox, OutboxPolicyProcessor}", "OutboxPolicyProcessor");
 
         fs::write("src/main.rs", format!("use cerne::{module}::{database};\n{main_rs}"))?;
@@ -725,7 +731,7 @@ fn generate_db(db: &str) -> CliResult {
         println!("updated src/main.rs");
     } else {
         println!(
-            "src/main.rs changed since cerne new: build the Ports on the database by hand, as in\n\n{database_setup}\n"
+            "src/main.rs changed since cerne new: build the CompositionRoot on the database by hand, as in\n\n{database_setup}\n"
         );
     }
 
@@ -735,7 +741,9 @@ fn generate_db(db: &str) -> CliResult {
         add_repository(&aggregate.name, &aggregate.file, &aggregate.id_type, &aggregate.fields)?;
     }
 
-    println!("tests that build Ports::new(InMemoryOutbox::new()) now need the database, as src/main.rs builds it");
+    println!(
+        "tests that build the CompositionRootConstructor on an InMemoryOutbox now need the database, as src/main.rs builds it"
+    );
 
     Ok(())
 }

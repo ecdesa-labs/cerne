@@ -11,14 +11,17 @@ use tokio::task::JoinHandle;
 ///
 /// When those commands run (right away, in the background, from an outbox table) is up to the implementation.
 #[async_trait]
-pub trait PolicyProcessor<Ports: 'static>: Send + Sync {
+pub trait PolicyProcessor<CompositionRoot: 'static>: Send + Sync {
     /// Runs the command, and then the commands its events trigger in turn.
-    async fn send_command(&self, command: Box<dyn Command<Ports, Output = ()>>) -> Result<(), Error>;
+    async fn send_command(&self, command: Box<dyn Command<CompositionRoot, Output = ()>>) -> Result<(), Error>;
 
     /// Triggers the policies of every event and sends the commands they return; returns the names of the policies that fired.
     ///
     /// If the invariants of any event fail, no command is sent.
-    async fn send_events(&self, events: Vec<Box<dyn DomainEvent<Ports>>>) -> Result<Vec<&'static str>, Error> {
+    async fn send_events(
+        &self,
+        events: Vec<Box<dyn DomainEvent<CompositionRoot>>>,
+    ) -> Result<Vec<&'static str>, Error> {
         let mut fired = vec![];
         for event in events {
             fired.extend(event.trigger_policies()?);
@@ -42,18 +45,18 @@ pub trait PolicyProcessor<Ports: 'static>: Send + Sync {
 /// # use cerne::application::{Command, Executed};
 /// # use cerne::domain::{DomainEvent, EnforcementResult, FiredPolicy, Policies, policy};
 /// # use cerne::{Error, async_trait};
-/// # struct Ports;
+/// # struct CompositionRoot;
 /// # #[derive(serde::Serialize)]
 /// # struct ReserveStockCommand;
 /// # #[async_trait]
-/// # impl Command<Ports> for ReserveStockCommand {
+/// # impl Command<CompositionRoot> for ReserveStockCommand {
 /// #     type Output = ();
 /// #
-/// #     async fn execute(&self, _: &Ports) -> Result<Executed<(), Ports>, Error> { Ok(Executed { output: (), events: vec![] }) }
+/// #     async fn execute(&self, _: &CompositionRoot) -> Result<Executed<(), CompositionRoot>, Error> { Ok(Executed { output: (), events: vec![] }) }
 /// # }
 /// # struct OrderPlaced;
-/// # impl DomainEvent<Ports> for OrderPlaced {
-/// #     fn trigger_policies(&self) -> EnforcementResult<Vec<FiredPolicy<Ports>>> {
+/// # impl DomainEvent<CompositionRoot> for OrderPlaced {
+/// #     fn trigger_policies(&self) -> EnforcementResult<Vec<FiredPolicy<CompositionRoot>>> {
 /// #         Ok(Policies::trigger([policy!("reserve stock", true, ReserveStockCommand)]))
 /// #     }
 /// # }
@@ -62,32 +65,34 @@ pub trait PolicyProcessor<Ports: 'static>: Send + Sync {
 ///
 /// # #[tokio::main]
 /// # async fn main() -> Result<(), Error> {
-/// let sync_policy_processor = InlinePolicyProcessor::new(Arc::new(Ports));
+/// let sync_policy_processor = InlinePolicyProcessor::new(Arc::new(CompositionRoot));
 ///
-/// let place_order_events: Vec<Box<dyn DomainEvent<Ports>>> = vec![Box::new(OrderPlaced)];
+/// let place_order_events: Vec<Box<dyn DomainEvent<CompositionRoot>>> = vec![Box::new(OrderPlaced)];
 /// let fired_policies = sync_policy_processor.send_events(place_order_events).await?; // ReserveStockCommand already ran
 ///
 /// assert_eq!(fired_policies, vec!["reserve stock"]);
 /// # Ok(())
 /// # }
 /// ```
-pub struct InlinePolicyProcessor<Ports> {
-    ports: Arc<Ports>,
+pub struct InlinePolicyProcessor<CompositionRoot> {
+    composition_root: Arc<CompositionRoot>,
 }
 
-impl<Ports> InlinePolicyProcessor<Ports> {
-    pub fn new(ports: Arc<Ports>) -> Self {
-        Self { ports }
+impl<CompositionRoot> InlinePolicyProcessor<CompositionRoot> {
+    pub fn new(composition_root: Arc<CompositionRoot>) -> Self {
+        Self { composition_root }
     }
 }
 
 #[async_trait]
-impl<Ports: Send + Sync + 'static> PolicyProcessor<Ports> for InlinePolicyProcessor<Ports> {
-    async fn send_command(&self, command: Box<dyn Command<Ports, Output = ()>>) -> Result<(), Error> {
+impl<CompositionRoot: Send + Sync + 'static> PolicyProcessor<CompositionRoot>
+    for InlinePolicyProcessor<CompositionRoot>
+{
+    async fn send_command(&self, command: Box<dyn Command<CompositionRoot, Output = ()>>) -> Result<(), Error> {
         let mut pending = VecDeque::from([command]);
 
         while let Some(command) = pending.pop_front() {
-            pending.extend(run(command, &self.ports).await?);
+            pending.extend(run(command, &self.composition_root).await?);
         }
 
         Ok(())
@@ -102,18 +107,18 @@ impl<Ports: Send + Sync + 'static> PolicyProcessor<Ports> for InlinePolicyProces
 /// # use cerne::application::{Command, Executed};
 /// # use cerne::domain::{DomainEvent, EnforcementResult, FiredPolicy, Policies, policy};
 /// # use cerne::{Error, async_trait};
-/// # struct Ports;
+/// # struct CompositionRoot;
 /// # #[derive(serde::Serialize)]
 /// # struct ReserveStockCommand;
 /// # #[async_trait]
-/// # impl Command<Ports> for ReserveStockCommand {
+/// # impl Command<CompositionRoot> for ReserveStockCommand {
 /// #     type Output = ();
 /// #
-/// #     async fn execute(&self, _: &Ports) -> Result<Executed<(), Ports>, Error> { Ok(Executed { output: (), events: vec![] }) }
+/// #     async fn execute(&self, _: &CompositionRoot) -> Result<Executed<(), CompositionRoot>, Error> { Ok(Executed { output: (), events: vec![] }) }
 /// # }
 /// # struct OrderPlaced;
-/// # impl DomainEvent<Ports> for OrderPlaced {
-/// #     fn trigger_policies(&self) -> EnforcementResult<Vec<FiredPolicy<Ports>>> {
+/// # impl DomainEvent<CompositionRoot> for OrderPlaced {
+/// #     fn trigger_policies(&self) -> EnforcementResult<Vec<FiredPolicy<CompositionRoot>>> {
 /// #         Ok(Policies::trigger([policy!("reserve stock", true, ReserveStockCommand)]))
 /// #     }
 /// # }
@@ -122,32 +127,32 @@ impl<Ports: Send + Sync + 'static> PolicyProcessor<Ports> for InlinePolicyProces
 ///
 /// # #[tokio::main]
 /// # async fn main() -> Result<(), Error> {
-/// let async_policy_processor = TokioPolicyProcessor::spawn(Arc::new(Ports), |error| eprintln!("{error}"));
+/// let async_policy_processor = TokioPolicyProcessor::spawn(Arc::new(CompositionRoot), |error| eprintln!("{error}"));
 ///
-/// let place_order_events: Vec<Box<dyn DomainEvent<Ports>>> = vec![Box::new(OrderPlaced)];
+/// let place_order_events: Vec<Box<dyn DomainEvent<CompositionRoot>>> = vec![Box::new(OrderPlaced)];
 /// async_policy_processor.send_events(place_order_events).await?; // ReserveStockCommand runs in the background
 ///
 /// async_policy_processor.shutdown().await?; // waits for every command sent
 /// # Ok(())
 /// # }
 /// ```
-pub struct TokioPolicyProcessor<Ports> {
-    commands: mpsc::UnboundedSender<Box<dyn Command<Ports, Output = ()>>>,
+pub struct TokioPolicyProcessor<CompositionRoot> {
+    commands: mpsc::UnboundedSender<Box<dyn Command<CompositionRoot, Output = ()>>>,
     task: JoinHandle<()>,
 }
 
-impl<Ports: Send + Sync + 'static> TokioPolicyProcessor<Ports> {
+impl<CompositionRoot: Send + Sync + 'static> TokioPolicyProcessor<CompositionRoot> {
     /// Spawns the task. A failing command goes to `on_error`, and the task moves on to the next one.
     /// Must be called inside a `tokio` runtime.
-    pub fn spawn(ports: Arc<Ports>, on_error: impl Fn(Error) + Send + 'static) -> Self {
-        let (commands, mut received) = mpsc::unbounded_channel::<Box<dyn Command<Ports, Output = ()>>>();
+    pub fn spawn(composition_root: Arc<CompositionRoot>, on_error: impl Fn(Error) + Send + 'static) -> Self {
+        let (commands, mut received) = mpsc::unbounded_channel::<Box<dyn Command<CompositionRoot, Output = ()>>>();
 
         let task = tokio::spawn(async move {
             while let Some(command) = received.recv().await {
                 let mut pending = VecDeque::from([command]);
 
                 while let Some(command) = pending.pop_front() {
-                    match run(command, &ports).await {
+                    match run(command, &composition_root).await {
                         Ok(next) => pending.extend(next),
                         Err(error) => on_error(error),
                     }
@@ -171,8 +176,10 @@ impl<Ports: Send + Sync + 'static> TokioPolicyProcessor<Ports> {
 }
 
 #[async_trait]
-impl<Ports: Send + Sync + 'static> PolicyProcessor<Ports> for TokioPolicyProcessor<Ports> {
-    async fn send_command(&self, command: Box<dyn Command<Ports, Output = ()>>) -> Result<(), Error> {
+impl<CompositionRoot: Send + Sync + 'static> PolicyProcessor<CompositionRoot>
+    for TokioPolicyProcessor<CompositionRoot>
+{
+    async fn send_command(&self, command: Box<dyn Command<CompositionRoot, Output = ()>>) -> Result<(), Error> {
         self.commands
             .send(command)
             .map_err(|_| InfrastructureError::from(anyhow::anyhow!("policy processor stopped")))?;
@@ -182,12 +189,12 @@ impl<Ports: Send + Sync + 'static> PolicyProcessor<Ports> for TokioPolicyProcess
 }
 
 /// Runs one command and returns the commands its events trigger.
-async fn run<Ports>(
-    command: Box<dyn Command<Ports, Output = ()>>,
-    ports: &Ports,
-) -> Result<Vec<Box<dyn Command<Ports, Output = ()>>>, Error> {
+async fn run<CompositionRoot>(
+    command: Box<dyn Command<CompositionRoot, Output = ()>>,
+    composition_root: &CompositionRoot,
+) -> Result<Vec<Box<dyn Command<CompositionRoot, Output = ()>>>, Error> {
     let mut next = vec![];
-    let execution = command.execute(ports).await?;
+    let execution = command.execute(composition_root).await?;
 
     for event in execution.events {
         next.extend(event.trigger_policies()?.into_iter().map(|p| p.command));
@@ -208,7 +215,7 @@ mod tests {
     use std::sync::Mutex;
 
     #[derive(Default)]
-    struct Ports {
+    struct CompositionRoot {
         log: Mutex<Vec<&'static str>>,
     }
 
@@ -226,11 +233,11 @@ mod tests {
     struct StockReserved;
 
     #[async_trait]
-    impl Command<Ports> for PlaceOrderCommand {
+    impl Command<CompositionRoot> for PlaceOrderCommand {
         type Output = ();
 
-        async fn execute(&self, ports: &Ports) -> Result<Executed<(), Ports>, Error> {
-            ports.log.lock().unwrap().push("order placed");
+        async fn execute(&self, composition_root: &CompositionRoot) -> Result<Executed<(), CompositionRoot>, Error> {
+            composition_root.log.lock().unwrap().push("order placed");
 
             let order_placed = OrderPlaced { has_items: true };
 
@@ -242,11 +249,11 @@ mod tests {
     }
 
     #[async_trait]
-    impl Command<Ports> for ReserveStockCommand {
+    impl Command<CompositionRoot> for ReserveStockCommand {
         type Output = ();
 
-        async fn execute(&self, ports: &Ports) -> Result<Executed<(), Ports>, Error> {
-            ports.log.lock().unwrap().push("stock reserved");
+        async fn execute(&self, composition_root: &CompositionRoot) -> Result<Executed<(), CompositionRoot>, Error> {
+            composition_root.log.lock().unwrap().push("stock reserved");
 
             let stock_reserved = StockReserved;
 
@@ -258,11 +265,11 @@ mod tests {
     }
 
     #[async_trait]
-    impl Command<Ports> for ShipOrderCommand {
+    impl Command<CompositionRoot> for ShipOrderCommand {
         type Output = ();
 
-        async fn execute(&self, ports: &Ports) -> Result<Executed<(), Ports>, Error> {
-            ports.log.lock().unwrap().push("order shipped");
+        async fn execute(&self, composition_root: &CompositionRoot) -> Result<Executed<(), CompositionRoot>, Error> {
+            composition_root.log.lock().unwrap().push("order shipped");
 
             Ok(Executed {
                 output: (),
@@ -272,16 +279,16 @@ mod tests {
     }
 
     #[async_trait]
-    impl Command<Ports> for FailingCommand {
+    impl Command<CompositionRoot> for FailingCommand {
         type Output = ();
 
-        async fn execute(&self, _: &Ports) -> Result<Executed<(), Ports>, Error> {
+        async fn execute(&self, _: &CompositionRoot) -> Result<Executed<(), CompositionRoot>, Error> {
             Err(DomainError::Violations(vec!["always fails"]))?
         }
     }
 
-    impl DomainEvent<Ports> for OrderPlaced {
-        fn trigger_policies(&self) -> EnforcementResult<Vec<FiredPolicy<Ports>>> {
+    impl DomainEvent<CompositionRoot> for OrderPlaced {
+        fn trigger_policies(&self) -> EnforcementResult<Vec<FiredPolicy<CompositionRoot>>> {
             let has_items = self.has_items;
 
             Invariants::enforce([invariant!("order has items", has_items)])?;
@@ -292,8 +299,8 @@ mod tests {
         }
     }
 
-    impl DomainEvent<Ports> for StockReserved {
-        fn trigger_policies(&self) -> EnforcementResult<Vec<FiredPolicy<Ports>>> {
+    impl DomainEvent<CompositionRoot> for StockReserved {
+        fn trigger_policies(&self) -> EnforcementResult<Vec<FiredPolicy<CompositionRoot>>> {
             let ship_order_policy = policy!("ship order", true, ShipOrderCommand);
 
             Ok(Policies::trigger([ship_order_policy]))
@@ -302,21 +309,21 @@ mod tests {
 
     #[tokio::test]
     async fn inline_processor_runs_the_whole_chain_before_returning() {
-        let ports = Arc::new(Ports::default());
-        let sync_policy_processor = InlinePolicyProcessor::new(Arc::clone(&ports));
+        let composition_root = Arc::new(CompositionRoot::default());
+        let sync_policy_processor = InlinePolicyProcessor::new(Arc::clone(&composition_root));
 
         sync_policy_processor
             .send_command(Box::new(PlaceOrderCommand))
             .await
             .unwrap();
 
-        assert_eq!(*ports.log.lock().unwrap(), vec!["order placed", "stock reserved", "order shipped"]);
+        assert_eq!(*composition_root.log.lock().unwrap(), vec!["order placed", "stock reserved", "order shipped"]);
     }
 
     #[tokio::test]
     async fn inline_processor_returns_the_error_of_a_failing_command() {
-        let ports = Arc::new(Ports::default());
-        let sync_policy_processor = InlinePolicyProcessor::new(Arc::clone(&ports));
+        let composition_root = Arc::new(CompositionRoot::default());
+        let sync_policy_processor = InlinePolicyProcessor::new(Arc::clone(&composition_root));
 
         let result = sync_policy_processor
             .send_command(Box::new(FailingCommand))
@@ -327,36 +334,37 @@ mod tests {
 
     #[tokio::test]
     async fn send_events_sends_the_commands_of_the_fired_policies() {
-        let ports = Arc::new(Ports::default());
-        let sync_policy_processor = InlinePolicyProcessor::new(Arc::clone(&ports));
+        let composition_root = Arc::new(CompositionRoot::default());
+        let sync_policy_processor = InlinePolicyProcessor::new(Arc::clone(&composition_root));
 
-        let place_order_events: Vec<Box<dyn DomainEvent<Ports>>> = vec![Box::new(OrderPlaced { has_items: true })];
+        let place_order_events: Vec<Box<dyn DomainEvent<CompositionRoot>>> =
+            vec![Box::new(OrderPlaced { has_items: true })];
         let fired_policies = sync_policy_processor
             .send_events(place_order_events)
             .await
             .unwrap();
 
         assert_eq!(fired_policies, vec!["reserve stock"]);
-        assert_eq!(*ports.log.lock().unwrap(), vec!["stock reserved", "order shipped"]);
+        assert_eq!(*composition_root.log.lock().unwrap(), vec!["stock reserved", "order shipped"]);
     }
 
     #[tokio::test]
     async fn send_events_sends_nothing_when_an_event_is_invalid() {
-        let ports = Arc::new(Ports::default());
-        let sync_policy_processor = InlinePolicyProcessor::new(Arc::clone(&ports));
+        let composition_root = Arc::new(CompositionRoot::default());
+        let sync_policy_processor = InlinePolicyProcessor::new(Arc::clone(&composition_root));
 
-        let events: Vec<Box<dyn DomainEvent<Ports>>> =
+        let events: Vec<Box<dyn DomainEvent<CompositionRoot>>> =
             vec![Box::new(StockReserved), Box::new(OrderPlaced { has_items: false })];
         let result = sync_policy_processor.send_events(events).await;
 
         assert!(matches!(result, Err(Error::Domain(_))));
-        assert!(ports.log.lock().unwrap().is_empty());
+        assert!(composition_root.log.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
     async fn tokio_processor_runs_the_whole_chain_before_shutdown_returns() {
-        let ports = Arc::new(Ports::default());
-        let async_policy_processor = TokioPolicyProcessor::spawn(Arc::clone(&ports), |_| {});
+        let composition_root = Arc::new(CompositionRoot::default());
+        let async_policy_processor = TokioPolicyProcessor::spawn(Arc::clone(&composition_root), |_| {});
 
         async_policy_processor
             .send_command(Box::new(PlaceOrderCommand))
@@ -364,15 +372,15 @@ mod tests {
             .unwrap();
         async_policy_processor.shutdown().await.unwrap();
 
-        assert_eq!(*ports.log.lock().unwrap(), vec!["order placed", "stock reserved", "order shipped"]);
+        assert_eq!(*composition_root.log.lock().unwrap(), vec!["order placed", "stock reserved", "order shipped"]);
     }
 
     #[tokio::test]
     async fn tokio_processor_sends_a_failing_command_to_on_error_and_moves_on() {
-        let ports = Arc::new(Ports::default());
+        let composition_root = Arc::new(CompositionRoot::default());
         let errors = Arc::new(Mutex::new(vec![]));
         let captured = Arc::clone(&errors);
-        let async_policy_processor = TokioPolicyProcessor::spawn(Arc::clone(&ports), move |error| {
+        let async_policy_processor = TokioPolicyProcessor::spawn(Arc::clone(&composition_root), move |error| {
             captured.lock().unwrap().push(error.to_string())
         });
 
@@ -387,6 +395,6 @@ mod tests {
         async_policy_processor.shutdown().await.unwrap();
 
         assert_eq!(*errors.lock().unwrap(), vec![r#"violated: ["always fails"]"#]);
-        assert_eq!(*ports.log.lock().unwrap(), vec!["order shipped"]);
+        assert_eq!(*composition_root.log.lock().unwrap(), vec!["order shipped"]);
     }
 }

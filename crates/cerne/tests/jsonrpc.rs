@@ -1,7 +1,7 @@
 //! JSON-RPC 2.0: the body becomes a `Request` or an error, and the `params` come by name or by position.
 #![cfg(all(feature = "axum", feature = "sqlite"))]
 
-use cerne::application::{Command, Executed, Outbox, Query, ReadModel, TransactionalPorts};
+use cerne::application::{Command, Executed, Outbox, Query, ReadModel, TransactionalCompositionRoot};
 use cerne::domain::{BusinessRules, business_rule};
 use cerne::http::jsonrpc::{ErrorObject, Methods, Request};
 use cerne::sqlite::{SqliteDatabase, SqliteOutbox};
@@ -11,12 +11,12 @@ use serde_json::{Value, json};
 
 // --- Ports -------------------------------------------------------------------
 
-struct Ports {
+struct CompositionRoot {
     database: SqliteDatabase,
     outbox: SqliteOutbox,
 }
 
-impl Ports {
+impl CompositionRoot {
     fn new(database: SqliteDatabase) -> Self {
         Self {
             outbox: SqliteOutbox::new(database.clone()),
@@ -26,11 +26,11 @@ impl Ports {
 }
 
 #[async_trait]
-impl TransactionalPorts for Ports {
+impl TransactionalCompositionRoot for CompositionRoot {
     async fn begin(&self) -> Result<Self, Error> {
         let transaction = self.database.begin().await?;
 
-        Ok(Ports::new(transaction))
+        Ok(CompositionRoot::new(transaction))
     }
 
     async fn commit(self) -> Result<(), Error> {
@@ -42,10 +42,10 @@ impl TransactionalPorts for Ports {
     }
 }
 
-async fn ports() -> Ports {
+async fn composition_root() -> CompositionRoot {
     let database = SqliteDatabase::in_memory().await.unwrap();
 
-    Ports::new(database)
+    CompositionRoot::new(database)
 }
 
 // --- Command and query -------------------------------------------------------
@@ -58,10 +58,10 @@ struct SendMoneyCommand {
 }
 
 #[async_trait]
-impl Command<Ports> for SendMoneyCommand {
+impl Command<CompositionRoot> for SendMoneyCommand {
     type Output = String;
 
-    async fn execute(&self, _ports: &Ports) -> Result<Executed<String, Ports>, Error> {
+    async fn execute(&self, _ports: &CompositionRoot) -> Result<Executed<String, CompositionRoot>, Error> {
         // --- Business rules --------------------------------------------------
 
         let amount_is_positive = self.amount > 0;
@@ -97,10 +97,10 @@ struct Balance {
 impl ReadModel for Balance {}
 
 #[async_trait]
-impl Query<Ports> for BalanceQuery {
+impl Query<CompositionRoot> for BalanceQuery {
     type ReadModel = Balance;
 
-    async fn execute(&self, _ports: &Ports) -> Result<Balance, Error> {
+    async fn execute(&self, _ports: &CompositionRoot) -> Result<Balance, Error> {
         Ok(Balance {
             owner: self.owner.clone(),
             amount: 1000,
@@ -112,8 +112,8 @@ impl Query<Ports> for BalanceQuery {
 
 #[tokio::test]
 async fn a_command_reads_its_params_by_name_or_by_position() {
-    let ports = ports().await;
-    let methods = Methods::new(&ports);
+    let composition_root = composition_root().await;
+    let methods = Methods::new(&composition_root);
 
     let by_name = json!({ "sender": "alice", "recipient": "bob", "amount": 100 });
     let by_position = json!(["alice", "bob", 100]);
@@ -127,8 +127,8 @@ async fn a_command_reads_its_params_by_name_or_by_position() {
 
 #[tokio::test]
 async fn a_query_reads_its_params_by_name_or_by_position() {
-    let ports = ports().await;
-    let methods = Methods::new(&ports);
+    let composition_root = composition_root().await;
+    let methods = Methods::new(&composition_root);
 
     let by_name = methods
         .query::<BalanceQuery>(json!({ "owner": "alice" }))
@@ -141,8 +141,8 @@ async fn a_query_reads_its_params_by_name_or_by_position() {
 
 #[tokio::test]
 async fn params_that_are_neither_an_array_nor_an_object_are_invalid() {
-    let ports = ports().await;
-    let methods = Methods::new(&ports);
+    let composition_root = composition_root().await;
+    let methods = Methods::new(&composition_root);
 
     for params in [json!("alice"), json!(100), json!(true)] {
         let error = methods
@@ -162,8 +162,8 @@ async fn params_that_are_neither_an_array_nor_an_object_are_invalid() {
 
 #[tokio::test]
 async fn the_violations_go_in_the_message_that_a_wallet_shows() {
-    let ports = ports().await;
-    let methods = Methods::new(&ports);
+    let composition_root = composition_root().await;
+    let methods = Methods::new(&composition_root);
 
     let error = methods
         .command::<SendMoneyCommand>(json!(["alice", "alice", 0]))

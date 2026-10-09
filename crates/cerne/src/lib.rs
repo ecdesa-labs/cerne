@@ -133,7 +133,7 @@ pub mod domain {
     ///     }
     /// }
     ///
-    /// struct Ports {
+    /// struct CompositionRoot {
     ///     order_repository: Box<dyn Repository<Order>>,
     /// }
     /// ```

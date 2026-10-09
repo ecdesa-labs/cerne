@@ -4,13 +4,13 @@
 
 | Sticky note | Concept | In Cerne |
 |---|---|---|
-| 🟦 | Command | trait `Command<Ports>`, which returns `Executed { output, events }` |
+| 🟦 | Command | trait `Command<CompositionRoot>`, which returns `Executed { output, events }` |
 | 🟨 | Aggregate / Entity | attributes `#[entity]` and `#[aggregate]`, which write the traits `Entity` and `Aggregate`; the invariants go in the trait `Validate` |
 | — | Value Object | trait `ValueObject`, also the type of every entity id; attribute `#[value_object]`, for a value object of one value |
-| 🟧 | Domain Event | trait `DomainEvent<Ports>` |
+| 🟧 | Domain Event | trait `DomainEvent<CompositionRoot>` |
 | 🟪 | Policy | `Policy` + `Policies`; their commands go to the `Outbox`, and the `OutboxPolicyProcessor` runs them |
-| 🩷 | External System | a port (an async trait of the application) and its adapters, gathered in the composition root `Ports` |
-| 🟩 | Read Model / Query | trait `Query<Ports>`, which returns a `ReadModel` |
+| 🩷 | External System | a port (an async trait of the application) and its adapters, gathered in the `CompositionRoot` |
+| 🟩 | Read Model / Query | trait `Query<CompositionRoot>`, which returns a `ReadModel` |
 | — | Invariants | `Invariant` + `Invariants`: what is always true about an entity or a value object |
 | — | Business rules | `BusinessRule` + `BusinessRules`: what must hold for a command to run |
 | — | Database | `cerne::sqlite` (also in memory) and `cerne::postgres`: the same API, the same SQL |
@@ -145,7 +145,7 @@ Connects `OrderSummary` to the route `GET /orders`.
 cerne g endpoint OrderSummary GET /orders
 ```
 
-The fields are `name:type`, and `status=Placed:Placed,Paid` creates an enum with the values `Placed` and `Paid` that starts at `Placed`. After each command the project still compiles. `--aggregate` also adds the field `orders` to the `Ports`, and `--policy` registers the command in the outbox.
+The fields are `name:type`, and `status=Placed:Placed,Paid` creates an enum with the values `Placed` and `Paid` that starts at `Placed`. After each command the project still compiles. `--aggregate` also adds the field `order_repository` to the `CompositionRoot`, and `--policy` registers the command in the outbox.
 
 ```console
 $ tree shop
@@ -172,6 +172,7 @@ shop
 │   │   └── read_models
 │   │       ├── mod.rs
 │   │       └── order_summary.rs
+│   ├── composition_root.rs
 │   ├── domain
 │   │   ├── entities
 │   │   │   ├── mod.rs
@@ -194,8 +195,7 @@ shop
 │   │   ├── mod.rs
 │   │   └── sqlite_order_repository.rs
 │   ├── lib.rs
-│   ├── main.rs
-│   └── ports.rs
+│   └── main.rs
 └── tests
     └── board.rs
 ```
@@ -523,50 +523,59 @@ impl Payments for InMemoryPayments {
 }
 ```
 
-The `Ports` gather every port. `cerne g entity --aggregate` already added the `orders` repository; the two external systems are added by hand. The repository and the outbox live in the database, so `begin` opens a transaction and hands them to the new `Ports`. The external systems stay the same, because a call to them cannot be rolled back.
+The `CompositionRoot` gathers every port. `cerne g entity --aggregate` already added the `order_repository`; the two external systems are added by hand. The repository and the outbox live in the database, so `begin` opens a transaction and hands them to the new `CompositionRoot`. The external systems stay the same, because a call to them cannot be rolled back.
 
-The `src/ports.rs` as `cerne new shop --db sqlite --http rest`, `cerne g entity Order product:String quantity:u32 total:u64 status=Placed:Placed,Paid --aggregate` and `cerne g command ChargeOrder order_id:OrderId total:u64 --policy` generated it:
+The `src/composition_root.rs` as `cerne new shop --db sqlite --http rest`, `cerne g entity Order product:String quantity:u32 total:u64 status=Placed:Placed,Paid --aggregate` and `cerne g command ChargeOrder order_id:OrderId total:u64 --policy` generated it:
 
-<!-- generated: src/ports.rs -->
+<!-- generated: src/composition_root.rs -->
 ```rust
 use crate::application::commands::charge_order::ChargeOrderCommand;
 use crate::domain::entities::order::Order;
 use crate::infrastructure::sqlite_order_repository::SqliteOrderRepository;
-use cerne::application::{CommandRegistry, Outbox, Repository, TransactionalPorts};
+use cerne::application::{CommandRegistry, Outbox, Repository, TransactionalCompositionRoot};
 use cerne::sqlite::{SqliteDatabase, SqliteOutbox};
 use cerne::{Error, async_trait};
 
 /// The composition root: every port the commands and queries can use.
 ///
 /// The repositories and the outbox live in the database, so they follow its transaction. External systems do not:
-/// `begin` hands the same adapters to the new ports.
-pub struct Ports {
+/// `begin` hands the same adapters to the new composition root.
+pub struct CompositionRoot {
     pub database: SqliteDatabase,
     pub order_repository: Box<dyn Repository<Order>>,
-    pub outbox: Box<dyn Outbox<Ports>>,
+    pub outbox: Box<dyn Outbox<CompositionRoot>>,
 }
 
-impl Ports {
-    pub fn new(database: SqliteDatabase) -> Self {
+/// What `CompositionRoot::new` takes: the adapters the composition root is built from.
+pub struct CompositionRootConstructor {
+    pub database: SqliteDatabase,
+}
+
+impl CompositionRoot {
+    pub fn new(constructor: CompositionRootConstructor) -> Self {
         Self {
-            order_repository: Box::new(SqliteOrderRepository::new(database.clone())),
-            outbox: Box::new(SqliteOutbox::new(database.clone())),
-            database,
+            order_repository: Box::new(SqliteOrderRepository::new(constructor.database.clone())),
+            outbox: Box::new(SqliteOutbox::new(constructor.database.clone())),
+            database: constructor.database,
         }
     }
 }
 
 /// Every command a policy fires, so the outbox can read it back from its row.
-pub fn command_registry() -> CommandRegistry<Ports> {
+pub fn command_registry() -> CommandRegistry<CompositionRoot> {
     CommandRegistry::new().register::<ChargeOrderCommand>()
 }
 
 #[async_trait]
-impl TransactionalPorts for Ports {
+impl TransactionalCompositionRoot for CompositionRoot {
     async fn begin(&self) -> Result<Self, Error> {
         let transaction = self.database.begin().await?;
 
-        Ok(Ports::new(transaction))
+        let composition_root_constructor = CompositionRootConstructor {
+            database: transaction,
+        };
+
+        Ok(CompositionRoot::new(composition_root_constructor))
     }
 
     async fn commit(self) -> Result<(), Error> {
@@ -581,14 +590,14 @@ impl TransactionalPorts for Ports {
 
 Filled in:
 
-<!-- file: src/ports.rs -->
+<!-- file: src/composition_root.rs -->
 ```rust
 use crate::application::commands::charge_order::ChargeOrderCommand;
 use crate::application::ports::catalog::Catalog;
 use crate::application::ports::payments::Payments;
 use crate::domain::entities::order::Order;
 use crate::infrastructure::sqlite_order_repository::SqliteOrderRepository;
-use cerne::application::{CommandRegistry, Outbox, Repository, TransactionalPorts};
+use cerne::application::{CommandRegistry, Outbox, Repository, TransactionalCompositionRoot};
 use cerne::sqlite::{SqliteDatabase, SqliteOutbox};
 use cerne::{Error, async_trait};
 use std::sync::Arc;
@@ -596,41 +605,51 @@ use std::sync::Arc;
 /// The composition root: every port the commands and queries can use.
 ///
 /// The repositories and the outbox live in the database, so they follow its transaction. External systems do not:
-/// `begin` hands the same adapters to the new ports.
-pub struct Ports {
+/// `begin` hands the same adapters to the new composition root.
+pub struct CompositionRoot {
     pub database: SqliteDatabase,
     pub order_repository: Box<dyn Repository<Order>>,
-    pub outbox: Box<dyn Outbox<Ports>>,
+    pub outbox: Box<dyn Outbox<CompositionRoot>>,
     pub catalog: Arc<dyn Catalog>,
     pub payments: Arc<dyn Payments>,
 }
 
-impl Ports {
-    pub fn new(database: SqliteDatabase, catalog: Arc<dyn Catalog>, payments: Arc<dyn Payments>) -> Self {
+/// What `CompositionRoot::new` takes: the adapters the composition root is built from.
+pub struct CompositionRootConstructor {
+    pub database: SqliteDatabase,
+    pub catalog: Arc<dyn Catalog>,
+    pub payments: Arc<dyn Payments>,
+}
+
+impl CompositionRoot {
+    pub fn new(constructor: CompositionRootConstructor) -> Self {
         Self {
-            order_repository: Box::new(SqliteOrderRepository::new(database.clone())),
-            outbox: Box::new(SqliteOutbox::new(database.clone())),
-            database,
-            catalog,
-            payments,
+            order_repository: Box::new(SqliteOrderRepository::new(constructor.database.clone())),
+            outbox: Box::new(SqliteOutbox::new(constructor.database.clone())),
+            database: constructor.database,
+            catalog: constructor.catalog,
+            payments: constructor.payments,
         }
     }
 }
 
 /// Every command a policy fires, so the outbox can read it back from its row.
-pub fn command_registry() -> CommandRegistry<Ports> {
+pub fn command_registry() -> CommandRegistry<CompositionRoot> {
     CommandRegistry::new().register::<ChargeOrderCommand>()
 }
 
 #[async_trait]
-impl TransactionalPorts for Ports {
+impl TransactionalCompositionRoot for CompositionRoot {
     async fn begin(&self) -> Result<Self, Error> {
         let transaction = self.database.begin().await?;
 
-        let catalog = Arc::clone(&self.catalog);
-        let payments = Arc::clone(&self.payments);
+        let composition_root_constructor = CompositionRootConstructor {
+            database: transaction,
+            catalog: Arc::clone(&self.catalog),
+            payments: Arc::clone(&self.payments),
+        };
 
-        Ok(Ports::new(transaction, catalog, payments))
+        Ok(CompositionRoot::new(composition_root_constructor))
     }
 
     async fn commit(self) -> Result<(), Error> {
@@ -651,7 +670,7 @@ The `src/application/commands/place_order.rs` as `cerne g command PlaceOrder pro
 
 <!-- generated: src/application/commands/place_order.rs -->
 ```rust
-use crate::ports::Ports;
+use crate::composition_root::CompositionRoot;
 use cerne::application::{Command, Executed};
 use cerne::{Error, async_trait};
 use serde::{Deserialize, Serialize};
@@ -666,10 +685,10 @@ pub struct PlaceOrderCommand {
 }
 
 #[async_trait]
-impl Command<Ports> for PlaceOrderCommand {
+impl Command<CompositionRoot> for PlaceOrderCommand {
     type Output = ();
 
-    async fn execute(&self, _ports: &Ports) -> Result<Executed<(), Ports>, Error> {
+    async fn execute(&self, _ports: &CompositionRoot) -> Result<Executed<(), CompositionRoot>, Error> {
         // --- Ports -----------------------------------------------------------
 
         // --- Business rules --------------------------------------------------
@@ -690,10 +709,10 @@ Filled in:
 
 <!-- file: src/application/commands/place_order.rs -->
 ```rust
+use crate::composition_root::CompositionRoot;
 use crate::domain::entities::order::{Order, OrderConstructor};
 use crate::domain::events::order_placed::OrderPlaced;
 use crate::domain::value_objects::order_id::OrderId;
-use crate::ports::Ports;
 use cerne::application::{Command, Executed};
 use cerne::domain::{BusinessRules, Entity, business_rule};
 use cerne::{Error, async_trait};
@@ -707,14 +726,17 @@ pub struct PlaceOrderCommand {
 }
 
 #[async_trait]
-impl Command<Ports> for PlaceOrderCommand {
+impl Command<CompositionRoot> for PlaceOrderCommand {
     type Output = OrderId; // the id of the new order, for the customer to follow it
 
-    async fn execute(&self, ports: &Ports) -> Result<Executed<OrderId, Ports>, Error> {
+    async fn execute(&self, composition_root: &CompositionRoot) -> Result<Executed<OrderId, CompositionRoot>, Error> {
         // --- Ports -----------------------------------------------------------
 
-        let unit_price = ports.catalog.unit_price(&self.product).await?;
-        let units_in_stock = ports.catalog.units_in_stock(&self.product).await?;
+        let unit_price = composition_root.catalog.unit_price(&self.product).await?;
+        let units_in_stock = composition_root
+            .catalog
+            .units_in_stock(&self.product)
+            .await?;
 
         // --- Business rules --------------------------------------------------
 
@@ -732,7 +754,7 @@ impl Command<Ports> for PlaceOrderCommand {
             total,
         })?;
 
-        let order_id = ports.order_repository.save(order).await?;
+        let order_id = composition_root.order_repository.save(order).await?;
 
         // --- Domain events ---------------------------------------------------
 
@@ -762,8 +784,8 @@ The `src/domain/events/order_placed.rs` as `cerne g event OrderPlaced order_id:O
 
 <!-- generated: src/domain/events/order_placed.rs -->
 ```rust
+use crate::composition_root::CompositionRoot;
 use crate::domain::value_objects::order_id::OrderId;
-use crate::ports::Ports;
 use cerne::domain::{DomainEvent, EnforcementResult, FiredPolicy, Policies};
 
 pub struct OrderPlaced {
@@ -771,8 +793,8 @@ pub struct OrderPlaced {
     pub total: u64,
 }
 
-impl DomainEvent<Ports> for OrderPlaced {
-    fn trigger_policies(&self) -> EnforcementResult<Vec<FiredPolicy<Ports>>> {
+impl DomainEvent<CompositionRoot> for OrderPlaced {
+    fn trigger_policies(&self) -> EnforcementResult<Vec<FiredPolicy<CompositionRoot>>> {
         // --- Policies --------------------------------------------------------
 
         Ok(Policies::trigger([]))
@@ -785,8 +807,8 @@ Filled in:
 <!-- file: src/domain/events/order_placed.rs -->
 ```rust
 use crate::application::commands::charge_order::ChargeOrderCommand;
+use crate::composition_root::CompositionRoot;
 use crate::domain::value_objects::order_id::OrderId;
-use crate::ports::Ports;
 use cerne::domain::{DomainEvent, EnforcementResult, FiredPolicy, Policies, policy};
 
 pub struct OrderPlaced {
@@ -794,8 +816,8 @@ pub struct OrderPlaced {
     pub total: u64,
 }
 
-impl DomainEvent<Ports> for OrderPlaced {
-    fn trigger_policies(&self) -> EnforcementResult<Vec<FiredPolicy<Ports>>> {
+impl DomainEvent<CompositionRoot> for OrderPlaced {
+    fn trigger_policies(&self) -> EnforcementResult<Vec<FiredPolicy<CompositionRoot>>> {
         // --- Policies --------------------------------------------------------
 
         let order_id = self.order_id.clone();
@@ -819,8 +841,8 @@ The `src/application/commands/charge_order.rs` as `cerne g command ChargeOrder o
 
 <!-- generated: src/application/commands/charge_order.rs -->
 ```rust
+use crate::composition_root::CompositionRoot;
 use crate::domain::value_objects::order_id::OrderId;
-use crate::ports::Ports;
 use cerne::application::{Command, Executed};
 use cerne::{Error, async_trait};
 use serde::{Deserialize, Serialize};
@@ -833,10 +855,10 @@ pub struct ChargeOrderCommand {
 }
 
 #[async_trait]
-impl Command<Ports> for ChargeOrderCommand {
+impl Command<CompositionRoot> for ChargeOrderCommand {
     type Output = ();
 
-    async fn execute(&self, _ports: &Ports) -> Result<Executed<(), Ports>, Error> {
+    async fn execute(&self, _ports: &CompositionRoot) -> Result<Executed<(), CompositionRoot>, Error> {
         // --- Ports -----------------------------------------------------------
 
         // --- Business rules --------------------------------------------------
@@ -857,10 +879,10 @@ Filled in:
 
 <!-- file: src/application/commands/charge_order.rs -->
 ```rust
+use crate::composition_root::CompositionRoot;
 use crate::domain::entities::order::OrderStatus;
 use crate::domain::events::order_paid::OrderPaid;
 use crate::domain::value_objects::order_id::OrderId;
-use crate::ports::Ports;
 use cerne::application::{Command, Executed};
 use cerne::domain::{BusinessRules, business_rule};
 use cerne::{Error, async_trait};
@@ -874,13 +896,16 @@ pub struct ChargeOrderCommand {
 }
 
 #[async_trait]
-impl Command<Ports> for ChargeOrderCommand {
+impl Command<CompositionRoot> for ChargeOrderCommand {
     type Output = ();
 
-    async fn execute(&self, ports: &Ports) -> Result<Executed<(), Ports>, Error> {
+    async fn execute(&self, composition_root: &CompositionRoot) -> Result<Executed<(), CompositionRoot>, Error> {
         // --- Ports -----------------------------------------------------------
 
-        let order = ports.order_repository.load(&self.order_id).await?;
+        let order = composition_root
+            .order_repository
+            .load(&self.order_id)
+            .await?;
 
         // --- Business rules --------------------------------------------------
 
@@ -890,13 +915,16 @@ impl Command<Ports> for ChargeOrderCommand {
 
         // --- External system: Payments ---------------------------------------
 
-        ports.payments.charge(&self.order_id, self.total).await?;
+        composition_root
+            .payments
+            .charge(&self.order_id, self.total)
+            .await?;
 
         // --- Aggregate -------------------------------------------------------
 
         let paid_order = order.pay()?;
 
-        ports.order_repository.save(paid_order).await?;
+        composition_root.order_repository.save(paid_order).await?;
 
         // --- Domain events ---------------------------------------------------
 
@@ -923,8 +951,8 @@ The `src/application/queries/order_summary.rs` as `cerne g query OrderSummary or
 <!-- generated: src/application/queries/order_summary.rs -->
 ```rust
 use crate::application::read_models::order_summary::OrderSummary;
+use crate::composition_root::CompositionRoot;
 use crate::domain::value_objects::order_id::OrderId;
-use crate::ports::Ports;
 use cerne::application::Query;
 use cerne::{Error, async_trait};
 use serde::Deserialize;
@@ -935,10 +963,10 @@ pub struct OrderSummaryQuery {
 }
 
 #[async_trait]
-impl Query<Ports> for OrderSummaryQuery {
+impl Query<CompositionRoot> for OrderSummaryQuery {
     type ReadModel = OrderSummary;
 
-    async fn execute(&self, _ports: &Ports) -> Result<OrderSummary, Error> {
+    async fn execute(&self, _ports: &CompositionRoot) -> Result<OrderSummary, Error> {
         // --- Ports -----------------------------------------------------------
 
         // --- Read model ------------------------------------------------------
@@ -953,8 +981,8 @@ Filled in:
 <!-- file: src/application/queries/order_summary.rs -->
 ```rust
 use crate::application::read_models::order_summary::OrderSummary;
+use crate::composition_root::CompositionRoot;
 use crate::domain::value_objects::order_id::OrderId;
-use crate::ports::Ports;
 use cerne::application::Query;
 use cerne::{Error, async_trait};
 use serde::Deserialize;
@@ -965,13 +993,16 @@ pub struct OrderSummaryQuery {
 }
 
 #[async_trait]
-impl Query<Ports> for OrderSummaryQuery {
+impl Query<CompositionRoot> for OrderSummaryQuery {
     type ReadModel = OrderSummary;
 
-    async fn execute(&self, ports: &Ports) -> Result<OrderSummary, Error> {
+    async fn execute(&self, composition_root: &CompositionRoot) -> Result<OrderSummary, Error> {
         // --- Ports -----------------------------------------------------------
 
-        let order = ports.order_repository.load(&self.order_id).await?;
+        let order = composition_root
+            .order_repository
+            .load(&self.order_id)
+            .await?;
 
         // --- Read model ------------------------------------------------------
 
@@ -1005,19 +1036,19 @@ Filled in:
 //! One block per flow of the board: an actor sends a command, and the test checks its events and the policies that fired.
 
 use cerne::Error;
-use cerne::application::{OutboxPolicyProcessor, Query, TransactionalPorts};
+use cerne::application::{OutboxPolicyProcessor, Query, TransactionalCompositionRoot};
 use cerne::domain::{DomainError, ValueObject};
 use cerne::sqlite::SqliteDatabase;
 use shop::application::commands::place_order::PlaceOrderCommand;
 use shop::application::queries::order_summary::OrderSummaryQuery;
 use shop::application::read_models::order_summary::OrderSummary;
+use shop::composition_root::{CompositionRoot, CompositionRootConstructor, command_registry};
 use shop::domain::value_objects::order_id::OrderId;
 use shop::infrastructure::in_memory_catalog::InMemoryCatalog;
 use shop::infrastructure::in_memory_payments::InMemoryPayments;
-use shop::ports::{Ports, command_registry};
 use std::sync::Arc;
 
-async fn ports(payments: Arc<InMemoryPayments>) -> Result<Arc<Ports>, Error> {
+async fn composition_root(payments: Arc<InMemoryPayments>) -> Result<Arc<CompositionRoot>, Error> {
     let database = SqliteDatabase::in_memory().await?;
 
     database.migrate(&sqlx::migrate!()).await?;
@@ -1026,15 +1057,21 @@ async fn ports(payments: Arc<InMemoryPayments>) -> Result<Arc<Ports>, Error> {
         products: vec![("mug", 3000, 10)],
     });
 
-    Ok(Arc::new(Ports::new(database, catalog, payments)))
+    let composition_root_constructor = CompositionRootConstructor {
+        database,
+        catalog,
+        payments,
+    };
+
+    Ok(Arc::new(CompositionRoot::new(composition_root_constructor)))
 }
 
 #[tokio::test]
 async fn the_customer_places_an_order_and_the_policy_charges_it() -> Result<(), Error> {
     let payments = Arc::new(InMemoryPayments::default());
-    let ports = ports(Arc::clone(&payments)).await?;
+    let composition_root = composition_root(Arc::clone(&payments)).await?;
 
-    let outbox_policy_processor = OutboxPolicyProcessor::new(Arc::clone(&ports), command_registry());
+    let outbox_policy_processor = OutboxPolicyProcessor::new(Arc::clone(&composition_root), command_registry());
 
     // --- Customer: places an order -------------------------------------------
 
@@ -1043,7 +1080,7 @@ async fn the_customer_places_an_order_and_the_policy_charges_it() -> Result<(), 
         quantity: 2,
     };
 
-    let order_id = ports.execute_in_transaction(place_order).await?;
+    let order_id = composition_root.execute_in_transaction(place_order).await?;
 
     // --- Policy: whenever an order is placed, charge the customer -----------
 
@@ -1056,7 +1093,7 @@ async fn the_customer_places_an_order_and_the_policy_charges_it() -> Result<(), 
 
     let order_summary_query = OrderSummaryQuery { order_id };
 
-    let order_summary = order_summary_query.execute(&ports).await?;
+    let order_summary = order_summary_query.execute(&composition_root).await?;
 
     let paid_order_summary = OrderSummary {
         product: "mug".into(),
@@ -1072,7 +1109,7 @@ async fn the_customer_places_an_order_and_the_policy_charges_it() -> Result<(), 
 
 #[tokio::test]
 async fn the_domain_refuses_what_breaks_a_rule_or_an_invariant() -> Result<(), Error> {
-    let ports = ports(Arc::default()).await?;
+    let composition_root = composition_root(Arc::default()).await?;
 
     // --- Business rule: stock covers the quantity ----------------------------
 
@@ -1081,7 +1118,7 @@ async fn the_domain_refuses_what_breaks_a_rule_or_an_invariant() -> Result<(), E
         quantity: 11,
     };
 
-    let refused = ports.execute_in_transaction(too_many_mugs).await;
+    let refused = composition_root.execute_in_transaction(too_many_mugs).await;
 
     assert!(matches!(
         refused,
@@ -1095,7 +1132,7 @@ async fn the_domain_refuses_what_breaks_a_rule_or_an_invariant() -> Result<(), E
         quantity: 0,
     };
 
-    let refused = ports.execute_in_transaction(no_mugs).await;
+    let refused = composition_root.execute_in_transaction(no_mugs).await;
 
     assert!(matches!(
         refused,
@@ -1127,7 +1164,7 @@ The `src/main.rs` as `cerne new shop --db sqlite --http rest` generated it:
 use cerne::application::OutboxPolicyProcessor;
 use cerne::sqlite::SqliteDatabase;
 use shop::infrastructure::http::router;
-use shop::ports::{Ports, command_registry};
+use shop::composition_root::{CompositionRoot, CompositionRootConstructor, command_registry};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -1141,11 +1178,13 @@ async fn main() -> anyhow::Result<()> {
 
     database.migrate(&sqlx::migrate!()).await?;
 
-    let ports = Arc::new(Ports::new(database));
+    let composition_root_constructor = CompositionRootConstructor { database };
+
+    let composition_root = Arc::new(CompositionRoot::new(composition_root_constructor));
 
     // --- Outbox: the commands of the policies --------------------------------
 
-    let outbox_policy_processor = OutboxPolicyProcessor::new(Arc::clone(&ports), command_registry());
+    let outbox_policy_processor = OutboxPolicyProcessor::new(Arc::clone(&composition_root), command_registry());
 
     tokio::spawn(async move {
         outbox_policy_processor
@@ -1159,7 +1198,7 @@ async fn main() -> anyhow::Result<()> {
 
     println!("listening on http://127.0.0.1:3000");
 
-    axum::serve(listener, router(ports)).await?;
+    axum::serve(listener, router(composition_root)).await?;
 
     Ok(())
 }
@@ -1171,10 +1210,10 @@ Filled in:
 ```rust
 use cerne::application::OutboxPolicyProcessor;
 use cerne::sqlite::SqliteDatabase;
+use shop::composition_root::{CompositionRoot, CompositionRootConstructor, command_registry};
 use shop::infrastructure::http::router;
 use shop::infrastructure::in_memory_catalog::InMemoryCatalog;
 use shop::infrastructure::in_memory_payments::InMemoryPayments;
-use shop::ports::{Ports, command_registry};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -1193,11 +1232,17 @@ async fn main() -> anyhow::Result<()> {
     });
     let payments = Arc::new(InMemoryPayments::default());
 
-    let ports = Arc::new(Ports::new(database, catalog, payments));
+    let composition_root_constructor = CompositionRootConstructor {
+        database,
+        catalog,
+        payments,
+    };
+
+    let composition_root = Arc::new(CompositionRoot::new(composition_root_constructor));
 
     // --- Outbox: the commands of the policies --------------------------------
 
-    let outbox_policy_processor = OutboxPolicyProcessor::new(Arc::clone(&ports), command_registry());
+    let outbox_policy_processor = OutboxPolicyProcessor::new(Arc::clone(&composition_root), command_registry());
 
     tokio::spawn(async move {
         outbox_policy_processor
@@ -1211,7 +1256,7 @@ async fn main() -> anyhow::Result<()> {
 
     println!("listening on http://127.0.0.1:3000");
 
-    axum::serve(listener, router(ports)).await?;
+    axum::serve(listener, router(composition_root)).await?;
 
     Ok(())
 }
@@ -1251,7 +1296,7 @@ $ curl -X POST localhost:3000/orders -H 'content-type: application/json' -d '{"p
 
 - **Postgres:** `cerne new shop --db postgres` uses `cerne::postgres`, with the same API and the same SQL. The address comes from `DATABASE_URL`.
 - **No database:** `cerne new shop`, without `--db`, uses no database adapter of Cerne. The outbox lives in memory (`InMemoryOutbox`), and `--aggregate` generates only the aggregate, with no repository. If the process dies, the commands of the policies that did not run yet are lost.
-- **A database later:** `cerne g db sqlite` (or `postgres`, or `memory`) writes what `cerne new --db` would have written: `sqlx`, the outbox table, the `Ports` on the database and the SQL repository of every aggregate that already exists.
+- **A database later:** `cerne g db sqlite` (or `postgres`, or `memory`) writes what `cerne new --db` would have written: `sqlx`, the outbox table, the `CompositionRoot` on the database and the SQL repository of every aggregate that already exists.
 - **No database file:** `cerne new shop --db memory` starts with SQLite in memory, the same adapter.
 - **JSON-RPC 2.0:** `cerne new shop --http jsonrpc` serves `POST /rpc`, and every `cerne g command` and `cerne g query` adds its method (`place_order`, `order_summary`). The `params` come by name (an object) or by position (an array, in the order of the fields of the command).
 - **HTTP later:** a project created without `--http` gets it with `cerne g http rest` or `cerne g http jsonrpc`.

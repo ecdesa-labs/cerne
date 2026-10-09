@@ -3,14 +3,14 @@ use crate::policies::FiredPolicy;
 
 /// The orange post-it: something that happened in the domain, and the policies it sets off.
 ///
-/// `Ports` is the application the commands of those policies run on.
+/// `CompositionRoot` is the application the commands of those policies run on.
 ///
 /// ```
 /// use cerne::application::{Command, Executed};
 /// use cerne::domain::{DomainEvent, EnforcementResult, FiredPolicy, Policies, policy};
 /// use cerne::{Error, async_trait};
 ///
-/// struct Ports;
+/// struct CompositionRoot;
 ///
 /// #[derive(serde::Serialize, serde::Deserialize)]
 /// struct ReserveStockCommand {
@@ -18,10 +18,10 @@ use crate::policies::FiredPolicy;
 /// }
 ///
 /// #[async_trait]
-/// impl Command<Ports> for ReserveStockCommand {
+/// impl Command<CompositionRoot> for ReserveStockCommand {
 ///     type Output = ();
 ///
-///     async fn execute(&self, _ports: &Ports) -> Result<Executed<(), Ports>, Error> {
+///     async fn execute(&self, _ports: &CompositionRoot) -> Result<Executed<(), CompositionRoot>, Error> {
 ///         Ok(Executed { output: (), events: vec![] })
 ///     }
 /// }
@@ -30,8 +30,8 @@ use crate::policies::FiredPolicy;
 ///     order_id: u64,
 /// }
 ///
-/// impl DomainEvent<Ports> for OrderPlaced {
-///     fn trigger_policies(&self) -> EnforcementResult<Vec<FiredPolicy<Ports>>> {
+/// impl DomainEvent<CompositionRoot> for OrderPlaced {
+///     fn trigger_policies(&self) -> EnforcementResult<Vec<FiredPolicy<CompositionRoot>>> {
 ///         let order_id = self.order_id;
 ///
 ///         let reserve_stock_policy = policy!("reserve stock", true, ReserveStockCommand { order_id });
@@ -44,9 +44,9 @@ use crate::policies::FiredPolicy;
 ///
 /// assert_eq!(fired[0].name, "reserve stock");
 /// ```
-pub trait DomainEvent<Ports>: Send + Sync {
+pub trait DomainEvent<CompositionRoot>: Send + Sync {
     /// A domain event only triggers its policies if its invariants hold; returns those that fired.
-    fn trigger_policies(&self) -> EnforcementResult<Vec<FiredPolicy<Ports>>>;
+    fn trigger_policies(&self) -> EnforcementResult<Vec<FiredPolicy<CompositionRoot>>>;
 }
 
 #[cfg(test)]
@@ -61,16 +61,16 @@ mod tests {
     use async_trait::async_trait;
     use serde::Serialize;
 
-    struct Ports;
+    struct CompositionRoot;
 
     #[derive(Serialize)]
     struct NoopCommand;
 
     #[async_trait]
-    impl Command<Ports> for NoopCommand {
+    impl Command<CompositionRoot> for NoopCommand {
         type Output = ();
 
-        async fn execute(&self, _: &Ports) -> Result<Executed<(), Ports>, Error> {
+        async fn execute(&self, _: &CompositionRoot) -> Result<Executed<(), CompositionRoot>, Error> {
             Ok(Executed {
                 output: (),
                 events: vec![],
@@ -97,8 +97,8 @@ mod tests {
         }
     }
 
-    impl DomainEvent<Ports> for OrderPlaced {
-        fn trigger_policies(&self) -> EnforcementResult<Vec<FiredPolicy<Ports>>> {
+    impl DomainEvent<CompositionRoot> for OrderPlaced {
+        fn trigger_policies(&self) -> EnforcementResult<Vec<FiredPolicy<CompositionRoot>>> {
             let has_id = !self.id.is_empty();
             let has_items = !self.items.is_empty();
             let is_large = self.items.len() > 10;

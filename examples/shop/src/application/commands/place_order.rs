@@ -1,7 +1,7 @@
+use crate::composition_root::CompositionRoot;
 use crate::domain::entities::order::{Order, OrderConstructor};
 use crate::domain::events::order_placed::OrderPlaced;
 use crate::domain::value_objects::order_id::OrderId;
-use crate::ports::Ports;
 use cerne::application::{Command, Executed};
 use cerne::domain::{BusinessRules, Entity, business_rule};
 use cerne::{Error, async_trait};
@@ -15,14 +15,17 @@ pub struct PlaceOrderCommand {
 }
 
 #[async_trait]
-impl Command<Ports> for PlaceOrderCommand {
+impl Command<CompositionRoot> for PlaceOrderCommand {
     type Output = OrderId; // the id of the new order, for the customer to follow it
 
-    async fn execute(&self, ports: &Ports) -> Result<Executed<OrderId, Ports>, Error> {
+    async fn execute(&self, composition_root: &CompositionRoot) -> Result<Executed<OrderId, CompositionRoot>, Error> {
         // --- Ports -----------------------------------------------------------
 
-        let unit_price = ports.catalog.unit_price(&self.product).await?;
-        let units_in_stock = ports.catalog.units_in_stock(&self.product).await?;
+        let unit_price = composition_root.catalog.unit_price(&self.product).await?;
+        let units_in_stock = composition_root
+            .catalog
+            .units_in_stock(&self.product)
+            .await?;
 
         // --- Business rules --------------------------------------------------
 
@@ -40,7 +43,7 @@ impl Command<Ports> for PlaceOrderCommand {
             total,
         })?;
 
-        let order_id = ports.order_repository.save(order).await?;
+        let order_id = composition_root.order_repository.save(order).await?;
 
         // --- Domain events ---------------------------------------------------
 

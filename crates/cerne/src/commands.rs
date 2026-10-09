@@ -4,7 +4,7 @@ use async_trait::async_trait;
 
 /// The blue post-it: an intention that, once accepted by the domain, becomes domain events.
 ///
-/// `Ports` is the composition root: the struct holding every port (repositories, external systems) the application uses.
+/// `CompositionRoot` is the composition root: the struct holding every port (repositories, external systems) the application uses.
 /// `Output` is what the caller gets back (e.g. the id of what was created); `()` when there is nothing to give back.
 ///
 /// ```
@@ -63,13 +63,13 @@ use async_trait::async_trait;
 ///     qty: i32,
 /// }
 ///
-/// impl DomainEvent<Ports> for StockReserved {
-///     fn trigger_policies(&self) -> EnforcementResult<Vec<FiredPolicy<Ports>>> {
+/// impl DomainEvent<CompositionRoot> for StockReserved {
+///     fn trigger_policies(&self) -> EnforcementResult<Vec<FiredPolicy<CompositionRoot>>> {
 ///         Ok(vec![])
 ///     }
 /// }
 ///
-/// struct Ports {
+/// struct CompositionRoot {
 ///     stock_repository: Box<dyn Repository<Stock>>,
 /// }
 ///
@@ -79,13 +79,13 @@ use async_trait::async_trait;
 /// }
 ///
 /// #[async_trait]
-/// impl Command<Ports> for ReserveStockCommand {
+/// impl Command<CompositionRoot> for ReserveStockCommand {
 ///     type Output = i32; // units left in stock
 ///
-///     async fn execute(&self, ports: &Ports) -> Result<Executed<i32, Ports>, Error> {
+///     async fn execute(&self, composition_root: &CompositionRoot) -> Result<Executed<i32, CompositionRoot>, Error> {
 ///         // --- Ports -----------------------------------------------------------
 ///
-///         let stock = ports.stock_repository.load(&self.product_id).await?;
+///         let stock = composition_root.stock_repository.load(&self.product_id).await?;
 ///
 ///         // --- Business rules --------------------------------------------------
 ///
@@ -98,7 +98,7 @@ use async_trait::async_trait;
 ///         let stock = Stock::new((stock.product_id, stock.available - self.qty))?;
 ///         let units_left = stock.available;
 ///
-///         ports.stock_repository.save(stock).await?;
+///         composition_root.stock_repository.save(stock).await?;
 ///
 ///         // --- Domain events ---------------------------------------------------
 ///
@@ -112,17 +112,20 @@ use async_trait::async_trait;
 /// }
 /// ```
 #[async_trait]
-pub trait Command<Ports>: Send + Sync {
+pub trait Command<CompositionRoot>: Send + Sync {
     type Output: Send;
 
     /// Either rejects the command (and nothing changes) or applies it and returns its output and the events it produced.
-    async fn execute(&self, ports: &Ports) -> Result<Executed<Self::Output, Ports>, Error>;
+    async fn execute(
+        &self,
+        composition_root: &CompositionRoot,
+    ) -> Result<Executed<Self::Output, CompositionRoot>, Error>;
 }
 
 /// What an accepted command gives back: its own result for the caller, and the events it produced for the policies.
-pub struct Executed<Output, Ports> {
+pub struct Executed<Output, CompositionRoot> {
     pub output: Output,
-    pub events: Vec<Box<dyn DomainEvent<Ports>>>,
+    pub events: Vec<Box<dyn DomainEvent<CompositionRoot>>>,
 }
 
 #[cfg(test)]
@@ -167,14 +170,14 @@ mod tests {
         }
     }
 
-    struct Ports {
+    struct CompositionRoot {
         order: Mutex<Order>,
     }
 
     struct OrderPlaced;
 
-    impl DomainEvent<Ports> for OrderPlaced {
-        fn trigger_policies(&self) -> EnforcementResult<Vec<FiredPolicy<Ports>>> {
+    impl DomainEvent<CompositionRoot> for OrderPlaced {
+        fn trigger_policies(&self) -> EnforcementResult<Vec<FiredPolicy<CompositionRoot>>> {
             Ok(vec![])
         }
     }
@@ -184,15 +187,15 @@ mod tests {
     }
 
     #[async_trait]
-    impl Command<Ports> for PlaceOrderCommand {
+    impl Command<CompositionRoot> for PlaceOrderCommand {
         type Output = ();
 
-        async fn execute(&self, ports: &Ports) -> Result<Executed<(), Ports>, Error> {
+        async fn execute(&self, composition_root: &CompositionRoot) -> Result<Executed<(), CompositionRoot>, Error> {
             let quantity_is_positive = self.qty > 0;
 
             BusinessRules::check([business_rule!("positive quantity", quantity_is_positive)])?;
 
-            let mut order = ports.order.lock().unwrap();
+            let mut order = composition_root.order.lock().unwrap();
             *order = Order {
                 qty: self.qty,
                 ..order.clone()
@@ -208,8 +211,8 @@ mod tests {
         }
     }
 
-    fn ports() -> Ports {
-        Ports {
+    fn composition_root() -> CompositionRoot {
+        CompositionRoot {
             order: Mutex::new(Order {
                 id: Some(OrderId(1)),
                 qty: 0,
@@ -217,7 +220,7 @@ mod tests {
         }
     }
 
-    fn violations(result: Result<Executed<(), Ports>, Error>) -> Vec<&'static str> {
+    fn violations(result: Result<Executed<(), CompositionRoot>, Error>) -> Vec<&'static str> {
         match result {
             Err(Error::Domain(DomainError::Violations(v))) => v,
             _ => panic!("expected a domain error"),
@@ -226,13 +229,16 @@ mod tests {
 
     #[tokio::test]
     async fn command_changes_the_entity_and_produces_a_domain_event() {
-        let ports = ports();
+        let composition_root = composition_root();
 
-        let place_order_execution = PlaceOrderCommand { qty: 3 }.execute(&ports).await.unwrap();
+        let place_order_execution = PlaceOrderCommand { qty: 3 }
+            .execute(&composition_root)
+            .await
+            .unwrap();
 
         assert_eq!(place_order_execution.events.len(), 1);
         assert_eq!(
-            *ports.order.lock().unwrap(),
+            *composition_root.order.lock().unwrap(),
             Order {
                 id: Some(OrderId(1)),
                 qty: 3
@@ -242,13 +248,15 @@ mod tests {
 
     #[tokio::test]
     async fn command_is_rejected_by_a_business_rule() {
-        let ports = ports();
+        let composition_root = composition_root();
 
-        let result = PlaceOrderCommand { qty: -1 }.execute(&ports).await;
+        let result = PlaceOrderCommand { qty: -1 }
+            .execute(&composition_root)
+            .await;
 
         assert_eq!(violations(result), vec!["positive quantity"]);
         assert_eq!(
-            *ports.order.lock().unwrap(),
+            *composition_root.order.lock().unwrap(),
             Order {
                 id: Some(OrderId(1)),
                 qty: 0
@@ -258,13 +266,15 @@ mod tests {
 
     #[tokio::test]
     async fn command_is_rejected_by_an_invariant() {
-        let ports = ports();
+        let composition_root = composition_root();
 
-        let result = PlaceOrderCommand { qty: 2000 }.execute(&ports).await;
+        let result = PlaceOrderCommand { qty: 2000 }
+            .execute(&composition_root)
+            .await;
 
         assert_eq!(violations(result), vec!["at most 1000 items"]);
         assert_eq!(
-            *ports.order.lock().unwrap(),
+            *composition_root.order.lock().unwrap(),
             Order {
                 id: Some(OrderId(1)),
                 qty: 0

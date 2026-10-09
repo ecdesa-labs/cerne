@@ -3,8 +3,8 @@ use crate::errors::{Error, InfrastructureError};
 use crate::outbox::{OutboxEntry, command_name};
 use serde::Serialize;
 
-type Then<Ports> =
-    Box<dyn FnOnce() -> (Box<dyn Command<Ports, Output = ()>>, Result<OutboxEntry, String>) + Send + Sync>;
+type Then<CompositionRoot> =
+    Box<dyn FnOnce() -> (Box<dyn Command<CompositionRoot, Output = ()>>, Result<OutboxEntry, String>) + Send + Sync>;
 
 /// The lilac post-it: "whenever `when` holds, run the command `then` returns".
 ///
@@ -13,20 +13,20 @@ type Then<Ports> =
 /// It derives `Serialize` (and `Deserialize`, to be read back), so an outbox can store it until it runs.
 ///
 /// Written with [`policy!`](crate::domain::policy) and fired with [`Policies::trigger`].
-pub struct Policy<Ports> {
+pub struct Policy<CompositionRoot> {
     name: &'static str,
     when: Box<dyn Fn() -> bool + Send + Sync>,
-    then: Then<Ports>,
+    then: Then<CompositionRoot>,
 }
 
-impl<Ports: 'static> Policy<Ports> {
+impl<CompositionRoot: 'static> Policy<CompositionRoot> {
     pub fn new<C>(
         name: &'static str,
         when: impl Fn() -> bool + Send + Sync + 'static,
         then: impl FnOnce() -> Box<C> + Send + Sync + 'static,
     ) -> Self
     where
-        C: Command<Ports, Output = ()> + Serialize + 'static,
+        C: Command<CompositionRoot, Output = ()> + Serialize + 'static,
     {
         let then = move || {
             let command = then();
@@ -38,7 +38,7 @@ impl<Ports: 'static> Policy<Ports> {
                 })
                 .map_err(|error| format!("cannot store {} in the outbox: {error}", command_name::<C>()));
 
-            (command as Box<dyn Command<Ports, Output = ()>>, outbox_entry)
+            (command as Box<dyn Command<CompositionRoot, Output = ()>>, outbox_entry)
         };
 
         Self {
@@ -50,13 +50,13 @@ impl<Ports: 'static> Policy<Ports> {
 }
 
 /// A policy that fired, with the command it wants to run.
-pub struct FiredPolicy<Ports> {
+pub struct FiredPolicy<CompositionRoot> {
     pub name: &'static str,
-    pub command: Box<dyn Command<Ports, Output = ()>>,
+    pub command: Box<dyn Command<CompositionRoot, Output = ()>>,
     outbox_entry: Result<OutboxEntry, String>,
 }
 
-impl<Ports> FiredPolicy<Ports> {
+impl<CompositionRoot> FiredPolicy<CompositionRoot> {
     /// The same command, as the outbox stores it: its name and its fields in JSON.
     pub fn outbox_entry(&self) -> Result<OutboxEntry, Error> {
         let outbox_entry = self
@@ -73,7 +73,9 @@ pub struct Policies;
 
 impl Policies {
     /// Fires every policy whose `when` holds; returns each one with the command its `then` built.
-    pub fn trigger<Ports>(policies: impl IntoIterator<Item = Policy<Ports>>) -> Vec<FiredPolicy<Ports>> {
+    pub fn trigger<CompositionRoot>(
+        policies: impl IntoIterator<Item = Policy<CompositionRoot>>,
+    ) -> Vec<FiredPolicy<CompositionRoot>> {
         policies
             .into_iter()
             .filter(|policy| (policy.when)())
@@ -100,13 +102,13 @@ impl Policies {
 /// # use cerne::application::{Command, Executed};
 /// # use cerne::{Error, async_trait};
 /// # use serde::{Deserialize, Serialize};
-/// # struct Ports;
+/// # struct CompositionRoot;
 /// # #[derive(Serialize, Deserialize)]
 /// # struct ChargeOrderCommand { order_id: u64, total: u64 }
 /// # #[async_trait]
-/// # impl Command<Ports> for ChargeOrderCommand {
+/// # impl Command<CompositionRoot> for ChargeOrderCommand {
 /// #     type Output = ();
-/// #     async fn execute(&self, _: &Ports) -> Result<Executed<(), Ports>, Error> {
+/// #     async fn execute(&self, _: &CompositionRoot) -> Result<Executed<(), CompositionRoot>, Error> {
 /// #         Ok(Executed { output: (), events: vec![] })
 /// #     }
 /// # }
@@ -126,7 +128,7 @@ impl Policies {
 /// let fired = Policies::trigger([charge_the_customer_policy, review_the_order_policy]);
 ///
 /// assert_eq!(fired.len(), 2);
-/// # let _: &Ports = &Ports;
+/// # let _: &CompositionRoot = &CompositionRoot;
 /// ```
 #[doc(hidden)]
 #[macro_export]
@@ -147,7 +149,7 @@ mod tests {
     use std::sync::Mutex;
 
     #[derive(Default)]
-    struct Ports {
+    struct CompositionRoot {
         shipped: Mutex<Vec<u64>>,
     }
 
@@ -157,11 +159,11 @@ mod tests {
     }
 
     #[async_trait]
-    impl Command<Ports> for ShipOrderCommand {
+    impl Command<CompositionRoot> for ShipOrderCommand {
         type Output = ();
 
-        async fn execute(&self, ports: &Ports) -> Result<Executed<(), Ports>, Error> {
-            ports.shipped.lock().unwrap().push(self.order_id);
+        async fn execute(&self, composition_root: &CompositionRoot) -> Result<Executed<(), CompositionRoot>, Error> {
+            composition_root.shipped.lock().unwrap().push(self.order_id);
 
             Ok(Executed {
                 output: (),
@@ -191,16 +193,20 @@ mod tests {
 
     #[tokio::test]
     async fn trigger_returns_the_command_built_by_then() {
-        let ports = Ports::default();
+        let composition_root = CompositionRoot::default();
         let order_id = 42;
 
         let ship_order_policy = policy!("ship order", true, ShipOrderCommand { order_id });
 
         for fired_policy in Policies::trigger([ship_order_policy]) {
-            fired_policy.command.execute(&ports).await.unwrap();
+            fired_policy
+                .command
+                .execute(&composition_root)
+                .await
+                .unwrap();
         }
 
-        assert_eq!(*ports.shipped.lock().unwrap(), vec![42]);
+        assert_eq!(*composition_root.shipped.lock().unwrap(), vec![42]);
     }
 
     #[test]
@@ -222,7 +228,8 @@ mod tests {
     fn the_command_of_a_policy_that_does_not_fire_is_never_built() {
         let never = false;
 
-        let never_policy: Policy<Ports> = policy!("never", never, ship_order_command_that_must_not_be_built());
+        let never_policy: Policy<CompositionRoot> =
+            policy!("never", never, ship_order_command_that_must_not_be_built());
 
         assert!(Policies::trigger([never_policy]).is_empty());
     }

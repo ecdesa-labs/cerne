@@ -7,7 +7,7 @@ use cerne::application::{InMemoryOutbox, OutboxPolicyProcessor};
 {% if http %}
 use {{ crate_name }}::infrastructure::http::router;
 {% endif %}
-use {{ crate_name }}::ports::{Ports, command_registry};
+use {{ crate_name }}::composition_root::{CompositionRoot, CompositionRootConstructor, command_registry};
 use std::sync::Arc;
 {% if http %}
 use std::time::Duration;
@@ -24,11 +24,13 @@ async fn main() -> anyhow::Result<()> {
     let in_memory_outbox = InMemoryOutbox::new();
 {% endif %}
 
-    let ports = Arc::new(Ports::new({% if db %}database{% else %}in_memory_outbox{% endif %}));
+    let composition_root_constructor = CompositionRootConstructor { {% if db %}database{% else %}in_memory_outbox{% endif %} };
+
+    let composition_root = Arc::new(CompositionRoot::new(composition_root_constructor));
 
     // --- Outbox: the commands of the policies --------------------------------
 
-    let outbox_policy_processor = OutboxPolicyProcessor::new(Arc::clone(&ports), command_registry());
+    let outbox_policy_processor = OutboxPolicyProcessor::new(Arc::clone(&composition_root), command_registry());
 {% if http %}
 
     tokio::spawn(async move {
@@ -47,11 +49,11 @@ async fn main() -> anyhow::Result<()> {
 
     println!("listening on http://127.0.0.1:3000");
 
-    axum::serve(listener, router(ports)).await?;
+    axum::serve(listener, router(composition_root)).await?;
 {% else %}
 
-    // One block per actor: `ports.execute_in_transaction(command)` runs the command and stores the commands of its
-    // policies, and the outbox runs them.
+    // One block per actor: `composition_root.execute_in_transaction(command)` runs the command and stores the commands
+    // of its policies, and the outbox runs them.
 
     outbox_policy_processor.run_pending().await?;
 {% endif %}

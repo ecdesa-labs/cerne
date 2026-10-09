@@ -1,6 +1,6 @@
 use crate::application::commands::charge_order::ChargeOrderCommand;
+use crate::composition_root::CompositionRoot;
 use crate::domain::value_objects::order_id::OrderId;
-use crate::ports::Ports;
 use cerne::domain::{DomainEvent, EnforcementResult, FiredPolicy, Policies, policy};
 
 pub struct OrderPlaced {
@@ -8,8 +8,8 @@ pub struct OrderPlaced {
     pub total: u64,
 }
 
-impl DomainEvent<Ports> for OrderPlaced {
-    fn trigger_policies(&self) -> EnforcementResult<Vec<FiredPolicy<Ports>>> {
+impl DomainEvent<CompositionRoot> for OrderPlaced {
+    fn trigger_policies(&self) -> EnforcementResult<Vec<FiredPolicy<CompositionRoot>>> {
         // --- Policies --------------------------------------------------------
 
         let order_id = self.order_id.clone();

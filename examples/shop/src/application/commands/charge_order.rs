@@ -1,7 +1,7 @@
+use crate::composition_root::CompositionRoot;
 use crate::domain::entities::order::OrderStatus;
 use crate::domain::events::order_paid::OrderPaid;
 use crate::domain::value_objects::order_id::OrderId;
-use crate::ports::Ports;
 use cerne::application::{Command, Executed};
 use cerne::domain::{BusinessRules, business_rule};
 use cerne::{Error, async_trait};
@@ -15,13 +15,16 @@ pub struct ChargeOrderCommand {
 }
 
 #[async_trait]
-impl Command<Ports> for ChargeOrderCommand {
+impl Command<CompositionRoot> for ChargeOrderCommand {
     type Output = ();
 
-    async fn execute(&self, ports: &Ports) -> Result<Executed<(), Ports>, Error> {
+    async fn execute(&self, composition_root: &CompositionRoot) -> Result<Executed<(), CompositionRoot>, Error> {
         // --- Ports -----------------------------------------------------------
 
-        let order = ports.order_repository.load(&self.order_id).await?;
+        let order = composition_root
+            .order_repository
+            .load(&self.order_id)
+            .await?;
 
         // --- Business rules --------------------------------------------------
 
@@ -31,13 +34,16 @@ impl Command<Ports> for ChargeOrderCommand {
 
         // --- External system: Payments ---------------------------------------
 
-        ports.payments.charge(&self.order_id, self.total).await?;
+        composition_root
+            .payments
+            .charge(&self.order_id, self.total)
+            .await?;
 
         // --- Aggregate -------------------------------------------------------
 
         let paid_order = order.pay()?;
 
-        ports.order_repository.save(paid_order).await?;
+        composition_root.order_repository.save(paid_order).await?;
 
         // --- Domain events ---------------------------------------------------
 

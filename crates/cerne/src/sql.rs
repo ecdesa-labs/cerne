@@ -177,7 +177,7 @@ macro_rules! sql_adapters {
         }
 
         #[async_trait]
-        impl<Ports: 'static> Outbox<Ports> for $outbox {
+        impl<CompositionRoot: 'static> Outbox<CompositionRoot> for $outbox {
             async fn store(&self, outbox_entry: OutboxEntry) -> Result<(), Error> {
                 let insert = sqlx::query("INSERT INTO cerne_outbox (command, json) VALUES ($1, $2)")
                     .bind(outbox_entry.command)

@@ -1,9 +1,9 @@
 use cerne::application::OutboxPolicyProcessor;
 use cerne::sqlite::SqliteDatabase;
+use shop::composition_root::{CompositionRoot, CompositionRootConstructor, command_registry};
 use shop::infrastructure::http::router;
 use shop::infrastructure::in_memory_catalog::InMemoryCatalog;
 use shop::infrastructure::in_memory_payments::InMemoryPayments;
-use shop::ports::{Ports, command_registry};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -22,11 +22,17 @@ async fn main() -> anyhow::Result<()> {
     });
     let payments = Arc::new(InMemoryPayments::default());
 
-    let ports = Arc::new(Ports::new(database, catalog, payments));
+    let composition_root_constructor = CompositionRootConstructor {
+        database,
+        catalog,
+        payments,
+    };
+
+    let composition_root = Arc::new(CompositionRoot::new(composition_root_constructor));
 
     // --- Outbox: the commands of the policies --------------------------------
 
-    let outbox_policy_processor = OutboxPolicyProcessor::new(Arc::clone(&ports), command_registry());
+    let outbox_policy_processor = OutboxPolicyProcessor::new(Arc::clone(&composition_root), command_registry());
 
     tokio::spawn(async move {
         outbox_policy_processor
@@ -40,7 +46,7 @@ async fn main() -> anyhow::Result<()> {
 
     println!("listening on http://127.0.0.1:3000");
 
-    axum::serve(listener, router(ports)).await?;
+    axum::serve(listener, router(composition_root)).await?;
 
     Ok(())
 }

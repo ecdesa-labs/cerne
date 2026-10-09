@@ -1,7 +1,7 @@
 {% for line in uses %}
 {{ line }}
 {% endfor %}
-use crate::ports::Ports;
+use crate::composition_root::CompositionRoot;
 use cerne::domain::{DomainEvent, EnforcementResult, FiredPolicy, Policies};
 
 pub struct {{ name }} {
@@ -10,8 +10,8 @@ pub struct {{ name }} {
 {% endfor %}
 }
 
-impl DomainEvent<Ports> for {{ name }} {
-    fn trigger_policies(&self) -> EnforcementResult<Vec<FiredPolicy<Ports>>> {
+impl DomainEvent<CompositionRoot> for {{ name }} {
+    fn trigger_policies(&self) -> EnforcementResult<Vec<FiredPolicy<CompositionRoot>>> {
         // --- Policies --------------------------------------------------------
 
         Ok(Policies::trigger([]))

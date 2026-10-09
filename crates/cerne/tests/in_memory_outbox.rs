@@ -2,7 +2,8 @@
 //! commands of the policies waiting in memory.
 
 use cerne::application::{
-    Command, CommandRegistry, CommandRun, Executed, InMemoryOutbox, Outbox, OutboxPolicyProcessor, TransactionalPorts,
+    Command, CommandRegistry, CommandRun, Executed, InMemoryOutbox, Outbox, OutboxPolicyProcessor,
+    TransactionalCompositionRoot,
 };
 use cerne::domain::{DomainEvent, EnforcementResult, FiredPolicy, Policies, policy};
 use cerne::{DomainError, Error, async_trait};
@@ -11,13 +12,13 @@ use std::sync::{Arc, Mutex};
 
 // --- Ports -------------------------------------------------------------------
 
-struct Ports {
+struct CompositionRoot {
     in_memory_outbox: InMemoryOutbox,
-    outbox: Box<dyn Outbox<Ports>>,
+    outbox: Box<dyn Outbox<CompositionRoot>>,
     warehouse: Arc<Mutex<Vec<String>>>,
 }
 
-impl Ports {
+impl CompositionRoot {
     fn new(in_memory_outbox: InMemoryOutbox, warehouse: Arc<Mutex<Vec<String>>>) -> Self {
         Self {
             outbox: Box::new(in_memory_outbox.clone()),
@@ -28,12 +29,12 @@ impl Ports {
 }
 
 #[async_trait]
-impl TransactionalPorts for Ports {
+impl TransactionalCompositionRoot for CompositionRoot {
     async fn begin(&self) -> Result<Self, Error> {
         let transaction = self.in_memory_outbox.begin().await?;
         let warehouse = Arc::clone(&self.warehouse);
 
-        Ok(Ports::new(transaction, warehouse))
+        Ok(CompositionRoot::new(transaction, warehouse))
     }
 
     async fn commit(self) -> Result<(), Error> {
@@ -45,7 +46,7 @@ impl TransactionalPorts for Ports {
     }
 }
 
-fn command_registry() -> CommandRegistry<Ports> {
+fn command_registry() -> CommandRegistry<CompositionRoot> {
     CommandRegistry::new().register::<ReserveStockCommand>()
 }
 
@@ -65,10 +66,10 @@ struct OrderPlaced {
 }
 
 #[async_trait]
-impl Command<Ports> for PlaceOrderCommand {
+impl Command<CompositionRoot> for PlaceOrderCommand {
     type Output = ();
 
-    async fn execute(&self, _ports: &Ports) -> Result<Executed<(), Ports>, Error> {
+    async fn execute(&self, _ports: &CompositionRoot) -> Result<Executed<(), CompositionRoot>, Error> {
         let order_placed = OrderPlaced {
             sku: self.sku.clone(),
         };
@@ -81,17 +82,21 @@ impl Command<Ports> for PlaceOrderCommand {
 }
 
 #[async_trait]
-impl Command<Ports> for ReserveStockCommand {
+impl Command<CompositionRoot> for ReserveStockCommand {
     type Output = ();
 
-    async fn execute(&self, ports: &Ports) -> Result<Executed<(), Ports>, Error> {
+    async fn execute(&self, composition_root: &CompositionRoot) -> Result<Executed<(), CompositionRoot>, Error> {
         let sku_exists = self.sku != "missing";
 
         if !sku_exists {
             Err(DomainError::Violations(vec!["sku exists"]))?;
         }
 
-        ports.warehouse.lock().unwrap().push(self.sku.clone());
+        composition_root
+            .warehouse
+            .lock()
+            .unwrap()
+            .push(self.sku.clone());
 
         Ok(Executed {
             output: (),
@@ -100,8 +105,8 @@ impl Command<Ports> for ReserveStockCommand {
     }
 }
 
-impl DomainEvent<Ports> for OrderPlaced {
-    fn trigger_policies(&self) -> EnforcementResult<Vec<FiredPolicy<Ports>>> {
+impl DomainEvent<CompositionRoot> for OrderPlaced {
+    fn trigger_policies(&self) -> EnforcementResult<Vec<FiredPolicy<CompositionRoot>>> {
         // --- Policies --------------------------------------------------------
 
         let sku = self.sku.clone();
@@ -119,9 +124,9 @@ impl DomainEvent<Ports> for OrderPlaced {
 async fn the_outbox_in_memory_runs_the_commands_of_the_policies() -> Result<(), Error> {
     let in_memory_outbox = InMemoryOutbox::new();
     let warehouse = Arc::new(Mutex::new(vec![]));
-    let ports = Arc::new(Ports::new(in_memory_outbox.clone(), Arc::clone(&warehouse)));
+    let composition_root = Arc::new(CompositionRoot::new(in_memory_outbox.clone(), Arc::clone(&warehouse)));
 
-    let outbox_policy_processor = OutboxPolicyProcessor::new(Arc::clone(&ports), command_registry());
+    let outbox_policy_processor = OutboxPolicyProcessor::new(Arc::clone(&composition_root), command_registry());
 
     // --- Customer: places two orders -----------------------------------------
 
@@ -130,8 +135,8 @@ async fn the_outbox_in_memory_runs_the_commands_of_the_policies() -> Result<(), 
         sku: "missing".into(),
     };
 
-    ports.execute_in_transaction(mug).await?;
-    ports.execute_in_transaction(missing).await?;
+    composition_root.execute_in_transaction(mug).await?;
+    composition_root.execute_in_transaction(missing).await?;
 
     assert!(warehouse.lock().unwrap().is_empty(), "the policies only stored their commands");
 

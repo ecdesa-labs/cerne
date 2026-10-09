@@ -42,7 +42,7 @@ impl IntoResponse for Error {
 /// | `params` that is neither an array nor an object, or does not fit the command | `-32602` (invalid params) |
 pub mod jsonrpc {
     use super::*;
-    use crate::application::{Command, Query, TransactionalPorts};
+    use crate::application::{Command, Query, TransactionalCompositionRoot};
     use serde::de::DeserializeOwned;
     use serde::{Deserialize, Serialize};
 
@@ -174,7 +174,7 @@ pub mod jsonrpc {
     /// The methods of a JSON-RPC endpoint: each arm of its `match` reads the params into a command or a query.
     ///
     /// ```ignore
-    /// let methods = Methods::new(&ports);
+    /// let methods = Methods::new(&composition_root);
     ///
     /// let result = match request.method.as_str() {
     ///     "place_order" => methods.command::<PlaceOrderCommand>(request.params).await,
@@ -186,13 +186,13 @@ pub mod jsonrpc {
     /// The `params` come by name (an object) or by position (an array, like MetaMask sends them), as JSON-RPC 2.0
     /// allows. By position, the array follows the order of the fields of the command: that order is part of
     /// the API, and swapping two fields of the same type breaks the clients without a compilation error.
-    pub struct Methods<'p, Ports> {
-        ports: &'p Ports,
+    pub struct Methods<'p, CompositionRoot> {
+        composition_root: &'p CompositionRoot,
     }
 
-    impl<'p, Ports: TransactionalPorts> Methods<'p, Ports> {
-        pub fn new(ports: &'p Ports) -> Self {
-            Self { ports }
+    impl<'p, CompositionRoot: TransactionalCompositionRoot> Methods<'p, CompositionRoot> {
+        pub fn new(composition_root: &'p CompositionRoot) -> Self {
+            Self { composition_root }
         }
 
         /// The last arm of the `match`: no command or query has this name.
@@ -203,12 +203,15 @@ pub mod jsonrpc {
         /// Reads the command from `params` and executes it in a transaction; the result is its output.
         pub async fn command<C>(&self, params: Value) -> Result<Value, ErrorObject>
         where
-            C: Command<Ports> + DeserializeOwned + 'static,
+            C: Command<CompositionRoot> + DeserializeOwned + 'static,
             C::Output: Serialize,
         {
             let command: C = read_params(params)?;
 
-            let output = self.ports.execute_in_transaction(command).await?;
+            let output = self
+                .composition_root
+                .execute_in_transaction(command)
+                .await?;
 
             serde_json::to_value(output).map_err(|error| infrastructure(error).into())
         }
@@ -216,12 +219,12 @@ pub mod jsonrpc {
         /// Reads the query from `params` and executes it; the result is its read model.
         pub async fn query<Q>(&self, params: Value) -> Result<Value, ErrorObject>
         where
-            Q: Query<Ports> + DeserializeOwned,
+            Q: Query<CompositionRoot> + DeserializeOwned,
             Q::ReadModel: Serialize,
         {
             let query: Q = read_params(params)?;
 
-            let read_model = query.execute(self.ports).await?;
+            let read_model = query.execute(self.composition_root).await?;
 
             serde_json::to_value(read_model).map_err(|error| infrastructure(error).into())
         }

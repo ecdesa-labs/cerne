@@ -20,7 +20,7 @@ DATABASE_URL=postgres://postgres:cerne@localhost:5432/postgres cargo test -p cer
 
 The goal: whoever reads the code knows which part of the Event Storming board they are in. When in doubt, the version with fewer concepts wins.
 
-- **A concept of the user is a struct of its own plus a trait of the library:** `ValueObject`, `Entity`, `Aggregate`, `DomainEvent<Ports>`, `Command<Ports>`, `Query<Ports>`. Never a generic struct with a `name` and a `payload`.
+- **A concept of the user is a struct of its own plus a trait of the library:** `ValueObject`, `Entity`, `Aggregate`, `DomainEvent<CompositionRoot>`, `Command<CompositionRoot>`, `Query<CompositionRoot>`. Never a generic struct with a `name` and a `payload`.
 - **Named collections:** `Invariant`/`Invariants`, `BusinessRule`/`BusinessRules` and `Policy`/`Policies` follow the same shape: each item has a `name: &'static str` and a closure, and the collection runs them all and returns names. Invariants and business rules are written with `invariant!` and `business_rule!` and run with `Invariants::enforce([..])?` and `BusinessRules::check([..])?`. Policies are written with `policy!("name", condition, Command { .. })`, always three arguments (`true` for one that always fires), and fired with `Policies::trigger([..])`.
 - **The condition goes into a variable before,** named like a sentence: `let quantity_is_positive = self.quantity > 0;`, then `invariant!("quantity is positive", quantity_is_positive)`.
 - **Every event goes into a variable before the return:** `let order_placed = OrderPlaced { .. };`, then `Ok(Executed { output, events: vec![Box::new(order_placed)] })`.
@@ -30,7 +30,8 @@ The goal: whoever reads the code knows which part of the Event Storming board th
 - **Sections with an 80-column divider:** the body of an `execute` follows the board, in this order: `Domain service`, `Ports`, `Business rules`, `External system: <Name>`, `Aggregate`, `Domain events`. The same goes for aggregates, `trigger_policies` (one variable per policy, ending in `_policy`), `main` (one block per actor) and tests (one block per flow).
 - **The variable names the processor:** `outbox_policy_processor`, `sync_policy_processor`, `async_policy_processor`. Never just `processor`.
 - **A repository in memory is SQLite in memory** (`SqliteDatabase::in_memory()`), with the production adapter. Never a `Vec` or a `HashMap`.
-- **Whatever is a repository ends in `_repository`:** the field of the `Ports` is `order_repository: Box<dyn Repository<Order>>`, and a command reads `ports.order_repository.load(..)`. Never just `orders`.
+- **Whatever is a repository ends in `_repository`:** the field of the `CompositionRoot` is `order_repository: Box<dyn Repository<Order>>`, and a command reads `composition_root.order_repository.load(..)`. Never just `orders`.
+- **The `CompositionRoot` has a constructor, like an entity:** `CompositionRoot::new` takes a `CompositionRootConstructor`, built first in a variable: `let composition_root_constructor = CompositionRootConstructor { database, catalog, payments };`, then `CompositionRoot::new(composition_root_constructor)`.
 - **Method names say the part of the flow:** `send_events`, `send_command`, `trigger_policies`.
 - **A create command receives no id:** the repository decides it on insert.
 - **Errors:** the domain returns `EnforcementResult<T>`; commands, repositories and processors return `Result<T, cerne::Error>`.

@@ -2,7 +2,7 @@
 {{ line }}
 {% endfor %}
 use crate::application::read_models::{{ file }}::{{ name }};
-use crate::ports::Ports;
+use crate::composition_root::CompositionRoot;
 use cerne::application::Query;
 use cerne::{Error, async_trait};
 use serde::Deserialize;
@@ -15,10 +15,10 @@ pub struct {{ name }}Query {
 }
 
 #[async_trait]
-impl Query<Ports> for {{ name }}Query {
+impl Query<CompositionRoot> for {{ name }}Query {
     type ReadModel = {{ name }};
 
-    async fn execute(&self, _ports: &Ports) -> Result<{{ name }}, Error> {
+    async fn execute(&self, _ports: &CompositionRoot) -> Result<{{ name }}, Error> {
         // --- Ports -----------------------------------------------------------
 
         // --- Read model ------------------------------------------------------

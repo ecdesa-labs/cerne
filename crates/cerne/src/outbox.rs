@@ -30,7 +30,7 @@ pub struct StoredCommand {
 /// with the `postgres` feature, `cerne::postgres::PostgresOutbox`. A project without a database uses the
 /// [`InMemoryOutbox`].
 #[async_trait]
-pub trait Outbox<Ports: 'static>: Send + Sync {
+pub trait Outbox<CompositionRoot: 'static>: Send + Sync {
     /// Stores one command, to run later in a transaction of its own.
     async fn store(&self, outbox_entry: OutboxEntry) -> Result<(), Error>;
 
@@ -46,7 +46,10 @@ pub trait Outbox<Ports: 'static>: Send + Sync {
     /// that fired.
     ///
     /// If the invariants of any event fail, no command is stored.
-    async fn send_events(&self, events: Vec<Box<dyn DomainEvent<Ports>>>) -> Result<Vec<&'static str>, Error> {
+    async fn send_events(
+        &self,
+        events: Vec<Box<dyn DomainEvent<CompositionRoot>>>,
+    ) -> Result<Vec<&'static str>, Error> {
         let mut fired = vec![];
         for event in events {
             fired.extend(event.trigger_policies()?);
@@ -62,13 +65,15 @@ pub trait Outbox<Ports: 'static>: Send + Sync {
     }
 }
 
-/// Ports that can open a database transaction: the ports `begin` returns write every repository and the outbox in
-/// that transaction, and `commit` makes it permanent. Dropping them without `commit` rolls everything back.
+/// A composition root that can open a database transaction: the composition root `begin` returns writes every repository
+/// and the outbox in that transaction, and `commit` makes it permanent. Dropping it without `commit` rolls everything
+/// back.
 ///
 /// External systems (a blockchain, a notifier) are not part of the transaction: `begin` hands the same adapters to
-/// the new ports. That is why calls to them belong in commands fired by policies, which the outbox runs at least once.
+/// the new composition root. That is why calls to them belong in commands fired by policies, which the outbox runs at
+/// least once.
 #[async_trait]
-pub trait TransactionalPorts: Sized + Send + Sync + 'static {
+pub trait TransactionalCompositionRoot: Sized + Send + Sync + 'static {
     async fn begin(&self) -> Result<Self, Error>;
 
     async fn commit(self) -> Result<(), Error>;
@@ -92,7 +97,7 @@ pub trait TransactionalPorts: Sized + Send + Sync + 'static {
     }
 }
 
-type Decode<Ports> = fn(&str) -> serde_json::Result<Box<dyn Command<Ports, Output = ()>>>;
+type Decode<CompositionRoot> = fn(&str) -> serde_json::Result<Box<dyn Command<CompositionRoot, Output = ()>>>;
 
 /// Turns a row of the outbox back into the command it stores: every command a policy fires is registered here.
 ///
@@ -101,11 +106,11 @@ type Decode<Ports> = fn(&str) -> serde_json::Result<Box<dyn Command<Ports, Outpu
 ///     .register::<ReserveStockCommand>()
 ///     .register::<ChargeOrderCommand>();
 /// ```
-pub struct CommandRegistry<Ports> {
-    decoders: HashMap<String, Decode<Ports>>,
+pub struct CommandRegistry<CompositionRoot> {
+    decoders: HashMap<String, Decode<CompositionRoot>>,
 }
 
-impl<Ports: 'static> CommandRegistry<Ports> {
+impl<CompositionRoot: 'static> CommandRegistry<CompositionRoot> {
     pub fn new() -> Self {
         Self {
             decoders: HashMap::new(),
@@ -114,22 +119,25 @@ impl<Ports: 'static> CommandRegistry<Ports> {
 
     pub fn register<C>(mut self) -> Self
     where
-        C: Command<Ports, Output = ()> + DeserializeOwned + 'static,
+        C: Command<CompositionRoot, Output = ()> + DeserializeOwned + 'static,
     {
-        fn decode<Ports, C>(json: &str) -> serde_json::Result<Box<dyn Command<Ports, Output = ()>>>
+        fn decode<CompositionRoot, C>(json: &str) -> serde_json::Result<Box<dyn Command<CompositionRoot, Output = ()>>>
         where
-            C: Command<Ports, Output = ()> + DeserializeOwned + 'static,
+            C: Command<CompositionRoot, Output = ()> + DeserializeOwned + 'static,
         {
             Ok(Box::new(serde_json::from_str::<C>(json)?))
         }
 
         self.decoders
-            .insert(command_name::<C>(), decode::<Ports, C>);
+            .insert(command_name::<C>(), decode::<CompositionRoot, C>);
 
         self
     }
 
-    pub fn decode(&self, stored_command: &StoredCommand) -> Result<Box<dyn Command<Ports, Output = ()>>, Error> {
+    pub fn decode(
+        &self,
+        stored_command: &StoredCommand,
+    ) -> Result<Box<dyn Command<CompositionRoot, Output = ()>>, Error> {
         let decode = self
             .decoders
             .get(&stored_command.command)
@@ -142,7 +150,7 @@ impl<Ports: 'static> CommandRegistry<Ports> {
     }
 }
 
-impl<Ports: 'static> Default for CommandRegistry<Ports> {
+impl<CompositionRoot: 'static> Default for CommandRegistry<CompositionRoot> {
     fn default() -> Self {
         Self::new()
     }
@@ -160,15 +168,15 @@ pub struct CommandRun {
 /// For each command: begin, execute, store the commands its events fire, mark it done, commit. A failing command
 /// rolls back, and its row is marked failed with the error. If the process dies halfway, nothing was committed, and
 /// the command runs again: it must be idempotent, like a command that checks "not chained yet".
-pub struct OutboxPolicyProcessor<Ports> {
-    ports: Arc<Ports>,
-    command_registry: Arc<CommandRegistry<Ports>>,
+pub struct OutboxPolicyProcessor<CompositionRoot> {
+    composition_root: Arc<CompositionRoot>,
+    command_registry: Arc<CommandRegistry<CompositionRoot>>,
 }
 
-impl<Ports: TransactionalPorts> OutboxPolicyProcessor<Ports> {
-    pub fn new(ports: Arc<Ports>, command_registry: CommandRegistry<Ports>) -> Self {
+impl<CompositionRoot: TransactionalCompositionRoot> OutboxPolicyProcessor<CompositionRoot> {
+    pub fn new(composition_root: Arc<CompositionRoot>, command_registry: CommandRegistry<CompositionRoot>) -> Self {
         Self {
-            ports,
+            composition_root,
             command_registry: Arc::new(command_registry),
         }
     }
@@ -203,7 +211,7 @@ impl<Ports: TransactionalPorts> OutboxPolicyProcessor<Ports> {
     }
 
     async fn run_next(&self) -> Result<Option<CommandRun>, Error> {
-        let transaction = self.ports.begin().await?;
+        let transaction = self.composition_root.begin().await?;
 
         let Some(stored_command) = transaction.outbox().next_pending().await? else {
             return Ok(None);
@@ -223,7 +231,7 @@ impl<Ports: TransactionalPorts> OutboxPolicyProcessor<Ports> {
                 drop(transaction); // rolls back whatever the command wrote
 
                 let error = error.to_string();
-                let failure = self.ports.begin().await?;
+                let failure = self.composition_root.begin().await?;
 
                 failure
                     .outbox()
@@ -239,7 +247,7 @@ impl<Ports: TransactionalPorts> OutboxPolicyProcessor<Ports> {
         }
     }
 
-    async fn execute(&self, stored_command: &StoredCommand, transaction: &Ports) -> Result<(), Error> {
+    async fn execute(&self, stored_command: &StoredCommand, transaction: &CompositionRoot) -> Result<(), Error> {
         let command = self.command_registry.decode(stored_command)?;
 
         let execution = command.execute(transaction).await?;
@@ -330,7 +338,7 @@ impl InMemoryOutbox {
 }
 
 #[async_trait]
-impl<Ports: 'static> Outbox<Ports> for InMemoryOutbox {
+impl<CompositionRoot: 'static> Outbox<CompositionRoot> for InMemoryOutbox {
     async fn store(&self, outbox_entry: OutboxEntry) -> Result<(), Error> {
         let mut rows = self.rows();
         let id = rows.len() as i64 + 1;

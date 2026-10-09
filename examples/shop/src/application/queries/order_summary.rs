@@ -1,6 +1,6 @@
 use crate::application::read_models::order_summary::OrderSummary;
+use crate::composition_root::CompositionRoot;
 use crate::domain::value_objects::order_id::OrderId;
-use crate::ports::Ports;
 use cerne::application::Query;
 use cerne::{Error, async_trait};
 use serde::Deserialize;
@@ -11,13 +11,16 @@ pub struct OrderSummaryQuery {
 }
 
 #[async_trait]
-impl Query<Ports> for OrderSummaryQuery {
+impl Query<CompositionRoot> for OrderSummaryQuery {
     type ReadModel = OrderSummary;
 
-    async fn execute(&self, ports: &Ports) -> Result<OrderSummary, Error> {
+    async fn execute(&self, composition_root: &CompositionRoot) -> Result<OrderSummary, Error> {
         // --- Ports -----------------------------------------------------------
 
-        let order = ports.order_repository.load(&self.order_id).await?;
+        let order = composition_root
+            .order_repository
+            .load(&self.order_id)
+            .await?;
 
         // --- Read model ------------------------------------------------------
 

@@ -1,19 +1,19 @@
 //! One block per flow of the board: an actor sends a command, and the test checks its events and the policies that fired.
 
 use cerne::Error;
-use cerne::application::{OutboxPolicyProcessor, Query, TransactionalPorts};
+use cerne::application::{OutboxPolicyProcessor, Query, TransactionalCompositionRoot};
 use cerne::domain::{DomainError, ValueObject};
 use cerne::sqlite::SqliteDatabase;
 use shop::application::commands::place_order::PlaceOrderCommand;
 use shop::application::queries::order_summary::OrderSummaryQuery;
 use shop::application::read_models::order_summary::OrderSummary;
+use shop::composition_root::{CompositionRoot, CompositionRootConstructor, command_registry};
 use shop::domain::value_objects::order_id::OrderId;
 use shop::infrastructure::in_memory_catalog::InMemoryCatalog;
 use shop::infrastructure::in_memory_payments::InMemoryPayments;
-use shop::ports::{Ports, command_registry};
 use std::sync::Arc;
 
-async fn ports(payments: Arc<InMemoryPayments>) -> Result<Arc<Ports>, Error> {
+async fn composition_root(payments: Arc<InMemoryPayments>) -> Result<Arc<CompositionRoot>, Error> {
     let database = SqliteDatabase::in_memory().await?;
 
     database.migrate(&sqlx::migrate!()).await?;
@@ -22,15 +22,21 @@ async fn ports(payments: Arc<InMemoryPayments>) -> Result<Arc<Ports>, Error> {
         products: vec![("mug", 3000, 10)],
     });
 
-    Ok(Arc::new(Ports::new(database, catalog, payments)))
+    let composition_root_constructor = CompositionRootConstructor {
+        database,
+        catalog,
+        payments,
+    };
+
+    Ok(Arc::new(CompositionRoot::new(composition_root_constructor)))
 }
 
 #[tokio::test]
 async fn the_customer_places_an_order_and_the_policy_charges_it() -> Result<(), Error> {
     let payments = Arc::new(InMemoryPayments::default());
-    let ports = ports(Arc::clone(&payments)).await?;
+    let composition_root = composition_root(Arc::clone(&payments)).await?;
 
-    let outbox_policy_processor = OutboxPolicyProcessor::new(Arc::clone(&ports), command_registry());
+    let outbox_policy_processor = OutboxPolicyProcessor::new(Arc::clone(&composition_root), command_registry());
 
     // --- Customer: places an order -------------------------------------------
 
@@ -39,7 +45,7 @@ async fn the_customer_places_an_order_and_the_policy_charges_it() -> Result<(), 
         quantity: 2,
     };
 
-    let order_id = ports.execute_in_transaction(place_order).await?;
+    let order_id = composition_root.execute_in_transaction(place_order).await?;
 
     // --- Policy: whenever an order is placed, charge the customer -----------
 
@@ -52,7 +58,7 @@ async fn the_customer_places_an_order_and_the_policy_charges_it() -> Result<(), 
 
     let order_summary_query = OrderSummaryQuery { order_id };
 
-    let order_summary = order_summary_query.execute(&ports).await?;
+    let order_summary = order_summary_query.execute(&composition_root).await?;
 
     let paid_order_summary = OrderSummary {
         product: "mug".into(),
@@ -68,7 +74,7 @@ async fn the_customer_places_an_order_and_the_policy_charges_it() -> Result<(), 
 
 #[tokio::test]
 async fn the_domain_refuses_what_breaks_a_rule_or_an_invariant() -> Result<(), Error> {
-    let ports = ports(Arc::default()).await?;
+    let composition_root = composition_root(Arc::default()).await?;
 
     // --- Business rule: stock covers the quantity ----------------------------
 
@@ -77,7 +83,7 @@ async fn the_domain_refuses_what_breaks_a_rule_or_an_invariant() -> Result<(), E
         quantity: 11,
     };
 
-    let refused = ports.execute_in_transaction(too_many_mugs).await;
+    let refused = composition_root.execute_in_transaction(too_many_mugs).await;
 
     assert!(matches!(
         refused,
@@ -91,7 +97,7 @@ async fn the_domain_refuses_what_breaks_a_rule_or_an_invariant() -> Result<(), E
         quantity: 0,
     };
 
-    let refused = ports.execute_in_transaction(no_mugs).await;
+    let refused = composition_root.execute_in_transaction(no_mugs).await;
 
     assert!(matches!(
         refused,
