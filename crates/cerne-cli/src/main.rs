@@ -19,7 +19,7 @@ usage:
   cerne g adapter <Name> <Port>";
 
 /// What `cerne new` writes: one folder per layer, each `mod.rs` ready for the generators to append to.
-const PROJECT: [(&str, &str); 17] = [
+const PROJECT: [(&str, &str); 18] = [
     ("Cargo.toml", include_str!("../templates/Cargo.toml.jinja")),
     (".gitignore", "/target\n"),
     ("rustfmt.toml", include_str!("../templates/rustfmt.toml.jinja")),
@@ -35,7 +35,8 @@ const PROJECT: [(&str, &str); 17] = [
     ("src/application/ports/mod.rs", ""),
     ("src/application/queries/mod.rs", ""),
     ("src/application/read_models/mod.rs", ""),
-    ("src/infrastructure/mod.rs", ""),
+    ("src/infrastructure/mod.rs", "pub mod database;\n"),
+    ("src/infrastructure/database.rs", include_str!("../templates/database.rs.jinja")),
     ("tests/board.rs", include_str!("../templates/board.rs.jinja")),
 ];
 
@@ -50,7 +51,7 @@ const PORT: &str = include_str!("../templates/port.rs.jinja");
 const ADAPTER: &str = include_str!("../templates/adapter.rs.jinja");
 
 /// The lines `cerne g` adds to files that already exist, right before a line that `cerne new` wrote.
-const COMPOSITION_ROOT_FIELD: &str = "pub event_outbox: Box<dyn EventOutbox>,";
+const COMPOSITION_ROOT_FIELD: &str = "pub event_outbox: Box<dyn EventOutbox<Transaction>>,";
 const COMPOSITION_ROOT_NEW: &str = "event_outbox: constructor.event_outbox,";
 const EVENT_OUTBOX_BUILT: &str = "let event_outbox = ";
 const CONSTRUCTOR_BUILT: &str = "= CompositionRootConstructor {";
@@ -197,7 +198,7 @@ fn generate(kind: &str, name: &str, args: &[&str]) -> CliResult {
 /// adapter goes.
 fn add_repository_port(name: &str, file: &str) -> CliResult {
     let repository = format!("{file}_repository");
-    let repository_type = format!("Box<dyn Repository<{name}>>");
+    let repository_type = format!("Box<dyn Repository<{name}, Transaction>>");
 
     // --- composition_root.rs: the field ---------------------------------------
 

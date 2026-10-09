@@ -19,7 +19,7 @@ impl Command<CompositionRoot> for {{ name }}Command {
     async fn execute(&self, composition_root: &CompositionRoot) -> Result<Executed<(), CompositionRoot>, Error> {
         // --- Transaction -----------------------------------------------------
 
-        let transaction = composition_root.begin().await?;
+        let transaction = composition_root.database.begin().await?;
 
         // --- Ports -----------------------------------------------------------
 

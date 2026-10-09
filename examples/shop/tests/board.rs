@@ -8,16 +8,16 @@ use shop::application::queries::order_summary::OrderSummaryQuery;
 use shop::application::read_models::order_summary::OrderSummary;
 use shop::composition_root::{CompositionRoot, CompositionRootConstructor};
 use shop::domain::value_objects::order_id::OrderId;
+use shop::infrastructure::database::{Database, InMemoryEventOutbox, InMemoryOrderRepository};
 use shop::infrastructure::in_memory_catalog::InMemoryCatalog;
-use shop::infrastructure::in_memory_database::{InMemoryDatabase, InMemoryEventOutbox, InMemoryOrderRepository};
 use shop::infrastructure::in_memory_payments::InMemoryPayments;
 use std::sync::Arc;
 
 fn composition_root(payments: Arc<InMemoryPayments>) -> Arc<CompositionRoot> {
-    let database = InMemoryDatabase::default();
+    let database = Database::default();
 
-    let order_repository = InMemoryOrderRepository::new(database.clone());
-    let event_outbox = InMemoryEventOutbox::new(database.clone());
+    let order_repository = InMemoryOrderRepository;
+    let event_outbox = InMemoryEventOutbox;
 
     let catalog = InMemoryCatalog {
         products: vec![("mug", 3000, 10)],

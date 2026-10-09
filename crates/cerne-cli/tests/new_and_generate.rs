@@ -87,14 +87,16 @@ fn generated_project_passes_clippy_without_touching_anything() {
 
     let composition_root = fs::read_to_string(project.join("src/composition_root.rs")).unwrap();
 
-    assert!(composition_root.contains("pub order_repository: Box<dyn Repository<Order>>,"));
+    assert!(composition_root.contains("pub order_repository: Box<dyn Repository<Order, Transaction>>,"));
     assert!(composition_root.contains("payment_repository: constructor.payment_repository,"));
 
     let main_rs = fs::read_to_string(project.join("src/main.rs")).unwrap();
 
     assert!(main_rs.contains("let order_repository = order_repository_adapter();"));
-    assert!(main_rs.contains("fn payment_repository_adapter() -> Box<dyn Repository<Payment>> {"));
-    assert!(main_rs.contains("        order_repository,\n        payment_repository,\n        event_outbox,\n"));
+    assert!(main_rs.contains("fn payment_repository_adapter() -> Box<dyn Repository<Payment, Transaction>> {"));
+    assert!(main_rs.contains(
+        "        database,\n        order_repository,\n        payment_repository,\n        event_outbox,\n"
+    ));
 
     // --- cargo clippy, on the project as the CLI left it ---------------------
 

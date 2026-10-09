@@ -127,8 +127,10 @@ pub mod domain {
     ///     }
     /// }
     ///
+    /// struct Transaction;
+    ///
     /// struct CompositionRoot {
-    ///     order_repository: Box<dyn Repository<Order>>,
+    ///     order_repository: Box<dyn Repository<Order, Transaction>>,
     /// }
     /// ```
     pub use cerne_macros::aggregate;

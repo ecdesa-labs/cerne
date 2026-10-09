@@ -19,11 +19,14 @@ impl Command<CompositionRoot> for ChargeOrderCommand {
     async fn execute(&self, composition_root: &CompositionRoot) -> Result<Executed<(), CompositionRoot>, Error> {
         // --- Transaction -----------------------------------------------------
 
-        let transaction = composition_root.begin().await?;
+        let mut transaction = composition_root.database.begin().await?;
 
         // --- Ports -----------------------------------------------------------
 
-        let order = transaction.order_repository.load(&self.order_id).await?;
+        let order = composition_root
+            .order_repository
+            .load(&mut transaction, &self.order_id)
+            .await?;
 
         // --- Business rules --------------------------------------------------
 
@@ -33,7 +36,7 @@ impl Command<CompositionRoot> for ChargeOrderCommand {
 
         // --- External system: Payments ---------------------------------------
 
-        transaction
+        composition_root
             .payments
             .charge(&self.order_id, self.total)
             .await?;
@@ -42,7 +45,10 @@ impl Command<CompositionRoot> for ChargeOrderCommand {
 
         let paid_order = order.pay()?;
 
-        transaction.order_repository.save(paid_order).await?;
+        composition_root
+            .order_repository
+            .save(&mut transaction, paid_order)
+            .await?;
 
         // --- Domain events ---------------------------------------------------
 
@@ -50,9 +56,9 @@ impl Command<CompositionRoot> for ChargeOrderCommand {
             order_id: self.order_id.clone(),
         };
 
-        transaction
+        composition_root
             .event_outbox
-            .store(OutboxEntry::new(&order_paid)?)
+            .store(&mut transaction, OutboxEntry::new(&order_paid)?)
             .await?;
         transaction.commit().await?;
 

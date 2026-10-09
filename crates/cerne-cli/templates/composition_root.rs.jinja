@@ -1,31 +1,23 @@
-use cerne::Error;
+use crate::infrastructure::database::{Database, Transaction};
 use cerne::application::EventOutbox;
 
-/// The composition root: every port the commands and queries can use.
+/// The composition root: the database and every port the commands and queries can use.
 pub struct CompositionRoot {
-    pub event_outbox: Box<dyn EventOutbox>,
+    pub database: Database,
+    pub event_outbox: Box<dyn EventOutbox<Transaction>>,
 }
 
 /// What `CompositionRoot::new` takes: every adapter, already built.
 pub struct CompositionRootConstructor {
-    pub event_outbox: Box<dyn EventOutbox>,
+    pub database: Database,
+    pub event_outbox: Box<dyn EventOutbox<Transaction>>,
 }
 
 impl CompositionRoot {
     pub fn new(constructor: CompositionRootConstructor) -> Self {
         Self {
+            database: constructor.database,
             event_outbox: constructor.event_outbox,
         }
-    }
-
-    /// A composition root whose repositories and event outbox write in one new transaction. External systems are not
-    /// part of it: the new composition root gets the same adapters.
-    pub async fn begin(&self) -> Result<CompositionRoot, Error> {
-        todo!("open a transaction on your adapters and build a CompositionRoot on it")
-    }
-
-    /// Makes every write of the transaction permanent; dropping it without `commit` rolls them back.
-    pub async fn commit(self) -> Result<(), Error> {
-        todo!("commit the transaction of your adapters")
     }
 }

@@ -11,26 +11,28 @@ use serde::Serialize;
 /// ```
 /// use cerne::application::{EventOutbox, OutboxEntry};
 /// use cerne::{Error, async_trait};
-/// use std::sync::Mutex;
 ///
+/// // In memory, the transaction holds the data itself.
 /// #[derive(Default)]
-/// struct InMemoryEventOutbox {
-///     outbox_entries: Mutex<Vec<OutboxEntry>>,
+/// struct InMemoryTransaction {
+///     outbox_entries: Vec<OutboxEntry>,
 /// }
 ///
+/// struct InMemoryEventOutbox;
+///
 /// #[async_trait]
-/// impl EventOutbox for InMemoryEventOutbox {
-///     async fn store(&self, outbox_entry: OutboxEntry) -> Result<(), Error> {
-///         self.outbox_entries.lock().unwrap().push(outbox_entry);
+/// impl EventOutbox<InMemoryTransaction> for InMemoryEventOutbox {
+///     async fn store(&self, transaction: &mut InMemoryTransaction, outbox_entry: OutboxEntry) -> Result<(), Error> {
+///         transaction.outbox_entries.push(outbox_entry);
 ///
 ///         Ok(())
 ///     }
 /// }
 /// ```
 #[async_trait]
-pub trait EventOutbox: Send + Sync {
+pub trait EventOutbox<Transaction: Send>: Send + Sync {
     /// Stores one event, in the transaction of the command that produced it.
-    async fn store(&self, outbox_entry: OutboxEntry) -> Result<(), Error>;
+    async fn store(&self, transaction: &mut Transaction, outbox_entry: OutboxEntry) -> Result<(), Error>;
 }
 
 /// An event as the outbox stores it: its name and its fields in JSON.

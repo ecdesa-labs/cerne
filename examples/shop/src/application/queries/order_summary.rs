@@ -13,11 +13,15 @@ impl Query<CompositionRoot> for OrderSummaryQuery {
     type ReadModel = OrderSummary;
 
     async fn execute(&self, composition_root: &CompositionRoot) -> Result<OrderSummary, Error> {
+        // --- Transaction -----------------------------------------------------
+
+        let mut transaction = composition_root.database.begin().await?;
+
         // --- Ports -----------------------------------------------------------
 
         let order = composition_root
             .order_repository
-            .load(&self.order_id)
+            .load(&mut transaction, &self.order_id)
             .await?;
 
         // --- Read model ------------------------------------------------------

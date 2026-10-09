@@ -2,10 +2,14 @@ use crate::entities::Aggregate;
 use crate::errors::Error;
 use async_trait::async_trait;
 
-/// The port that loads and saves an aggregate. Only an `Aggregate` fits: `Repository<OrderItem>` does not compile.
+/// The port that loads and saves an aggregate. Only an `Aggregate` fits: `Repository<OrderItem, Transaction>` does not
+/// compile.
 ///
 /// `save` works like in Rails: an aggregate without an id is inserted, and the repository decides its id; an aggregate
 /// with an id is updated. Either way, `save` returns the id.
+///
+/// Both methods take the transaction the command opened (`composition_root.database.begin()`): `Transaction` is the
+/// application's own type, the same for every repository and the event outbox of one composition root.
 ///
 /// Not finding the aggregate is an `ApplicationError::NotFound`; a database failure is an `InfrastructureError`.
 ///
@@ -14,7 +18,6 @@ use async_trait::async_trait;
 /// use cerne::domain::{EnforcementResult, Entity, Validate, ValueObject, aggregate};
 /// use cerne::{ApplicationError, Error, async_trait};
 /// use std::collections::HashMap;
-/// use std::sync::Mutex;
 ///
 /// #[derive(Clone, PartialEq, Eq, Hash)]
 /// struct OrderId(u64);
@@ -39,26 +42,27 @@ use async_trait::async_trait;
 ///     }
 /// }
 ///
+/// // In memory, the transaction holds the data itself.
 /// #[derive(Default)]
-/// struct InMemoryOrderRepository(Mutex<HashMap<OrderId, Order>>);
+/// struct InMemoryTransaction {
+///     orders: HashMap<OrderId, Order>,
+/// }
+///
+/// struct InMemoryOrderRepository;
 ///
 /// #[async_trait]
-/// impl Repository<Order> for InMemoryOrderRepository {
-///     async fn load(&self, id: &OrderId) -> Result<Order, Error> {
-///         let orders = self.0.lock().unwrap();
-///
-///         Ok(orders.get(id).cloned().ok_or(ApplicationError::NotFound("order"))?)
+/// impl Repository<Order, InMemoryTransaction> for InMemoryOrderRepository {
+///     async fn load(&self, transaction: &mut InMemoryTransaction, id: &OrderId) -> Result<Order, Error> {
+///         Ok(transaction.orders.get(id).cloned().ok_or(ApplicationError::NotFound("order"))?)
 ///     }
 ///
-///     async fn save(&self, order: Order) -> Result<OrderId, Error> {
-///         let mut orders = self.0.lock().unwrap();
-///
+///     async fn save(&self, transaction: &mut InMemoryTransaction, order: Order) -> Result<OrderId, Error> {
 ///         let order_id = match order.id() {
 ///             Some(order_id) => order_id.clone(),
-///             None => OrderId::new(orders.len() as u64 + 1)?,
+///             None => OrderId::new(transaction.orders.len() as u64 + 1)?,
 ///         };
 ///
-///         orders.insert(order_id.clone(), order.with_id(order_id.clone()));
+///         transaction.orders.insert(order_id.clone(), order.with_id(order_id.clone()));
 ///
 ///         Ok(order_id)
 ///     }
@@ -66,18 +70,18 @@ use async_trait::async_trait;
 ///
 /// # #[tokio::main]
 /// # async fn main() -> Result<(), Error> {
-/// let order_repository = InMemoryOrderRepository::default();
+/// let mut transaction = InMemoryTransaction::default();
 ///
-/// let order_id = order_repository.save(Order::new(OrderConstructor {})?).await?;
+/// let order_id = InMemoryOrderRepository.save(&mut transaction, Order::new(OrderConstructor {})?).await?;
 ///
 /// assert!(order_id == OrderId(1));
 /// # Ok(())
 /// # }
 /// ```
 #[async_trait]
-pub trait Repository<A: Aggregate>: Send + Sync {
-    async fn load(&self, id: &A::Id) -> Result<A, Error>;
+pub trait Repository<A: Aggregate, Transaction: Send>: Send + Sync {
+    async fn load(&self, transaction: &mut Transaction, id: &A::Id) -> Result<A, Error>;
 
     /// Inserts the aggregate if it has no id yet (deciding one), updates it otherwise; returns its id.
-    async fn save(&self, aggregate: A) -> Result<A::Id, Error>;
+    async fn save(&self, transaction: &mut Transaction, aggregate: A) -> Result<A::Id, Error>;
 }

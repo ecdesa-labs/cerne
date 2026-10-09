@@ -1,14 +1,17 @@
 use cerne::application::{EventOutbox, SyncEventBus};
 use {{ crate_name }}::composition_root::{CompositionRoot, CompositionRootConstructor};
+use {{ crate_name }}::infrastructure::database::{Database, Transaction};
 use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // --- Composition root ----------------------------------------------------
 
+    let database = Database;
+
     let event_outbox = event_outbox_adapter();
 
-    let composition_root_constructor = CompositionRootConstructor { event_outbox };
+    let composition_root_constructor = CompositionRootConstructor { database, event_outbox };
 
     let composition_root = Arc::new(CompositionRoot::new(composition_root_constructor));
 
@@ -24,6 +27,6 @@ async fn main() -> anyhow::Result<()> {
 }
 
 /// No adapter of EventOutbox yet: write one in `infrastructure/` and build it here.
-fn event_outbox_adapter() -> Box<dyn EventOutbox> {
+fn event_outbox_adapter() -> Box<dyn EventOutbox<Transaction>> {
     todo!("an adapter of EventOutbox")
 }

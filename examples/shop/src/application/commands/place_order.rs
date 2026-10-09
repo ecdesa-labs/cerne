@@ -19,12 +19,15 @@ impl Command<CompositionRoot> for PlaceOrderCommand {
     async fn execute(&self, composition_root: &CompositionRoot) -> Result<Executed<OrderId, CompositionRoot>, Error> {
         // --- Transaction -----------------------------------------------------
 
-        let transaction = composition_root.begin().await?;
+        let mut transaction = composition_root.database.begin().await?;
 
         // --- Ports -----------------------------------------------------------
 
-        let unit_price = transaction.catalog.unit_price(&self.product).await?;
-        let units_in_stock = transaction.catalog.units_in_stock(&self.product).await?;
+        let unit_price = composition_root.catalog.unit_price(&self.product).await?;
+        let units_in_stock = composition_root
+            .catalog
+            .units_in_stock(&self.product)
+            .await?;
 
         // --- Business rules --------------------------------------------------
 
@@ -42,7 +45,10 @@ impl Command<CompositionRoot> for PlaceOrderCommand {
             total,
         })?;
 
-        let order_id = transaction.order_repository.save(order).await?;
+        let order_id = composition_root
+            .order_repository
+            .save(&mut transaction, order)
+            .await?;
 
         // --- Domain events ---------------------------------------------------
 
@@ -51,9 +57,9 @@ impl Command<CompositionRoot> for PlaceOrderCommand {
             total,
         };
 
-        transaction
+        composition_root
             .event_outbox
-            .store(OutboxEntry::new(&order_placed)?)
+            .store(&mut transaction, OutboxEntry::new(&order_placed)?)
             .await?;
         transaction.commit().await?;
 

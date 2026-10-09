@@ -501,9 +501,38 @@ impl Payments for InMemoryPayments {
 }
 ```
 
-Dos ports son traits del propio Cerne: `Repository<Order>`, que carga y guarda el pedido, y `EventOutbox`, que guarda todo evento que produce un command. `cerne g adapter` solo escribe adapters de los ports del proyecto, así que estos dos se escriben a mano. En una aplicación real, están sobre la base de datos, y `begin` abre una transacción en ella; aquí, un `InMemoryDatabase` guarda los pedidos y los eventos, y cada clon suyo comparte los mismos datos.
+Dos ports son traits del propio Cerne: `Repository<Order, Transaction>`, que carga y guarda el pedido, y `EventOutbox<Transaction>`, que guarda todo evento que produce un command. Los dos reciben la transacción que abrió el command. `cerne new` escribe el `Database` y su `Transaction` con un `todo!()`, porque solo tú sabes cómo tu base de datos abre una transacción: en una aplicación real, `Database` envuelve un pool de `sqlx`, de `diesel` o de otra. Aquí guarda los pedidos y los eventos en memoria, y cada `Transaction` los comparte.
 
-<!-- file: src/infrastructure/in_memory_database.rs -->
+El `src/infrastructure/database.rs` tal como lo generó `cerne new shop`:
+
+<!-- generated: src/infrastructure/database.rs -->
+```rust
+use cerne::Error;
+
+/// The database of the application: write it on yours (a pool of `sqlx`, `diesel` or any other). The commands only
+/// call `begin`, and pass the transaction to every repository and to the event outbox.
+pub struct Database;
+
+/// One transaction of the `Database`: the type every repository and the event outbox take.
+pub struct Transaction;
+
+impl Database {
+    pub async fn begin(&self) -> Result<Transaction, Error> {
+        todo!("open a transaction on your database")
+    }
+}
+
+impl Transaction {
+    /// Makes every write of the transaction permanent; dropping it without `commit` rolls them back.
+    pub async fn commit(self) -> Result<(), Error> {
+        todo!("commit the transaction on your database")
+    }
+}
+```
+
+Después de rellenarlo, con los adapters de los dos ports, que `cerne g adapter` no escribe:
+
+<!-- file: src/infrastructure/database.rs -->
 ```rust
 use crate::domain::entities::order::Order;
 use crate::domain::value_objects::order_id::OrderId;
@@ -512,37 +541,53 @@ use cerne::domain::Entity;
 use cerne::{ApplicationError, Error, async_trait};
 use std::sync::{Arc, Mutex};
 
-/// What a database would hold, in memory: cloning it shares the same data. There is no transaction: a command that
-/// fails halfway keeps what it already wrote.
-#[derive(Clone, Default)]
-pub struct InMemoryDatabase {
+/// What a database would hold, in memory.
+#[derive(Default)]
+pub struct Database {
     pub orders: Arc<Mutex<Vec<Order>>>,
     pub event_outbox: Arc<Mutex<Vec<OutboxEntry>>>,
 }
 
-// --- Repository<Order> -------------------------------------------------------
-
-pub struct InMemoryOrderRepository {
-    database: InMemoryDatabase,
+/// In memory there is no real transaction: every write goes straight to the `Database`, and a command that fails
+/// halfway keeps what it already wrote.
+pub struct Transaction {
+    orders: Arc<Mutex<Vec<Order>>>,
+    event_outbox: Arc<Mutex<Vec<OutboxEntry>>>,
 }
 
-impl InMemoryOrderRepository {
-    pub fn new(database: InMemoryDatabase) -> Self {
-        Self { database }
+impl Database {
+    pub async fn begin(&self) -> Result<Transaction, Error> {
+        let transaction = Transaction {
+            orders: Arc::clone(&self.orders),
+            event_outbox: Arc::clone(&self.event_outbox),
+        };
+
+        Ok(transaction)
     }
 }
 
+impl Transaction {
+    /// Nothing to make permanent: every write is already in the `Database`.
+    pub async fn commit(self) -> Result<(), Error> {
+        Ok(())
+    }
+}
+
+// --- Repository<Order> -------------------------------------------------------
+
+pub struct InMemoryOrderRepository;
+
 #[async_trait]
-impl Repository<Order> for InMemoryOrderRepository {
-    async fn load(&self, order_id: &OrderId) -> Result<Order, Error> {
-        let orders = self.database.orders.lock().unwrap();
+impl Repository<Order, Transaction> for InMemoryOrderRepository {
+    async fn load(&self, transaction: &mut Transaction, order_id: &OrderId) -> Result<Order, Error> {
+        let orders = transaction.orders.lock().unwrap();
         let order = orders.iter().find(|order| order.id() == Some(order_id));
 
         Ok(order.cloned().ok_or(ApplicationError::NotFound("order"))?)
     }
 
-    async fn save(&self, order: Order) -> Result<OrderId, Error> {
-        let mut orders = self.database.orders.lock().unwrap();
+    async fn save(&self, transaction: &mut Transaction, order: Order) -> Result<OrderId, Error> {
+        let mut orders = transaction.orders.lock().unwrap();
 
         let order_id = match order.id() {
             Some(order_id) => order_id.clone(),
@@ -558,30 +603,23 @@ impl Repository<Order> for InMemoryOrderRepository {
 
 // --- EventOutbox -------------------------------------------------------------
 
-pub struct InMemoryEventOutbox {
-    database: InMemoryDatabase,
-}
-
-impl InMemoryEventOutbox {
-    pub fn new(database: InMemoryDatabase) -> Self {
-        Self { database }
-    }
-}
+pub struct InMemoryEventOutbox;
 
 #[async_trait]
-impl EventOutbox for InMemoryEventOutbox {
-    async fn store(&self, outbox_entry: OutboxEntry) -> Result<(), Error> {
-        self.database.event_outbox.lock().unwrap().push(outbox_entry);
+impl EventOutbox<Transaction> for InMemoryEventOutbox {
+    async fn store(&self, transaction: &mut Transaction, outbox_entry: OutboxEntry) -> Result<(), Error> {
+        transaction.event_outbox.lock().unwrap().push(outbox_entry);
 
         Ok(())
     }
 }
 ```
 
-El `src/infrastructure/mod.rs` tal como lo generaron `cerne g adapter InMemoryCatalog Catalog` y `cerne g adapter InMemoryPayments Payments`:
+El `src/infrastructure/mod.rs` tal como lo generaron `cerne new shop`, `cerne g adapter InMemoryCatalog Catalog` y `cerne g adapter InMemoryPayments Payments`:
 
 <!-- generated: src/infrastructure/mod.rs -->
 ```rust
+pub mod database;
 pub mod in_memory_catalog;
 pub mod in_memory_payments;
 ```
@@ -590,52 +628,44 @@ Después de rellenarlo:
 
 <!-- file: src/infrastructure/mod.rs -->
 ```rust
+pub mod database;
 pub mod in_memory_catalog;
-pub mod in_memory_database;
 pub mod in_memory_payments;
 ```
 
-El `CompositionRoot` reúne todos los ports, y `CompositionRoot::new` solo guarda los adapters que recibe: quien los construye es `main.rs`. `cerne g entity --aggregate` ya añadió el `order_repository`; la base de datos y los dos sistemas externos se añaden a mano.
+El `CompositionRoot` reúne todos los ports, y `CompositionRoot::new` solo guarda los adapters que recibe: quien los construye es `main.rs`. `cerne new` escribió el `database` y el `event_outbox`, y `cerne g entity --aggregate` añadió el `order_repository`; los dos sistemas externos se añaden a mano.
 
-`begin` y `commit` también son tuyos: `cerne new` los escribe con un `todo!()`, porque solo los adapters saben abrir una transacción. `begin` construye un `CompositionRoot` nuevo, cuyo repositorio y cuyo event outbox escriben en la transacción. Los sistemas externos siguen siendo los mismos, un `Arc::clone` de los mismos adapters, porque una llamada a ellos no se puede deshacer. En memoria no hay transacción: `begin` construye los adapters de nuevo sobre el mismo `InMemoryDatabase`, y `commit` no tiene nada que hacer.
+Nada en él abre una transacción: la abre el command, con `composition_root.database.begin()`, y la pasa al repositorio y al event outbox. Los sistemas externos no reciben transacción, porque una llamada a ellos no se puede deshacer.
 
 El `src/composition_root.rs` tal como lo generaron `cerne new shop` y `cerne g entity Order product:String quantity:u32 total:u64 status=Placed:Placed,Paid --aggregate`:
 
 <!-- generated: src/composition_root.rs -->
 ```rust
 use crate::domain::entities::order::Order;
-use cerne::Error;
+use crate::infrastructure::database::{Database, Transaction};
 use cerne::application::{EventOutbox, Repository};
 
-/// The composition root: every port the commands and queries can use.
+/// The composition root: the database and every port the commands and queries can use.
 pub struct CompositionRoot {
-    pub order_repository: Box<dyn Repository<Order>>,
-    pub event_outbox: Box<dyn EventOutbox>,
+    pub database: Database,
+    pub order_repository: Box<dyn Repository<Order, Transaction>>,
+    pub event_outbox: Box<dyn EventOutbox<Transaction>>,
 }
 
 /// What `CompositionRoot::new` takes: every adapter, already built.
 pub struct CompositionRootConstructor {
-    pub order_repository: Box<dyn Repository<Order>>,
-    pub event_outbox: Box<dyn EventOutbox>,
+    pub database: Database,
+    pub order_repository: Box<dyn Repository<Order, Transaction>>,
+    pub event_outbox: Box<dyn EventOutbox<Transaction>>,
 }
 
 impl CompositionRoot {
     pub fn new(constructor: CompositionRootConstructor) -> Self {
         Self {
+            database: constructor.database,
             order_repository: constructor.order_repository,
             event_outbox: constructor.event_outbox,
         }
-    }
-
-    /// A composition root whose repositories and event outbox write in one new transaction. External systems are not
-    /// part of it: the new composition root gets the same adapters.
-    pub async fn begin(&self) -> Result<CompositionRoot, Error> {
-        todo!("open a transaction on your adapters and build a CompositionRoot on it")
-    }
-
-    /// Makes every write of the transaction permanent; dropping it without `commit` rolls them back.
-    pub async fn commit(self) -> Result<(), Error> {
-        todo!("commit the transaction of your adapters")
     }
 }
 ```
@@ -647,25 +677,24 @@ Después de rellenarlo:
 use crate::application::ports::catalog::Catalog;
 use crate::application::ports::payments::Payments;
 use crate::domain::entities::order::Order;
-use crate::infrastructure::in_memory_database::{InMemoryDatabase, InMemoryEventOutbox, InMemoryOrderRepository};
-use cerne::Error;
+use crate::infrastructure::database::{Database, Transaction};
 use cerne::application::{EventOutbox, Repository};
 use std::sync::Arc;
 
-/// The composition root: every port the commands and queries can use.
+/// The composition root: the database and every port the commands and queries can use.
 pub struct CompositionRoot {
-    pub database: InMemoryDatabase,
-    pub order_repository: Box<dyn Repository<Order>>,
-    pub event_outbox: Box<dyn EventOutbox>,
+    pub database: Database,
+    pub order_repository: Box<dyn Repository<Order, Transaction>>,
+    pub event_outbox: Box<dyn EventOutbox<Transaction>>,
     pub catalog: Arc<dyn Catalog>,
     pub payments: Arc<dyn Payments>,
 }
 
 /// What `CompositionRoot::new` takes: every adapter, already built.
 pub struct CompositionRootConstructor {
-    pub database: InMemoryDatabase,
-    pub order_repository: Box<dyn Repository<Order>>,
-    pub event_outbox: Box<dyn EventOutbox>,
+    pub database: Database,
+    pub order_repository: Box<dyn Repository<Order, Transaction>>,
+    pub event_outbox: Box<dyn EventOutbox<Transaction>>,
     pub catalog: Arc<dyn Catalog>,
     pub payments: Arc<dyn Payments>,
 }
@@ -679,29 +708,6 @@ impl CompositionRoot {
             catalog: constructor.catalog,
             payments: constructor.payments,
         }
-    }
-
-    /// In memory there is no transaction: the repository and the event outbox are built again on the same data.
-    pub async fn begin(&self) -> Result<CompositionRoot, Error> {
-        let transaction = self.database.clone();
-
-        let order_repository = InMemoryOrderRepository::new(transaction.clone());
-        let event_outbox = InMemoryEventOutbox::new(transaction.clone());
-
-        let composition_root_constructor = CompositionRootConstructor {
-            database: transaction,
-            order_repository: Box::new(order_repository),
-            event_outbox: Box::new(event_outbox),
-            catalog: Arc::clone(&self.catalog),
-            payments: Arc::clone(&self.payments),
-        };
-
-        Ok(CompositionRoot::new(composition_root_constructor))
-    }
-
-    /// Nothing to make permanent: every write is already in memory.
-    pub async fn commit(self) -> Result<(), Error> {
-        Ok(())
     }
 }
 ```
@@ -731,7 +737,7 @@ impl Command<CompositionRoot> for PlaceOrderCommand {
     async fn execute(&self, composition_root: &CompositionRoot) -> Result<Executed<(), CompositionRoot>, Error> {
         // --- Transaction -----------------------------------------------------
 
-        let transaction = composition_root.begin().await?;
+        let transaction = composition_root.database.begin().await?;
 
         // --- Ports -----------------------------------------------------------
 
@@ -776,12 +782,12 @@ impl Command<CompositionRoot> for PlaceOrderCommand {
     async fn execute(&self, composition_root: &CompositionRoot) -> Result<Executed<OrderId, CompositionRoot>, Error> {
         // --- Transaction -----------------------------------------------------
 
-        let transaction = composition_root.begin().await?;
+        let mut transaction = composition_root.database.begin().await?;
 
         // --- Ports -----------------------------------------------------------
 
-        let unit_price = transaction.catalog.unit_price(&self.product).await?;
-        let units_in_stock = transaction.catalog.units_in_stock(&self.product).await?;
+        let unit_price = composition_root.catalog.unit_price(&self.product).await?;
+        let units_in_stock = composition_root.catalog.units_in_stock(&self.product).await?;
 
         // --- Business rules --------------------------------------------------
 
@@ -799,7 +805,7 @@ impl Command<CompositionRoot> for PlaceOrderCommand {
             total,
         })?;
 
-        let order_id = transaction.order_repository.save(order).await?;
+        let order_id = composition_root.order_repository.save(&mut transaction, order).await?;
 
         // --- Domain events ---------------------------------------------------
 
@@ -808,7 +814,7 @@ impl Command<CompositionRoot> for PlaceOrderCommand {
             total,
         };
 
-        transaction.event_outbox.store(OutboxEntry::new(&order_placed)?).await?;
+        composition_root.event_outbox.store(&mut transaction, OutboxEntry::new(&order_placed)?).await?;
         transaction.commit().await?;
 
         Ok(Executed {
@@ -819,7 +825,7 @@ impl Command<CompositionRoot> for PlaceOrderCommand {
 }
 ```
 
-- **Transaction:** `composition_root.begin()` la abre, y todo port de aquí en adelante se lee de `transaction`.
+- **Transaction:** `composition_root.database.begin()` la abre, y el repositorio y el event outbox de aquí en adelante reciben `&mut transaction`. El catálogo no: es un sistema externo.
 - **Ports:** toda lectura que necesita el command, antes de cualquier decisión.
 - **Business rules:** cada condición en una variable, después `BusinessRules::check([business_rule!(..)])?`. Una regla de negocio necesita el mundo de fuera (aquí, el stock); una invariante solo necesita la propia entidad.
 - **Aggregate:** el cambio, después el `save`, que devuelve el id.
@@ -924,7 +930,7 @@ impl Command<CompositionRoot> for ChargeOrderCommand {
     async fn execute(&self, composition_root: &CompositionRoot) -> Result<Executed<(), CompositionRoot>, Error> {
         // --- Transaction -----------------------------------------------------
 
-        let transaction = composition_root.begin().await?;
+        let transaction = composition_root.database.begin().await?;
 
         // --- Ports -----------------------------------------------------------
 
@@ -969,11 +975,11 @@ impl Command<CompositionRoot> for ChargeOrderCommand {
     async fn execute(&self, composition_root: &CompositionRoot) -> Result<Executed<(), CompositionRoot>, Error> {
         // --- Transaction -----------------------------------------------------
 
-        let transaction = composition_root.begin().await?;
+        let mut transaction = composition_root.database.begin().await?;
 
         // --- Ports -----------------------------------------------------------
 
-        let order = transaction.order_repository.load(&self.order_id).await?;
+        let order = composition_root.order_repository.load(&mut transaction, &self.order_id).await?;
 
         // --- Business rules --------------------------------------------------
 
@@ -983,13 +989,13 @@ impl Command<CompositionRoot> for ChargeOrderCommand {
 
         // --- External system: Payments ---------------------------------------
 
-        transaction.payments.charge(&self.order_id, self.total).await?;
+        composition_root.payments.charge(&self.order_id, self.total).await?;
 
         // --- Aggregate -------------------------------------------------------
 
         let paid_order = order.pay()?;
 
-        transaction.order_repository.save(paid_order).await?;
+        composition_root.order_repository.save(&mut transaction, paid_order).await?;
 
         // --- Domain events ---------------------------------------------------
 
@@ -997,7 +1003,7 @@ impl Command<CompositionRoot> for ChargeOrderCommand {
             order_id: self.order_id.clone(),
         };
 
-        transaction.event_outbox.store(OutboxEntry::new(&order_paid)?).await?;
+        composition_root.event_outbox.store(&mut transaction, OutboxEntry::new(&order_paid)?).await?;
         transaction.commit().await?;
 
         Ok(Executed {
@@ -1061,11 +1067,15 @@ impl Query<CompositionRoot> for OrderSummaryQuery {
     type ReadModel = OrderSummary;
 
     async fn execute(&self, composition_root: &CompositionRoot) -> Result<OrderSummary, Error> {
+        // --- Transaction -----------------------------------------------------
+
+        let mut transaction = composition_root.database.begin().await?;
+
         // --- Ports -----------------------------------------------------------
 
         let order = composition_root
             .order_repository
-            .load(&self.order_id)
+            .load(&mut transaction, &self.order_id)
             .await?;
 
         // --- Read model ------------------------------------------------------
@@ -1107,16 +1117,16 @@ use shop::application::queries::order_summary::OrderSummaryQuery;
 use shop::application::read_models::order_summary::OrderSummary;
 use shop::composition_root::{CompositionRoot, CompositionRootConstructor};
 use shop::domain::value_objects::order_id::OrderId;
+use shop::infrastructure::database::{Database, InMemoryEventOutbox, InMemoryOrderRepository};
 use shop::infrastructure::in_memory_catalog::InMemoryCatalog;
-use shop::infrastructure::in_memory_database::{InMemoryDatabase, InMemoryEventOutbox, InMemoryOrderRepository};
 use shop::infrastructure::in_memory_payments::InMemoryPayments;
 use std::sync::Arc;
 
 fn composition_root(payments: Arc<InMemoryPayments>) -> Arc<CompositionRoot> {
-    let database = InMemoryDatabase::default();
+    let database = Database::default();
 
-    let order_repository = InMemoryOrderRepository::new(database.clone());
-    let event_outbox = InMemoryEventOutbox::new(database.clone());
+    let order_repository = InMemoryOrderRepository;
+    let event_outbox = InMemoryEventOutbox;
 
     let catalog = InMemoryCatalog {
         products: vec![("mug", 3000, 10)],
@@ -1243,16 +1253,20 @@ El `src/main.rs` tal como lo generaron `cerne new shop` y `cerne g entity Order 
 use cerne::application::{EventOutbox, Repository, SyncEventBus};
 use shop::composition_root::{CompositionRoot, CompositionRootConstructor};
 use shop::domain::entities::order::Order;
+use shop::infrastructure::database::{Database, Transaction};
 use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // --- Composition root ----------------------------------------------------
 
+    let database = Database;
+
     let order_repository = order_repository_adapter();
     let event_outbox = event_outbox_adapter();
 
     let composition_root_constructor = CompositionRootConstructor {
+        database,
         order_repository,
         event_outbox,
     };
@@ -1271,12 +1285,12 @@ async fn main() -> anyhow::Result<()> {
 }
 
 /// No adapter of EventOutbox yet: write one in `infrastructure/` and build it here.
-fn event_outbox_adapter() -> Box<dyn EventOutbox> {
+fn event_outbox_adapter() -> Box<dyn EventOutbox<Transaction>> {
     todo!("an adapter of EventOutbox")
 }
 
 /// No adapter of Repository<Order> yet: write one in `infrastructure/` and build it here.
-fn order_repository_adapter() -> Box<dyn Repository<Order>> {
+fn order_repository_adapter() -> Box<dyn Repository<Order, Transaction>> {
     todo!("an adapter of Repository<Order>")
 }
 ```
@@ -1289,8 +1303,8 @@ use cerne::application::{Command, Query, SyncEventBus};
 use shop::application::commands::place_order::PlaceOrderCommand;
 use shop::application::queries::order_summary::OrderSummaryQuery;
 use shop::composition_root::{CompositionRoot, CompositionRootConstructor};
+use shop::infrastructure::database::{Database, InMemoryEventOutbox, InMemoryOrderRepository};
 use shop::infrastructure::in_memory_catalog::InMemoryCatalog;
-use shop::infrastructure::in_memory_database::{InMemoryDatabase, InMemoryEventOutbox, InMemoryOrderRepository};
 use shop::infrastructure::in_memory_payments::InMemoryPayments;
 use std::sync::Arc;
 
@@ -1298,10 +1312,10 @@ use std::sync::Arc;
 async fn main() -> anyhow::Result<()> {
     // --- Composition root ----------------------------------------------------
 
-    let database = InMemoryDatabase::default();
+    let database = Database::default();
 
-    let order_repository = InMemoryOrderRepository::new(database.clone());
-    let event_outbox = InMemoryEventOutbox::new(database.clone());
+    let order_repository = InMemoryOrderRepository;
+    let event_outbox = InMemoryEventOutbox;
 
     let catalog = InMemoryCatalog {
         products: vec![("mug", 3000, 10), ("t-shirt", 5000, 3)],
@@ -1372,7 +1386,7 @@ En el test del paso 9, `PlaceOrderCommand { product: "mug".into(), quantity: 11 
 
 ## Otras opciones
 
-- **Una base de datos real:** escribe sobre ella un adapter de `Repository<Order>` y de `EventOutbox` (con `sqlx`, `diesel` o cualquier otro), y un `begin` que abre una transacción y los construye sobre ella. La tabla `event_outbox` es tuya: leerla de vuelta para publicar lo que quedó atrás es cómo una policy sobrevive a una caída.
+- **Una base de datos real:** escribe sobre ella el `Database` y la `Transaction` de `src/infrastructure/database.rs` (con `sqlx`, `diesel` o cualquier otro), y los adapters de `Repository<Order, Transaction>` y `EventOutbox<Transaction>` sobre esa transacción. La tabla `event_outbox` es tuya: leerla de vuelta para publicar lo que quedó atrás es cómo una policy sobrevive a una caída.
 - **HTTP, una cola, un CLI:** cada petición ejecuta un bloque de actor de `main.rs`: ejecuta el command, responde con su `output` y publica sus `events`.
 - **Event bus asíncrono:** `AsyncEventBus::new(..)` en lugar del `SyncEventBus`: cada evento empieza en su propia task en cuanto llega, y `async_event_bus.publish(..)` vuelve sin esperar la cadena.
 

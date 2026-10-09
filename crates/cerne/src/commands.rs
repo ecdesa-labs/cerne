@@ -7,9 +7,9 @@ use async_trait::async_trait;
 /// `CompositionRoot` is the composition root: the struct holding every port (repositories, external systems) the application uses.
 /// `Output` is what the caller gets back (e.g. the id of what was created); `()` when there is nothing to give back.
 ///
-/// The command opens its own transaction (`composition_root.begin()`, a method of the application's composition
-/// root), stores its events in the [`EventOutbox`](crate::application::EventOutbox) inside it, and commits. Whoever
-/// called it publishes the events it returns.
+/// The command opens its own transaction (`composition_root.database.begin()`, on the application's database), passes
+/// it to every repository and to the [`EventOutbox`](crate::application::EventOutbox), and commits. Whoever called it
+/// publishes the events it returns.
 ///
 /// ```
 /// use cerne::application::{Command, EventOutbox, Executed, OutboxEntry, Repository};
@@ -75,21 +75,27 @@ use async_trait::async_trait;
 ///     }
 /// }
 ///
-/// struct CompositionRoot {
-///     stock_repository: Box<dyn Repository<Stock>>,
-///     event_outbox: Box<dyn EventOutbox>,
+/// // The application's database and its transaction: a wrapper of `sqlx`, `diesel` or any other.
+/// struct Database;
+/// struct Transaction;
+///
+/// impl Database {
+///     async fn begin(&self) -> Result<Transaction, Error> {
+///         todo!("open a transaction on your database")
+///     }
 /// }
 ///
-/// impl CompositionRoot {
-///     /// A composition root whose repository and event outbox write in one new transaction of the database.
-///     async fn begin(&self) -> Result<CompositionRoot, Error> {
-///         todo!("open a transaction on your adapters and build a CompositionRoot on it")
-///     }
-///
+/// impl Transaction {
 ///     /// Makes every write of the transaction permanent; dropping it without `commit` rolls them back.
 ///     async fn commit(self) -> Result<(), Error> {
-///         todo!("commit the transaction of your adapters")
+///         todo!("commit the transaction on your database")
 ///     }
+/// }
+///
+/// struct CompositionRoot {
+///     database: Database,
+///     stock_repository: Box<dyn Repository<Stock, Transaction>>,
+///     event_outbox: Box<dyn EventOutbox<Transaction>>,
 /// }
 ///
 /// struct ReserveStockCommand {
@@ -104,11 +110,11 @@ use async_trait::async_trait;
 ///     async fn execute(&self, composition_root: &CompositionRoot) -> Result<Executed<i32, CompositionRoot>, Error> {
 ///         // --- Transaction -----------------------------------------------------
 ///
-///         let transaction = composition_root.begin().await?;
+///         let mut transaction = composition_root.database.begin().await?;
 ///
 ///         // --- Ports -----------------------------------------------------------
 ///
-///         let stock = transaction.stock_repository.load(&self.product_id).await?;
+///         let stock = composition_root.stock_repository.load(&mut transaction, &self.product_id).await?;
 ///
 ///         // --- Business rules --------------------------------------------------
 ///
@@ -121,13 +127,13 @@ use async_trait::async_trait;
 ///         let stock = Stock::new((stock.product_id, stock.available - self.qty))?;
 ///         let units_left = stock.available;
 ///
-///         transaction.stock_repository.save(stock).await?;
+///         composition_root.stock_repository.save(&mut transaction, stock).await?;
 ///
 ///         // --- Domain events ---------------------------------------------------
 ///
 ///         let stock_reserved = StockReserved { product_id: self.product_id.clone(), qty: self.qty };
 ///
-///         transaction.event_outbox.store(OutboxEntry::new(&stock_reserved)?).await?;
+///         composition_root.event_outbox.store(&mut transaction, OutboxEntry::new(&stock_reserved)?).await?;
 ///         transaction.commit().await?;
 ///
 ///         Ok(Executed {
