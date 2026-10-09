@@ -1,9 +1,0 @@
-{% if db == "memory" %}
-    let database = {{ database }}::in_memory().await?;
-{% elif db == "sqlite" %}
-    let database_url = std::env::var("DATABASE_URL").unwrap_or("sqlite://{{ crate_name }}.db?mode=rwc".into());
-
-    let database = {{ database }}::connect(&database_url, 5).await?;
-{% else %}
-    let database = {{ database }}::connect(&std::env::var("DATABASE_URL")?, 5).await?;
-{% endif %}

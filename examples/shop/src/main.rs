@@ -1,58 +1,63 @@
-use cerne::application::OutboxPolicyProcessor;
-use cerne::sqlite::{SqliteDatabase, SqliteOutbox};
-use shop::composition_root::{CompositionRoot, CompositionRootConstructor, command_registry};
-use shop::infrastructure::http::router;
+use actix::Actor;
+use cerne::application::{Command, PublishEvents, Query, SyncEventBus};
+use shop::application::commands::place_order::PlaceOrderCommand;
+use shop::application::queries::order_summary::OrderSummaryQuery;
+use shop::composition_root::{CompositionRoot, CompositionRootConstructor};
 use shop::infrastructure::in_memory_catalog::InMemoryCatalog;
+use shop::infrastructure::in_memory_database::{InMemoryDatabase, InMemoryEventOutbox, InMemoryOrderRepository};
 use shop::infrastructure::in_memory_payments::InMemoryPayments;
-use shop::infrastructure::sqlite_order_repository::SqliteOrderRepository;
 use std::sync::Arc;
-use std::time::Duration;
 
-#[tokio::main]
+#[actix::main]
 async fn main() -> anyhow::Result<()> {
     // --- Composition root ----------------------------------------------------
 
-    let database_url = std::env::var("DATABASE_URL").unwrap_or("sqlite://shop.db?mode=rwc".into());
+    let database = InMemoryDatabase::default();
 
-    let database = SqliteDatabase::connect(&database_url, 5).await?;
-
-    let order_repository = SqliteOrderRepository::new(database.clone());
-    let outbox = SqliteOutbox::new(database.clone());
+    let order_repository = InMemoryOrderRepository::new(database.clone());
+    let event_outbox = InMemoryEventOutbox::new(database.clone());
 
     let catalog = InMemoryCatalog {
         products: vec![("mug", 3000, 10), ("t-shirt", 5000, 3)],
     };
     let payments = InMemoryPayments::default();
 
-    database.migrate(&sqlx::migrate!()).await?;
-
     let composition_root_constructor = CompositionRootConstructor {
         database,
         order_repository: Box::new(order_repository),
-        outbox: Box::new(outbox),
+        event_outbox: Box::new(event_outbox),
         catalog: Arc::new(catalog),
         payments: Arc::new(payments),
     };
 
     let composition_root = Arc::new(CompositionRoot::new(composition_root_constructor));
 
-    // --- Outbox: the commands of the policies --------------------------------
+    // --- Event bus: the policies of every event ------------------------------
 
-    let outbox_policy_processor = OutboxPolicyProcessor::new(Arc::clone(&composition_root), command_registry());
+    let sync_event_bus = SyncEventBus::new(Arc::clone(&composition_root), |error| eprintln!("policy: {error}")).start();
 
-    tokio::spawn(async move {
-        outbox_policy_processor
-            .run_every(Duration::from_millis(200), |error| eprintln!("outbox: {error}"))
-            .await
-    });
+    // --- Customer: places an order -------------------------------------------
 
-    // --- HTTP: REST ----------------------------------------------------------
+    let place_order = PlaceOrderCommand {
+        product: "mug".into(),
+        quantity: 2,
+    };
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:3000").await?;
+    let place_order_execution = place_order.execute(&composition_root).await?;
 
-    println!("listening on http://127.0.0.1:3000");
+    let order_id = place_order_execution.output;
 
-    axum::serve(listener, router(composition_root)).await?;
+    sync_event_bus
+        .send(PublishEvents(place_order_execution.events))
+        .await?;
+
+    // --- Customer: reads the order -------------------------------------------
+
+    let order_summary_query = OrderSummaryQuery { order_id };
+
+    let order_summary = order_summary_query.execute(&composition_root).await?;
+
+    println!("{order_summary:?}");
 
     Ok(())
 }

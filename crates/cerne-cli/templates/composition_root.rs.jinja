@@ -1,99 +1,31 @@
-{% if db %}
-use cerne::application::{CommandRegistry, Outbox, TransactionalCompositionRoot};
-use cerne::{{ module }}::{ {{ database }}, {{ outbox }} };
-{% else %}
-use cerne::application::{CommandRegistry, InMemoryOutbox, Outbox, TransactionalCompositionRoot};
-{% endif %}
-use cerne::{Error, async_trait};
+use cerne::Error;
+use cerne::application::EventOutbox;
 
 /// The composition root: every port the commands and queries can use.
-///
-{% if db %}
-/// The repositories and the outbox live in the database, so `begin` builds them again on its transaction. External
-/// systems do not: `begin` hands the same adapters to the new composition root.
 pub struct CompositionRoot {
-    pub database: {{ database }},
-    pub outbox: Box<dyn Outbox<CompositionRoot>>,
+    pub event_outbox: Box<dyn EventOutbox>,
 }
 
 /// What `CompositionRoot::new` takes: every adapter, already built.
 pub struct CompositionRootConstructor {
-    pub database: {{ database }},
-    pub outbox: Box<dyn Outbox<CompositionRoot>>,
+    pub event_outbox: Box<dyn EventOutbox>,
 }
 
 impl CompositionRoot {
     pub fn new(constructor: CompositionRootConstructor) -> Self {
         Self {
-            database: constructor.database,
-            outbox: constructor.outbox,
+            event_outbox: constructor.event_outbox,
         }
     }
-}
-{% else %}
-/// No database yet (`cerne g db` adds one): the outbox lives in memory, and a transaction is only the same outbox. If
-/// the process dies, the commands the policies fired and that did not run yet are lost.
-pub struct CompositionRoot {
-    pub in_memory_outbox: InMemoryOutbox,
-    pub outbox: Box<dyn Outbox<CompositionRoot>>,
-}
 
-/// What `CompositionRoot::new` takes: every adapter, already built.
-pub struct CompositionRootConstructor {
-    pub in_memory_outbox: InMemoryOutbox,
-    pub outbox: Box<dyn Outbox<CompositionRoot>>,
-}
-
-impl CompositionRoot {
-    pub fn new(constructor: CompositionRootConstructor) -> Self {
-        Self {
-            in_memory_outbox: constructor.in_memory_outbox,
-            outbox: constructor.outbox,
-        }
-    }
-}
-{% endif %}
-
-/// Every command a policy fires, so the outbox can read it back from its row.
-pub fn command_registry() -> CommandRegistry<CompositionRoot> {
-    CommandRegistry::new()
-}
-
-#[async_trait]
-impl TransactionalCompositionRoot for CompositionRoot {
-    async fn begin(&self) -> Result<Self, Error> {
-{% if db %}
-        let transaction = self.database.begin().await?;
-
-        let outbox = {{ outbox }}::new(transaction.clone());
-
-        let composition_root_constructor = CompositionRootConstructor {
-            database: transaction,
-            outbox: Box::new(outbox),
-        };
-{% else %}
-        let transaction = self.in_memory_outbox.begin().await?;
-
-        let outbox = transaction.clone();
-
-        let composition_root_constructor = CompositionRootConstructor {
-            in_memory_outbox: transaction,
-            outbox: Box::new(outbox),
-        };
-{% endif %}
-
-        Ok(CompositionRoot::new(composition_root_constructor))
+    /// A composition root whose repositories and event outbox write in one new transaction. External systems are not
+    /// part of it: the new composition root gets the same adapters.
+    pub async fn begin(&self) -> Result<CompositionRoot, Error> {
+        todo!("open a transaction on your adapters and build a CompositionRoot on it")
     }
 
-    async fn commit(self) -> Result<(), Error> {
-{% if db %}
-        self.database.commit().await
-{% else %}
-        self.in_memory_outbox.commit().await
-{% endif %}
-    }
-
-    fn outbox(&self) -> &dyn Outbox<Self> {
-        self.outbox.as_ref()
+    /// Makes every write of the transaction permanent; dropping it without `commit` rolls them back.
+    pub async fn commit(self) -> Result<(), Error> {
+        todo!("commit the transaction of your adapters")
     }
 }

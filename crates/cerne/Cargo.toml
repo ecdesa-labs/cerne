@@ -10,30 +10,21 @@ repository.workspace = true
 homepage.workspace = true
 readme = "../../README.en.md"
 keywords.workspace = true
-categories = ["rust-patterns", "web-programming", "database"]
+categories = ["rust-patterns"]
 
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
-[features]
-default = ["sqlite"]
-sqlite = ["dep:sqlx", "sqlx/sqlite"]
-postgres = ["dep:sqlx", "sqlx/postgres"]
-axum = ["dep:axum"]
-
 [dependencies]
+actix = "0.13"
 anyhow = "1"
 async-trait = "0.1"
-axum = { version = "0.8", default-features = false, features = ["json"], optional = true }
-cerne-macros = { version = "0.1.0", path = "../cerne-macros" }
+cerne-macros = { version = "0.2.0", path = "../cerne-macros" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "migrate"], optional = true }
 thiserror = "2"
-tokio = { version = "1", features = ["sync", "rt", "time"] }
 
 [dev-dependencies]
-sqlx = { version = "0.8", default-features = false }
 serde = { version = "1", features = ["derive"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }

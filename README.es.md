@@ -22,7 +22,7 @@ Cerne no impide que el sistema cambie. Le da a cada cambio un lugar adecuado y u
 - **Toda regla tiene nombre y dirección.** Una decisión judicial se convierte en una `BusinessRule` con su frase, en la sección `Business rules` del command al que afecta, y no en un `if` perdido en medio del código. Quien llega después encuentra la regla por su nombre, y cuando rechaza una petición, el error dice cuál fue.
 - **El código tiene la forma del tablero.** Cada post-it del Event Storming es un tipo de Rust, y todo `execute` tiene las mismas secciones, en el mismo orden. Equipos diferentes, en años diferentes, pueden escribir con el mismo formato, porque `cerne g` les da a todos el mismo esqueleto.
 - **El tablero y el código cuentan la misma historia.** La conversación con el negocio ocurre en el tablero, con las mismas palabras que el código. Una regla nueva empieza como un post-it y termina en el lugar que indica el post-it.
-- **Una reacción es una policy, no un efecto secundario.** "Siempre que X, haz Y" se convierte en una `Policy` con nombre, y su command pasa por la outbox. Nadie tiene que buscar dónde fue a parar la reacción.
+- **Una reacción es una policy, no un efecto secundario.** "Siempre que X, haz Y" se convierte en una `Policy` con nombre, y el event bus ejecuta su command. Nadie tiene que buscar dónde fue a parar la reacción.
 
 Esa es la propuesta de Cerne: un sistema que dure 30 años y siga siendo legible, no porque nada haya cambiado, sino porque cada cambio quedó a la vista.
 
@@ -42,21 +42,15 @@ La capa Domain es el corazón del tablero: entidades y agregados (`Entity`, `Agg
 
 ### Capa Application
 
-La capa Application es donde actúan los actores. Un command (`Command`) lee los ports, comprueba las reglas de negocio (`BusinessRule`), cambia un agregado y devuelve sus eventos, siempre en ese orden, así que el `execute` se lee como un flujo del tablero. Una query (`Query`) devuelve un read model (`ReadModel`). Los ports son traits asíncronos para los repositorios y los sistemas externos. Los commands que disparan las policies van a una outbox en la misma transacción que el agregado, y el `OutboxPolicyProcessor` los ejecuta, aunque el proceso se caiga en medio.
+La capa Application es donde actúan los actores. Un command (`Command`) abre su transacción, lee los ports, comprueba las reglas de negocio (`BusinessRule`), cambia un agregado y guarda sus eventos en el event outbox (`EventOutbox`), siempre en ese orden, así que el `execute` se lee como un flujo del tablero. Una query (`Query`) devuelve un read model, un struct de campos simples. Los ports son traits asíncronos para los repositorios y los sistemas externos. Quien envió el command publica sus eventos en un event bus, que ejecuta las policies: el `SyncEventBus`, una cadena a la vez, o el `AsyncEventBus`, todos los eventos a la vez. El bus espera lo mejor: una policy que falla va a su `on_error`, y cómo sobrevive cada policy a un fallo lo decide la aplicación.
 
-### Capa Infrastructure (opcional)
+### Capa Infrastructure
 
-Cerne es, ante todo, un framework para modelar el dominio y la aplicación, no la infraestructura. La capa Infrastructure es un extra para acelerar el desarrollo: adapters listos para los repositorios SQL (`cerne::sqlite`, también en memoria, y `cerne::postgres`, con la misma API y el mismo SQL) y para HTTP, en REST o JSON-RPC 2.0 (feature `axum`).
-
-`cerne new` solo los usa cuando se le pide: sin `--db`, el proyecto no depende de ningún adapter de base de datos, y la outbox vive en memoria; `--db`, o `cerne g db` más tarde, añade la base de datos. Nada en las capas Domain y Application depende de estos adapters. Los ports son traits, y cualquier adapter que los implemente sirve: otra base de datos, otro framework web, una cola. Para usar Cerne sin ninguno de sus adapters:
-
-```toml
-cerne = { version = "0.1", default-features = false }
-```
+Cerne es, ante todo, un framework para modelar el dominio y la aplicación, no la infraestructura, y no trae adapters. Los ports son traits: los repositorios, el event outbox y cada sistema externo los implementa la aplicación, sobre la base de datos, el framework web y la cola que elija. `cerne new` escribe una función con un `todo!()` donde va cada adapter.
 
 ## Crates
 
-- [`cerne`](https://crates.io/crates/cerne): la biblioteca. Las features `sqlite` (predeterminada), `postgres` y `axum` son la capa Infrastructure, opcional.
+- [`cerne`](https://crates.io/crates/cerne): la biblioteca.
 - [`cerne-cli`](https://crates.io/crates/cerne-cli): el comando `cerne`, que crea un proyecto organizado como el tablero (`cerne new`) y genera cada post-it en su lugar, ya compilando (`cerne g`).
 - [`cerne-macros`](https://crates.io/crates/cerne-macros): los atributos `#[entity]`, `#[aggregate]` y `#[value_object]`. `cerne::domain` los reexporta, así que un proyecto solo depende de `cerne`.
 
@@ -68,29 +62,22 @@ cerne = { version = "0.1", default-features = false }
    cargo install cerne-cli
    ```
 
-2. Crea un proyecto con una API REST:
+2. Crea un proyecto:
 
    ```bash
-   cerne new shop --http rest
+   cerne new shop
    ```
 
-3. Genera un command y su ruta, y arranca el servidor:
+3. Genera un agregado y un command, y ejecuta los tests:
 
    ```bash
    cd shop
+   cerne g entity Order product:String quantity:u32 --aggregate
    cerne g command PlaceOrder product:String quantity:u32
-   cerne g endpoint PlaceOrder POST /orders
-   cargo run
+   cargo test
    ```
 
-4. Envía el command:
-
-   ```console
-   $ curl -X POST localhost:3000/orders -H 'content-type: application/json' -d '{"product": "mug", "quantity": 2}'
-   null
-   ```
-
-5. Rellena los post-its. Estos recursos te ayudarán:
+4. Rellena los post-its. Estos recursos te ayudarán:
    - [El tutorial](docs/es/tutorial.md): una tienda, del tablero al código, con todos los post-its.
    - [La documentación de la API](https://docs.rs/cerne)
    - `cerne` sin argumentos enumera todos los generators.

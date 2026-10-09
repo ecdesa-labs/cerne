@@ -7,14 +7,12 @@
 | 🟦 | Command | trait `Command<CompositionRoot>`, que devuelve `Executed { output, events }` |
 | 🟨 | Aggregate / Entity | atributos `#[entity]` y `#[aggregate]`, que escriben los traits `Entity` y `Aggregate`; las invariantes van en el trait `Validate` |
 | — | Value Object | trait `ValueObject`, que también es el tipo del id de toda entidad; atributo `#[value_object]`, para un value object de un solo valor |
-| 🟧 | Domain Event | trait `DomainEvent<CompositionRoot>` |
-| 🟪 | Policy | `Policy` + `Policies`; sus commands van a la `Outbox`, y el `OutboxPolicyProcessor` los ejecuta |
+| 🟧 | Domain Event | trait `DomainEvent<CompositionRoot>`; el command lo guarda en el `EventOutbox` |
+| 🟪 | Policy | `Policy` + `Policies`; el `SyncEventBus` o el `AsyncEventBus` las ejecuta |
 | 🩷 | External System | un port (un trait asíncrono de la aplicación) y sus adapters, reunidos en el `CompositionRoot` |
-| 🟩 | Read Model / Query | trait `Query<CompositionRoot>`, que devuelve un `ReadModel` |
+| 🟩 | Read Model / Query | trait `Query<CompositionRoot>`, que devuelve un read model: un struct de campos simples |
 | — | Invariantes | `Invariant` + `Invariants`: lo que siempre es cierto sobre una entidad o un value object |
 | — | Reglas de negocio | `BusinessRule` + `BusinessRules`: lo que debe cumplirse para que un command se ejecute |
-| — | Base de datos | `cerne::sqlite` (también en memoria) y `cerne::postgres`: la misma API, el mismo SQL |
-| — | HTTP | feature `axum`: REST o JSON-RPC 2.0 |
 
 ## Instalación
 
@@ -30,17 +28,17 @@ El tablero tiene dos flujos. El cliente hace un pedido; la tienda comprueba el s
 
 ```mermaid
 flowchart LR
-  customer["👤 Cliente"]:::actor --> place["Hacer pedido<br/>PlaceOrderCommand"]:::command
-  place --> rules["El stock cubre la cantidad"]:::rule
-  catalog["Catálogo"]:::external -.-> rules
+  customer["👤 Customer"]:::actor --> place["Place order<br/>PlaceOrderCommand"]:::command
+  place --> rules["Stock covers the quantity"]:::rule
+  catalog["Catalog"]:::external -.-> rules
   rules --> order["Order::new() → Placed"]:::aggregate
-  order --> placed["Pedido hecho<br/>OrderPlaced"]:::event
-  placed --> policy["Siempre que se hace un pedido,<br/>cobrar al cliente"]:::policy
-  policy --> charge["Cobrar pedido<br/>ChargeOrderCommand"]:::command
-  charge --> payments["Pagos"]:::external
+  order --> placed["Order placed<br/>OrderPlaced"]:::event
+  placed --> policy["Whenever an order is placed,<br/>charge the customer"]:::policy
+  policy --> charge["Charge order<br/>ChargeOrderCommand"]:::command
+  charge --> payments["Payments"]:::external
   payments --> paid_order["order.pay() → Paid"]:::aggregate
-  paid_order --> paid["Pedido pagado<br/>OrderPaid"]:::event
-  customer2["👤 Cliente"]:::actor --> summary["Resumen del pedido<br/>OrderSummaryQuery"]:::read_model
+  paid_order --> paid["Order paid<br/>OrderPaid"]:::event
+  customer2["👤 Customer"]:::actor --> summary["Order summary<br/>OrderSummaryQuery"]:::read_model
   classDef actor fill:#ffe46b,stroke:#c9a800,color:#221f1a
   classDef command fill:#8cc6f5,stroke:#3d8fd1,color:#221f1a
   classDef rule fill:#97dccf,stroke:#3fa892,color:#221f1a
@@ -55,10 +53,10 @@ Cada bloque de código de abajo es un archivo entero del proyecto. Un test de es
 
 ## 1. El proyecto y sus post-its
 
-Crea el proyecto `shop`, con SQLite como base de datos y una API REST.
+Crea el proyecto `shop`.
 
 ```bash
-cerne new shop --db sqlite --http rest
+cerne new shop
 ```
 
 Entra en el proyecto: los comandos `cerne g` se ejecutan dentro de él.
@@ -67,7 +65,7 @@ Entra en el proyecto: los comandos `cerne g` se ejecutan dentro de él.
 cd shop
 ```
 
-Crea el agregado 🟨 `Order`: Un pedido, con su repositorio SQL (el proyecto tiene base de datos, por el `--db sqlite`) y un estado que empieza en `Placed`. El campo `id` lo crea el CLI por su cuenta: un value object `OrderId`, con un `u64` dentro. Con `id:<tipo>` (por ejemplo, `id:String`), `OrderId` guarda un `String` en lugar del `u64`. Como `Order` es un agregado, su repositorio solo acepta un id entero o `String`.
+Crea el agregado 🟨 `Order`: un pedido, con el port de su repositorio y un estado que empieza en `Placed`. El campo `id` lo crea el CLI por su cuenta: un value object `OrderId`, con un `u64` dentro. Con `id:<tipo>` (por ejemplo, `id:String`), `OrderId` guarda un `String` en lugar del `u64`.
 
 ```bash
 cerne g entity Order product:String quantity:u32 total:u64 status=Placed:Placed,Paid --aggregate
@@ -91,10 +89,10 @@ Crea el command 🟦 `PlaceOrder`: el cliente hace un pedido.
 cerne g command PlaceOrder product:String quantity:u32
 ```
 
-Crea el command 🟦 `ChargeOrder`: cobrar el pedido, disparado por una policy y no por un actor.
+Crea el command 🟦 `ChargeOrder`: cobrar el pedido. Lo envía una policy, no un actor; para el CLI, es un command como cualquier otro.
 
 ```bash
-cerne g command ChargeOrder order_id:OrderId total:u64 --policy
+cerne g command ChargeOrder order_id:OrderId total:u64
 ```
 
 Crea el port 🩷 `Catalog`: el sistema externo con los precios y el stock.
@@ -133,27 +131,12 @@ Crea la query `OrderSummary`: busca ese resumen por el id del pedido.
 cerne g query OrderSummary order_id:OrderId
 ```
 
-Conecta `PlaceOrder` a la ruta `POST /orders`.
-
-```bash
-cerne g endpoint PlaceOrder POST /orders
-```
-
-Conecta `OrderSummary` a la ruta `GET /orders`.
-
-```bash
-cerne g endpoint OrderSummary GET /orders
-```
-
-Los campos son `nombre:tipo`, y `status=Placed:Placed,Paid` crea un enum con los valores `Placed` y `Paid`, que empieza en `Placed`. Después de cada comando, el proyecto sigue compilando. `--aggregate` también añade el campo `order_repository` al `CompositionRoot` y construye el repositorio en `main.rs` y en `begin`, y `--policy` registra el command en la outbox.
+Los campos son `nombre:tipo`, y `status=Placed:Placed,Paid` crea un enum con los valores `Placed` y `Paid`, que empieza en `Placed`. Después de cada comando, el proyecto sigue compilando. `--aggregate` también añade el campo `order_repository` al `CompositionRoot` y, en `main.rs`, una función `order_repository_adapter()` con un `todo!()`: Cerne no trae adapters, y el repositorio lo escribes tú.
 
 ```console
 $ tree shop
 shop
 ├── Cargo.toml
-├── migrations
-│   ├── 1791416037_create_orders.sql
-│   └── 1_create_cerne_outbox.sql
 ├── rustfmt.toml
 ├── src
 │   ├── application
@@ -186,27 +169,22 @@ shop
 │   │       ├── mod.rs
 │   │       └── order_id.rs
 │   ├── infrastructure
-│   │   ├── http
-│   │   │   ├── mod.rs
-│   │   │   ├── order_summary.rs
-│   │   │   └── place_order.rs
 │   │   ├── in_memory_catalog.rs
 │   │   ├── in_memory_payments.rs
-│   │   ├── mod.rs
-│   │   └── sqlite_order_repository.rs
+│   │   └── mod.rs
 │   ├── lib.rs
 │   └── main.rs
 └── tests
     └── board.rs
 ```
 
-Cada capa tiene su carpeta. `domain/` es puro y síncrono: nada de IO. `application/` es asíncrono: commands, queries y los ports que usan. `infrastructure/` guarda los adapters: el repositorio SQL, los adapters en memoria y HTTP. El número delante de la migración es el momento en que se generó.
+Cada capa tiene su carpeta. `domain/` es puro y síncrono: nada de IO. `application/` es asíncrono: commands, queries y los ports que usan. `infrastructure/` guarda los adapters, que escribes tú: aquí, todos en memoria.
 
 Falta rellenar los post-its.
 
 ## 2. Value object: `OrderId`
 
-Un value object no tiene identidad: dos `OrderId(7)` son lo mismo. Solo existe si sus invariantes se cumplen, y nunca cambia. El id de toda entidad es un value object, así que un `0` nunca se convierte en id de pedido, ni siquiera al leerlo de vuelta de un JSON o de la base de datos.
+Un value object no tiene identidad: dos `OrderId(7)` son la misma cosa. Solo existe si se cumplen sus invariantes, y nunca cambia. El id de toda entidad es un value object, así que un `0` nunca se convierte en id de pedido, ni siquiera al leerlo de vuelta del JSON.
 
 El `src/domain/value_objects/order_id.rs` tal como lo generó `cerne g entity Order product:String quantity:u32 total:u64 status=Placed:Placed,Paid --aggregate`:
 
@@ -258,7 +236,7 @@ impl ValueObject for OrderId {
 
 Cada invariante es un nombre más una condición, escrita con `invariant!`. La condición va antes a una variable, con el nombre de la frase del tablero. `Invariants::enforce` las ejecuta todas y, si alguna falla, devuelve `DomainError::Violations` con el nombre de cada una que falló.
 
-`#[value_object]` escribe lo que un value object de un solo valor tiene en común: el `TryFrom<u64> for OrderId`, que pasa por `new`, el `From<OrderId> for u64`, que devuelve el `u64`, y, como `OrderId` deriva `Serialize` y `Deserialize`, el `#[serde(try_from = "u64", into = "u64")]`. `new`, con las invariantes, es tuyo. El repositorio SQL usa el `From` para guardar el id en su columna.
+`#[value_object]` escribe lo que tiene en común un value object de un solo valor: `TryFrom<u64> for OrderId`, que pasa por `new`, `From<OrderId> for u64`, que devuelve el `u64`, y, como `OrderId` deriva `Serialize` y `Deserialize`, `#[serde(try_from = "u64", into = "u64")]`. `new`, con las invariantes, es tuyo. El repositorio del paso 4 usa el `TryFrom` para crear el id de un pedido nuevo.
 
 ## 3. Agregado: `Order` 🟨
 
@@ -364,9 +342,9 @@ impl Order {
 }
 ```
 
-- `#[aggregate]` escribe lo que todo agregado tiene en común: el `impl Entity` (el `id()`, el `with_id` que llama el repositorio y el `new`), el `impl Aggregate` y el `OrderConstructor`. Una entidad que no es agregado (`cerne g entity` sin `--aggregate`) recibe `#[entity]`, que escribe lo mismo salvo el `impl Aggregate`: ningún repositorio la acepta.
-- `Order::new` recibe el `OrderConstructor`, con todos los campos salvo dos: el id, que el repositorio decide en el primer `save` (hasta entonces, `id()` es `None`), y `status`, marcado con `#[skip_constructor]`. Un campo omitido empieza en su `Default`: `OrderStatus` deriva `Default`, con `#[default]` en `Placed`, el valor inicial de `status=Placed:Placed,Paid`.
-- `validate`, en el `impl Validate`, guarda las invariantes: el CLI lo genera vacío, para que tú lo completes. Se ejecuta en `new`, en cada transición de estado (`pay`) y cuando el repositorio lee una fila de vuelta: un pedido que rompe una invariante nunca existe en memoria.
+- `#[aggregate]` escribe lo que todo agregado tiene en común: `impl Entity` (el `id()`, el `with_id` que llama el repositorio y `new`), `impl Aggregate` y el `OrderConstructor`. Una entidad que no es agregado (`cerne g entity` sin `--aggregate`) recibe `#[entity]`, que escribe lo mismo salvo `impl Aggregate`: ningún repositorio la acepta.
+- `Order::new` recibe el `OrderConstructor`, con todos los campos menos dos: el id, que el repositorio decide en el primer `save` (hasta entonces, `id()` es `None`), y `status`, marcado con `#[skip_constructor]`. Un campo omitido empieza en su `Default`: `OrderStatus` deriva `Default`, con `#[default]` en `Placed`, el valor inicial de `status=Placed:Placed,Paid`.
+- `validate`, en `impl Validate`, guarda las invariantes: el CLI lo genera vacío, para que lo completes. Se ejecuta en `new` y en cada transición de estado (`pay`): un pedido que rompe una invariante nunca existe en memoria.
 - Las transiciones de estado son métodos que consumen el pedido y devuelven el siguiente.
 
 ## 4. Sistemas externos: ports y adapters 🩷
@@ -523,74 +501,141 @@ impl Payments for InMemoryPayments {
 }
 ```
 
-El `CompositionRoot` reúne todos los ports, y `CompositionRoot::new` solo guarda los adapters que recibe: quien los construye es `main.rs`. `cerne g entity --aggregate` ya añadió el `order_repository`; los dos sistemas externos se añaden a mano. El repositorio y la outbox viven en la base de datos, así que `begin` abre una transacción y los construye de nuevo sobre ella. Los sistemas externos siguen siendo los mismos, un `Arc::clone` de los mismos adapters, porque una llamada a ellos no se puede deshacer.
+Dos ports son traits del propio Cerne: `Repository<Order>`, que carga y guarda el pedido, y `EventOutbox`, que guarda todo evento que produce un command. `cerne g adapter` solo escribe adapters de los ports del proyecto, así que estos dos se escriben a mano. En una aplicación real, están sobre la base de datos, y `begin` abre una transacción en ella; aquí, un `InMemoryDatabase` guarda los pedidos y los eventos, y cada clon suyo comparte los mismos datos.
 
-El `src/composition_root.rs` tal como lo generaron `cerne new shop --db sqlite --http rest`, `cerne g entity Order product:String quantity:u32 total:u64 status=Placed:Placed,Paid --aggregate` y `cerne g command ChargeOrder order_id:OrderId total:u64 --policy`:
+<!-- file: src/infrastructure/in_memory_database.rs -->
+```rust
+use crate::domain::entities::order::Order;
+use crate::domain::value_objects::order_id::OrderId;
+use cerne::application::{EventOutbox, OutboxEntry, Repository};
+use cerne::domain::Entity;
+use cerne::{ApplicationError, Error, async_trait};
+use std::sync::{Arc, Mutex};
+
+/// What a database would hold, in memory: cloning it shares the same data. There is no transaction: a command that
+/// fails halfway keeps what it already wrote.
+#[derive(Clone, Default)]
+pub struct InMemoryDatabase {
+    pub orders: Arc<Mutex<Vec<Order>>>,
+    pub event_outbox: Arc<Mutex<Vec<OutboxEntry>>>,
+}
+
+// --- Repository<Order> -------------------------------------------------------
+
+pub struct InMemoryOrderRepository {
+    database: InMemoryDatabase,
+}
+
+impl InMemoryOrderRepository {
+    pub fn new(database: InMemoryDatabase) -> Self {
+        Self { database }
+    }
+}
+
+#[async_trait]
+impl Repository<Order> for InMemoryOrderRepository {
+    async fn load(&self, order_id: &OrderId) -> Result<Order, Error> {
+        let orders = self.database.orders.lock().unwrap();
+        let order = orders.iter().find(|order| order.id() == Some(order_id));
+
+        Ok(order.cloned().ok_or(ApplicationError::NotFound("order"))?)
+    }
+
+    async fn save(&self, order: Order) -> Result<OrderId, Error> {
+        let mut orders = self.database.orders.lock().unwrap();
+
+        let order_id = match order.id() {
+            Some(order_id) => order_id.clone(),
+            None => OrderId::try_from(orders.len() as u64 + 1)?,
+        };
+
+        orders.retain(|saved_order| saved_order.id() != Some(&order_id));
+        orders.push(order.with_id(order_id.clone()));
+
+        Ok(order_id)
+    }
+}
+
+// --- EventOutbox -------------------------------------------------------------
+
+pub struct InMemoryEventOutbox {
+    database: InMemoryDatabase,
+}
+
+impl InMemoryEventOutbox {
+    pub fn new(database: InMemoryDatabase) -> Self {
+        Self { database }
+    }
+}
+
+#[async_trait]
+impl EventOutbox for InMemoryEventOutbox {
+    async fn store(&self, outbox_entry: OutboxEntry) -> Result<(), Error> {
+        self.database.event_outbox.lock().unwrap().push(outbox_entry);
+
+        Ok(())
+    }
+}
+```
+
+El `src/infrastructure/mod.rs` tal como lo generaron `cerne g adapter InMemoryCatalog Catalog` y `cerne g adapter InMemoryPayments Payments`:
+
+<!-- generated: src/infrastructure/mod.rs -->
+```rust
+pub mod in_memory_catalog;
+pub mod in_memory_payments;
+```
+
+Después de rellenarlo:
+
+<!-- file: src/infrastructure/mod.rs -->
+```rust
+pub mod in_memory_catalog;
+pub mod in_memory_database;
+pub mod in_memory_payments;
+```
+
+El `CompositionRoot` reúne todos los ports, y `CompositionRoot::new` solo guarda los adapters que recibe: quien los construye es `main.rs`. `cerne g entity --aggregate` ya añadió el `order_repository`; la base de datos y los dos sistemas externos se añaden a mano.
+
+`begin` y `commit` también son tuyos: `cerne new` los escribe con un `todo!()`, porque solo los adapters saben abrir una transacción. `begin` construye un `CompositionRoot` nuevo, cuyo repositorio y cuyo event outbox escriben en la transacción. Los sistemas externos siguen siendo los mismos, un `Arc::clone` de los mismos adapters, porque una llamada a ellos no se puede deshacer. En memoria no hay transacción: `begin` construye los adapters de nuevo sobre el mismo `InMemoryDatabase`, y `commit` no tiene nada que hacer.
+
+El `src/composition_root.rs` tal como lo generaron `cerne new shop` y `cerne g entity Order product:String quantity:u32 total:u64 status=Placed:Placed,Paid --aggregate`:
 
 <!-- generated: src/composition_root.rs -->
 ```rust
-use crate::application::commands::charge_order::ChargeOrderCommand;
 use crate::domain::entities::order::Order;
-use crate::infrastructure::sqlite_order_repository::SqliteOrderRepository;
-use cerne::application::{CommandRegistry, Outbox, Repository, TransactionalCompositionRoot};
-use cerne::sqlite::{SqliteDatabase, SqliteOutbox};
-use cerne::{Error, async_trait};
+use cerne::Error;
+use cerne::application::{EventOutbox, Repository};
 
 /// The composition root: every port the commands and queries can use.
-///
-/// The repositories and the outbox live in the database, so `begin` builds them again on its transaction. External
-/// systems do not: `begin` hands the same adapters to the new composition root.
 pub struct CompositionRoot {
-    pub database: SqliteDatabase,
     pub order_repository: Box<dyn Repository<Order>>,
-    pub outbox: Box<dyn Outbox<CompositionRoot>>,
+    pub event_outbox: Box<dyn EventOutbox>,
 }
 
 /// What `CompositionRoot::new` takes: every adapter, already built.
 pub struct CompositionRootConstructor {
-    pub database: SqliteDatabase,
     pub order_repository: Box<dyn Repository<Order>>,
-    pub outbox: Box<dyn Outbox<CompositionRoot>>,
+    pub event_outbox: Box<dyn EventOutbox>,
 }
 
 impl CompositionRoot {
     pub fn new(constructor: CompositionRootConstructor) -> Self {
         Self {
-            database: constructor.database,
             order_repository: constructor.order_repository,
-            outbox: constructor.outbox,
+            event_outbox: constructor.event_outbox,
         }
     }
-}
 
-/// Every command a policy fires, so the outbox can read it back from its row.
-pub fn command_registry() -> CommandRegistry<CompositionRoot> {
-    CommandRegistry::new().register::<ChargeOrderCommand>()
-}
-
-#[async_trait]
-impl TransactionalCompositionRoot for CompositionRoot {
-    async fn begin(&self) -> Result<Self, Error> {
-        let transaction = self.database.begin().await?;
-
-        let order_repository = SqliteOrderRepository::new(transaction.clone());
-        let outbox = SqliteOutbox::new(transaction.clone());
-
-        let composition_root_constructor = CompositionRootConstructor {
-            database: transaction,
-            order_repository: Box::new(order_repository),
-            outbox: Box::new(outbox),
-        };
-
-        Ok(CompositionRoot::new(composition_root_constructor))
+    /// A composition root whose repositories and event outbox write in one new transaction. External systems are not
+    /// part of it: the new composition root gets the same adapters.
+    pub async fn begin(&self) -> Result<CompositionRoot, Error> {
+        todo!("open a transaction on your adapters and build a CompositionRoot on it")
     }
 
-    async fn commit(self) -> Result<(), Error> {
-        self.database.commit().await
-    }
-
-    fn outbox(&self) -> &dyn Outbox<Self> {
-        self.outbox.as_ref()
+    /// Makes every write of the transaction permanent; dropping it without `commit` rolls them back.
+    pub async fn commit(self) -> Result<(), Error> {
+        todo!("commit the transaction of your adapters")
     }
 }
 ```
@@ -599,33 +644,28 @@ Después de rellenarlo:
 
 <!-- file: src/composition_root.rs -->
 ```rust
-use crate::application::commands::charge_order::ChargeOrderCommand;
 use crate::application::ports::catalog::Catalog;
 use crate::application::ports::payments::Payments;
 use crate::domain::entities::order::Order;
-use crate::infrastructure::sqlite_order_repository::SqliteOrderRepository;
-use cerne::application::{CommandRegistry, Outbox, Repository, TransactionalCompositionRoot};
-use cerne::sqlite::{SqliteDatabase, SqliteOutbox};
-use cerne::{Error, async_trait};
+use crate::infrastructure::in_memory_database::{InMemoryDatabase, InMemoryEventOutbox, InMemoryOrderRepository};
+use cerne::Error;
+use cerne::application::{EventOutbox, Repository};
 use std::sync::Arc;
 
 /// The composition root: every port the commands and queries can use.
-///
-/// The repositories and the outbox live in the database, so `begin` builds them again on its transaction. External
-/// systems do not: `begin` hands the same adapters to the new composition root.
 pub struct CompositionRoot {
-    pub database: SqliteDatabase,
+    pub database: InMemoryDatabase,
     pub order_repository: Box<dyn Repository<Order>>,
-    pub outbox: Box<dyn Outbox<CompositionRoot>>,
+    pub event_outbox: Box<dyn EventOutbox>,
     pub catalog: Arc<dyn Catalog>,
     pub payments: Arc<dyn Payments>,
 }
 
 /// What `CompositionRoot::new` takes: every adapter, already built.
 pub struct CompositionRootConstructor {
-    pub database: SqliteDatabase,
+    pub database: InMemoryDatabase,
     pub order_repository: Box<dyn Repository<Order>>,
-    pub outbox: Box<dyn Outbox<CompositionRoot>>,
+    pub event_outbox: Box<dyn EventOutbox>,
     pub catalog: Arc<dyn Catalog>,
     pub payments: Arc<dyn Payments>,
 }
@@ -635,30 +675,23 @@ impl CompositionRoot {
         Self {
             database: constructor.database,
             order_repository: constructor.order_repository,
-            outbox: constructor.outbox,
+            event_outbox: constructor.event_outbox,
             catalog: constructor.catalog,
             payments: constructor.payments,
         }
     }
-}
 
-/// Every command a policy fires, so the outbox can read it back from its row.
-pub fn command_registry() -> CommandRegistry<CompositionRoot> {
-    CommandRegistry::new().register::<ChargeOrderCommand>()
-}
+    /// In memory there is no transaction: the repository and the event outbox are built again on the same data.
+    pub async fn begin(&self) -> Result<CompositionRoot, Error> {
+        let transaction = self.database.clone();
 
-#[async_trait]
-impl TransactionalCompositionRoot for CompositionRoot {
-    async fn begin(&self) -> Result<Self, Error> {
-        let transaction = self.database.begin().await?;
-
-        let order_repository = SqliteOrderRepository::new(transaction.clone());
-        let outbox = SqliteOutbox::new(transaction.clone());
+        let order_repository = InMemoryOrderRepository::new(transaction.clone());
+        let event_outbox = InMemoryEventOutbox::new(transaction.clone());
 
         let composition_root_constructor = CompositionRootConstructor {
             database: transaction,
             order_repository: Box::new(order_repository),
-            outbox: Box::new(outbox),
+            event_outbox: Box::new(event_outbox),
             catalog: Arc::clone(&self.catalog),
             payments: Arc::clone(&self.payments),
         };
@@ -666,12 +699,9 @@ impl TransactionalCompositionRoot for CompositionRoot {
         Ok(CompositionRoot::new(composition_root_constructor))
     }
 
-    async fn commit(self) -> Result<(), Error> {
-        self.database.commit().await
-    }
-
-    fn outbox(&self) -> &dyn Outbox<Self> {
-        self.outbox.as_ref()
+    /// Nothing to make permanent: every write is already in memory.
+    pub async fn commit(self) -> Result<(), Error> {
+        Ok(())
     }
 }
 ```
@@ -687,12 +717,8 @@ El `src/application/commands/place_order.rs` tal como lo generó `cerne g comman
 use crate::composition_root::CompositionRoot;
 use cerne::application::{Command, Executed};
 use cerne::{Error, async_trait};
-use serde::{Deserialize, Serialize};
 
-/// Actor: who sends it? The body of the request is this command (that is why it is `Deserialize`).
-///
-/// In JSON-RPC, the params can come by position, in the order of these fields: that order is part of the API.
-#[derive(Serialize, Deserialize)]
+/// Who sends it: an actor, or a policy?
 pub struct PlaceOrderCommand {
     pub product: String,
     pub quantity: u32,
@@ -702,7 +728,11 @@ pub struct PlaceOrderCommand {
 impl Command<CompositionRoot> for PlaceOrderCommand {
     type Output = ();
 
-    async fn execute(&self, _ports: &CompositionRoot) -> Result<Executed<(), CompositionRoot>, Error> {
+    async fn execute(&self, composition_root: &CompositionRoot) -> Result<Executed<(), CompositionRoot>, Error> {
+        // --- Transaction -----------------------------------------------------
+
+        let transaction = composition_root.begin().await?;
+
         // --- Ports -----------------------------------------------------------
 
         // --- Business rules --------------------------------------------------
@@ -710,6 +740,8 @@ impl Command<CompositionRoot> for PlaceOrderCommand {
         // --- Aggregate -------------------------------------------------------
 
         // --- Domain events ---------------------------------------------------
+
+        transaction.commit().await?;
 
         Ok(Executed {
             output: (),
@@ -727,13 +759,11 @@ use crate::composition_root::CompositionRoot;
 use crate::domain::entities::order::{Order, OrderConstructor};
 use crate::domain::events::order_placed::OrderPlaced;
 use crate::domain::value_objects::order_id::OrderId;
-use cerne::application::{Command, Executed};
+use cerne::application::{Command, Executed, OutboxEntry};
 use cerne::domain::{BusinessRules, Entity, business_rule};
 use cerne::{Error, async_trait};
-use serde::{Deserialize, Serialize};
 
-/// Actor: the customer. The body of `POST /orders` is this command (that is why it is `Deserialize`).
-#[derive(Serialize, Deserialize)]
+/// Actor: the customer.
 pub struct PlaceOrderCommand {
     pub product: String,
     pub quantity: u32,
@@ -744,13 +774,14 @@ impl Command<CompositionRoot> for PlaceOrderCommand {
     type Output = OrderId; // the id of the new order, for the customer to follow it
 
     async fn execute(&self, composition_root: &CompositionRoot) -> Result<Executed<OrderId, CompositionRoot>, Error> {
+        // --- Transaction -----------------------------------------------------
+
+        let transaction = composition_root.begin().await?;
+
         // --- Ports -----------------------------------------------------------
 
-        let unit_price = composition_root.catalog.unit_price(&self.product).await?;
-        let units_in_stock = composition_root
-            .catalog
-            .units_in_stock(&self.product)
-            .await?;
+        let unit_price = transaction.catalog.unit_price(&self.product).await?;
+        let units_in_stock = transaction.catalog.units_in_stock(&self.product).await?;
 
         // --- Business rules --------------------------------------------------
 
@@ -768,7 +799,7 @@ impl Command<CompositionRoot> for PlaceOrderCommand {
             total,
         })?;
 
-        let order_id = composition_root.order_repository.save(order).await?;
+        let order_id = transaction.order_repository.save(order).await?;
 
         // --- Domain events ---------------------------------------------------
 
@@ -776,6 +807,9 @@ impl Command<CompositionRoot> for PlaceOrderCommand {
             order_id: order_id.clone(),
             total,
         };
+
+        transaction.event_outbox.store(OutboxEntry::new(&order_placed)?).await?;
+        transaction.commit().await?;
 
         Ok(Executed {
             output: order_id,
@@ -785,14 +819,15 @@ impl Command<CompositionRoot> for PlaceOrderCommand {
 }
 ```
 
+- **Transaction:** `composition_root.begin()` la abre, y todo port de aquí en adelante se lee de `transaction`.
 - **Ports:** toda lectura que necesita el command, antes de cualquier decisión.
 - **Business rules:** cada condición en una variable, después `BusinessRules::check([business_rule!(..)])?`. Una regla de negocio necesita el mundo de fuera (aquí, el stock); una invariante solo necesita la propia entidad.
 - **Aggregate:** el cambio, después el `save`, que devuelve el id.
-- **Domain events:** cada evento en una variable, después `Ok(Executed { output, events })`. El `output` vuelve a quien envió el command (aquí, el id del pedido nuevo); los `events` van a la outbox.
+- **Domain events:** cada evento en una variable, guardado en el event outbox con `OutboxEntry::new`, en la misma transacción que el pedido: se guardan los dos, o ninguno. Después el `commit` y `Ok(Executed { output, events })`. El `output` vuelve a quien envió el command (aquí, el id del pedido nuevo), y los `events` también, que ese llamador publica en el event bus (paso 6).
 
 ## 6. Evento de dominio y policy: `OrderPlaced` 🟧 🟪
 
-Un evento dice lo que ocurrió, en pasado. Su `trigger_policies` enumera las policies que reaccionan a él: cada una es un `policy!` con tres argumentos: un nombre, una condición (`true` para una policy que siempre dispara) y el command que dispara. El command solo se construye si la condición se cumple, y se lleva los valores que usa: aquí, `order_id` y `total`, leídos del evento antes. `Policies::trigger` devuelve las policies que dispararon.
+Un evento dice lo que pasó, en pasado. Deriva `Serialize` para que el command lo guarde en el event outbox, y `Deserialize` para leerlo de vuelta de allí. Su `trigger_policies` lista las policies que reaccionan a él: cada una es un `policy!` con tres argumentos: un nombre, una condición (`true` en una policy que siempre se dispara) y el command que dispara. El command solo se construye si se cumple la condición, y lleva los valores que usa: aquí, `order_id` y `total`, leídos del evento antes. `Policies::trigger` devuelve las policies que se dispararon.
 
 El `src/domain/events/order_placed.rs` tal como lo generó `cerne g event OrderPlaced order_id:OrderId total:u64`:
 
@@ -801,7 +836,10 @@ El `src/domain/events/order_placed.rs` tal como lo generó `cerne g event OrderP
 use crate::composition_root::CompositionRoot;
 use crate::domain::value_objects::order_id::OrderId;
 use cerne::domain::{DomainEvent, EnforcementResult, FiredPolicy, Policies};
+use serde::{Deserialize, Serialize};
 
+/// `Serialize`: the command that produces it stores it in the event outbox; `Deserialize`, to read it back from there.
+#[derive(Serialize, Deserialize)]
 pub struct OrderPlaced {
     pub order_id: OrderId,
     pub total: u64,
@@ -824,7 +862,10 @@ use crate::application::commands::charge_order::ChargeOrderCommand;
 use crate::composition_root::CompositionRoot;
 use crate::domain::value_objects::order_id::OrderId;
 use cerne::domain::{DomainEvent, EnforcementResult, FiredPolicy, Policies, policy};
+use serde::{Deserialize, Serialize};
 
+/// `Serialize`: the command that produces it stores it in the event outbox; `Deserialize`, to read it back from there.
+#[derive(Serialize, Deserialize)]
 pub struct OrderPlaced {
     pub order_id: OrderId,
     pub total: u64,
@@ -845,13 +886,22 @@ impl DomainEvent<CompositionRoot> for OrderPlaced {
 }
 ```
 
-La policy no ejecuta el command. `execute_in_transaction` (paso 9) guarda el pedido y escribe el `ChargeOrderCommand` en la tabla `cerne_outbox` en la misma transacción: se guardan los dos, o ninguno. Después, el `OutboxPolicyProcessor` lee la tabla y ejecuta cada command en una transacción propia.
+La policy no ejecuta el command: lo ejecuta el event bus. Quien envió el `PlaceOrderCommand` publica sus eventos con `sync_event_bus.send(PublishEvents(events))`, y, para cada evento, el bus llama a `trigger_policies`, ejecuta el command de cada policy que se disparó y publica los eventos que devuelve ese command, hasta que termina la cadena. El bus no abre transacciones: cada command abre la suya.
+
+| | `SyncEventBus` | `AsyncEventBus` |
+|---|---|---|
+| Orden | una cadena a la vez: el siguiente `PublishEvents` espera a que termine la cadena actual | cada evento empieza en cuanto llega |
+| `send(..).await` | vuelve cuando se ejecutó toda la cadena | vuelve en cuanto empezaron los eventos |
+
+Los dos son actores de Actix, por eso `main` se ejecuta en `#[actix::main]` y los tests en `#[actix::test]`.
+
+El bus espera lo mejor. Un command que falla, o un evento cuyas invariantes fallan, va al `on_error` con que se construyó el bus, y el bus sigue: nada se ejecuta de nuevo, y nada marca el evento. Cómo sobrevive cada policy a un fallo lo decides tú. Piensa en una policy que envía un e-mail por una API de notificaciones: si la API está caída, el command falla, y el e-mail se pierde, a menos que hagas algo. Puedes leer de nuevo la tabla `event_outbox` y publicar lo que quedó atrás, o dejar que el propio command lo intente de nuevo; entonces la API puede recibir el mismo e-mail dos veces, a menos que acepte una clave de idempotencia. Cerne guarda todo evento en el outbox; leerlo de vuelta es cosa tuya.
 
 `OrderPaid` queda como lo generó `cerne g event`: ninguna policy reacciona a él todavía.
 
 ## 7. El command que dispara una policy: `ChargeOrderCommand` 🟦
 
-El `src/application/commands/charge_order.rs` tal como lo generó `cerne g command ChargeOrder order_id:OrderId total:u64 --policy`:
+El `src/application/commands/charge_order.rs` tal como lo generó `cerne g command ChargeOrder order_id:OrderId total:u64`:
 
 <!-- generated: src/application/commands/charge_order.rs -->
 ```rust
@@ -859,10 +909,8 @@ use crate::composition_root::CompositionRoot;
 use crate::domain::value_objects::order_id::OrderId;
 use cerne::application::{Command, Executed};
 use cerne::{Error, async_trait};
-use serde::{Deserialize, Serialize};
 
-/// No actor: a policy fires this command, and the outbox stores it (that is why it is `Serialize`).
-#[derive(Serialize, Deserialize)]
+/// Who sends it: an actor, or a policy?
 pub struct ChargeOrderCommand {
     pub order_id: OrderId,
     pub total: u64,
@@ -872,7 +920,11 @@ pub struct ChargeOrderCommand {
 impl Command<CompositionRoot> for ChargeOrderCommand {
     type Output = ();
 
-    async fn execute(&self, _ports: &CompositionRoot) -> Result<Executed<(), CompositionRoot>, Error> {
+    async fn execute(&self, composition_root: &CompositionRoot) -> Result<Executed<(), CompositionRoot>, Error> {
+        // --- Transaction -----------------------------------------------------
+
+        let transaction = composition_root.begin().await?;
+
         // --- Ports -----------------------------------------------------------
 
         // --- Business rules --------------------------------------------------
@@ -880,6 +932,8 @@ impl Command<CompositionRoot> for ChargeOrderCommand {
         // --- Aggregate -------------------------------------------------------
 
         // --- Domain events ---------------------------------------------------
+
+        transaction.commit().await?;
 
         Ok(Executed {
             output: (),
@@ -897,13 +951,11 @@ use crate::composition_root::CompositionRoot;
 use crate::domain::entities::order::OrderStatus;
 use crate::domain::events::order_paid::OrderPaid;
 use crate::domain::value_objects::order_id::OrderId;
-use cerne::application::{Command, Executed};
+use cerne::application::{Command, Executed, OutboxEntry};
 use cerne::domain::{BusinessRules, business_rule};
 use cerne::{Error, async_trait};
-use serde::{Deserialize, Serialize};
 
-/// No actor: a policy fires this command, and the outbox stores it (that is why it is `Serialize`).
-#[derive(Serialize, Deserialize)]
+/// No actor: the policy "whenever an order is placed, charge the customer" fires it.
 pub struct ChargeOrderCommand {
     pub order_id: OrderId,
     pub total: u64,
@@ -914,12 +966,13 @@ impl Command<CompositionRoot> for ChargeOrderCommand {
     type Output = ();
 
     async fn execute(&self, composition_root: &CompositionRoot) -> Result<Executed<(), CompositionRoot>, Error> {
+        // --- Transaction -----------------------------------------------------
+
+        let transaction = composition_root.begin().await?;
+
         // --- Ports -----------------------------------------------------------
 
-        let order = composition_root
-            .order_repository
-            .load(&self.order_id)
-            .await?;
+        let order = transaction.order_repository.load(&self.order_id).await?;
 
         // --- Business rules --------------------------------------------------
 
@@ -929,22 +982,22 @@ impl Command<CompositionRoot> for ChargeOrderCommand {
 
         // --- External system: Payments ---------------------------------------
 
-        composition_root
-            .payments
-            .charge(&self.order_id, self.total)
-            .await?;
+        transaction.payments.charge(&self.order_id, self.total).await?;
 
         // --- Aggregate -------------------------------------------------------
 
         let paid_order = order.pay()?;
 
-        composition_root.order_repository.save(paid_order).await?;
+        transaction.order_repository.save(paid_order).await?;
 
         // --- Domain events ---------------------------------------------------
 
         let order_paid = OrderPaid {
             order_id: self.order_id.clone(),
         };
+
+        transaction.event_outbox.store(OutboxEntry::new(&order_paid)?).await?;
+        transaction.commit().await?;
 
         Ok(Executed {
             output: (),
@@ -954,11 +1007,11 @@ impl Command<CompositionRoot> for ChargeOrderCommand {
 }
 ```
 
-Si el proceso se cae después del cobro y antes del commit, la outbox ejecuta el command otra vez. Por eso un command disparado por una policy tiene que ser idempotente: aquí, el id del pedido es la clave de idempotencia del pago, y la regla "order is still placed" rechaza un pedido que ya se pagó. La sección `External system: Payments` va entre las reglas y el agregado.
+Si el cobro falla, el error va al `on_error` del bus, y el pedido sigue `Placed`. Cobrarlo de nuevo lo decide la aplicación, y aquí es seguro: el id del pedido es la clave de idempotencia del pago, y la regla "order is still placed" rechaza un pedido que ya se pagó. La sección `External system: Payments` está entre las reglas y el agregado.
 
 ## 8. Query y read model: `OrderSummary` 🟩
 
-El read model es lo que el actor ve en la pantalla: campos simples, sin comportamiento. `cerne g read_model` lo generó, y queda como está. La query lee los ports y lo construye:
+El read model es lo que el actor ve en la pantalla: campos simples, sin comportamiento. `cerne g read_model` lo generó, y se queda como está. La query lee los ports y lo construye; no cambia nada, así que no abre transacción:
 
 El `src/application/queries/order_summary.rs` tal como lo generó `cerne g query OrderSummary order_id:OrderId`:
 
@@ -969,9 +1022,7 @@ use crate::composition_root::CompositionRoot;
 use crate::domain::value_objects::order_id::OrderId;
 use cerne::application::Query;
 use cerne::{Error, async_trait};
-use serde::Deserialize;
 
-#[derive(Deserialize)]
 pub struct OrderSummaryQuery {
     pub order_id: OrderId,
 }
@@ -999,9 +1050,7 @@ use crate::composition_root::CompositionRoot;
 use crate::domain::value_objects::order_id::OrderId;
 use cerne::application::Query;
 use cerne::{Error, async_trait};
-use serde::Deserialize;
 
-#[derive(Deserialize)]
 pub struct OrderSummaryQuery {
     pub order_id: OrderId,
 }
@@ -1034,9 +1083,9 @@ impl Query<CompositionRoot> for OrderSummaryQuery {
 
 ## 9. El tablero como test
 
-`tests/board.rs` tiene un bloque por flujo. La base de datos es un SQLite en memoria, con el mismo adapter SQL de producción; un repositorio nunca es un `Vec`.
+`tests/board.rs` tiene un bloque por flujo, sobre los mismos adapters en memoria que `main.rs`.
 
-El `tests/board.rs` tal como lo generó `cerne new shop --db sqlite --http rest`:
+El `tests/board.rs` tal como lo generó `cerne new shop`:
 
 <!-- generated: tests/board.rs -->
 ```rust
@@ -1049,49 +1098,47 @@ Después de rellenarlo:
 ```rust
 //! One block per flow of the board: an actor sends a command, and the test checks its events and the policies that fired.
 
+use actix::Actor;
 use cerne::Error;
-use cerne::application::{OutboxPolicyProcessor, Query, TransactionalCompositionRoot};
+use cerne::application::{Command, PublishEvents, Query, SyncEventBus};
 use cerne::domain::{DomainError, ValueObject};
-use cerne::sqlite::{SqliteDatabase, SqliteOutbox};
 use shop::application::commands::place_order::PlaceOrderCommand;
 use shop::application::queries::order_summary::OrderSummaryQuery;
 use shop::application::read_models::order_summary::OrderSummary;
-use shop::composition_root::{CompositionRoot, CompositionRootConstructor, command_registry};
+use shop::composition_root::{CompositionRoot, CompositionRootConstructor};
 use shop::domain::value_objects::order_id::OrderId;
 use shop::infrastructure::in_memory_catalog::InMemoryCatalog;
+use shop::infrastructure::in_memory_database::{InMemoryDatabase, InMemoryEventOutbox, InMemoryOrderRepository};
 use shop::infrastructure::in_memory_payments::InMemoryPayments;
-use shop::infrastructure::sqlite_order_repository::SqliteOrderRepository;
 use std::sync::Arc;
 
-async fn composition_root(payments: Arc<InMemoryPayments>) -> Result<Arc<CompositionRoot>, Error> {
-    let database = SqliteDatabase::in_memory().await?;
+fn composition_root(payments: Arc<InMemoryPayments>) -> Arc<CompositionRoot> {
+    let database = InMemoryDatabase::default();
 
-    let order_repository = SqliteOrderRepository::new(database.clone());
-    let outbox = SqliteOutbox::new(database.clone());
+    let order_repository = InMemoryOrderRepository::new(database.clone());
+    let event_outbox = InMemoryEventOutbox::new(database.clone());
 
     let catalog = InMemoryCatalog {
         products: vec![("mug", 3000, 10)],
     };
 
-    database.migrate(&sqlx::migrate!()).await?;
-
     let composition_root_constructor = CompositionRootConstructor {
         database,
         order_repository: Box::new(order_repository),
-        outbox: Box::new(outbox),
+        event_outbox: Box::new(event_outbox),
         catalog: Arc::new(catalog),
         payments,
     };
 
-    Ok(Arc::new(CompositionRoot::new(composition_root_constructor)))
+    Arc::new(CompositionRoot::new(composition_root_constructor))
 }
 
-#[tokio::test]
-async fn the_customer_places_an_order_and_the_policy_charges_it() -> Result<(), Error> {
+#[actix::test]
+async fn the_customer_places_an_order_and_the_policy_charges_it() -> anyhow::Result<()> {
     let payments = Arc::new(InMemoryPayments::default());
-    let composition_root = composition_root(Arc::clone(&payments)).await?;
+    let composition_root = composition_root(Arc::clone(&payments));
 
-    let outbox_policy_processor = OutboxPolicyProcessor::new(Arc::clone(&composition_root), command_registry());
+    let sync_event_bus = SyncEventBus::new(Arc::clone(&composition_root), |error| eprintln!("policy: {error}")).start();
 
     // --- Customer: places an order -------------------------------------------
 
@@ -1100,14 +1147,26 @@ async fn the_customer_places_an_order_and_the_policy_charges_it() -> Result<(), 
         quantity: 2,
     };
 
-    let order_id = composition_root.execute_in_transaction(place_order).await?;
+    let place_order_execution = place_order.execute(&composition_root).await?;
+
+    let order_id = place_order_execution.output;
+
+    sync_event_bus.send(PublishEvents(place_order_execution.events)).await?;
 
     // --- Policy: whenever an order is placed, charge the customer -----------
 
-    let command_runs = outbox_policy_processor.run_pending().await?;
-
-    assert_eq!(command_runs.len(), 1);
     assert_eq!(*payments.charges.lock().unwrap(), vec![(order_id.clone(), 6000)]);
+
+    let stored_events: Vec<String> = composition_root
+        .database
+        .event_outbox
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|outbox_entry| outbox_entry.event.clone())
+        .collect();
+
+    assert_eq!(stored_events, ["order_placed", "order_paid"]);
 
     // --- Customer: reads the order -------------------------------------------
 
@@ -1127,9 +1186,9 @@ async fn the_customer_places_an_order_and_the_policy_charges_it() -> Result<(), 
     Ok(())
 }
 
-#[tokio::test]
-async fn the_domain_refuses_what_breaks_a_rule_or_an_invariant() -> Result<(), Error> {
-    let composition_root = composition_root(Arc::default()).await?;
+#[actix::test]
+async fn the_domain_refuses_what_breaks_a_rule_or_an_invariant() -> anyhow::Result<()> {
+    let composition_root = composition_root(Arc::default());
 
     // --- Business rule: stock covers the quantity ----------------------------
 
@@ -1138,7 +1197,7 @@ async fn the_domain_refuses_what_breaks_a_rule_or_an_invariant() -> Result<(), E
         quantity: 11,
     };
 
-    let refused = composition_root.execute_in_transaction(too_many_mugs).await;
+    let refused = too_many_mugs.execute(&composition_root).await;
 
     assert!(matches!(
         refused,
@@ -1152,7 +1211,7 @@ async fn the_domain_refuses_what_breaks_a_rule_or_an_invariant() -> Result<(), E
         quantity: 0,
     };
 
-    let refused = composition_root.execute_in_transaction(no_mugs).await;
+    let refused = no_mugs.execute(&composition_root).await;
 
     assert!(matches!(
         refused,
@@ -1167,68 +1226,59 @@ async fn the_domain_refuses_what_breaks_a_rule_or_an_invariant() -> Result<(), E
 }
 ```
 
-`execute_in_transaction` abre la transacción, ejecuta el command, escribe en la outbox los commands de sus policies y hace el commit. Después, `run_pending` ejecuta lo que hay en la outbox.
+El test hace lo que hace un actor: ejecuta el command, guarda el `output` y publica los `events` en el `SyncEventBus`. `send(..).await` vuelve cuando se ejecutó toda la cadena, así que el cobro ya está ahí en la línea siguiente.
 
 ```bash
 cargo test
 ```
 
-## 10. HTTP
+## 10. La aplicación: `main.rs`
 
-`cerne new --http rest` generó el router, y cada `cerne g endpoint` añadió una ruta: el cuerpo de `POST /orders` es el `PlaceOrderCommand`, y la query string de `GET /orders` es la `OrderSummaryQuery`. En `main.rs`, solo los dos adapters se añaden a mano:
+`main.rs` construye todos los adapters, el composition root y el event bus, y después tiene un bloque por actor. `cerne new` escribe una función con un `todo!()` para cada adapter que falta; en el archivo completo, dejan su lugar a los adapters en memoria.
 
-El `src/main.rs` tal como lo generaron `cerne new shop --db sqlite --http rest` y `cerne g entity Order product:String quantity:u32 total:u64 status=Placed:Placed,Paid --aggregate`:
+El `src/main.rs` tal como lo generaron `cerne new shop` y `cerne g entity Order product:String quantity:u32 total:u64 status=Placed:Placed,Paid --aggregate`:
 
 <!-- generated: src/main.rs -->
 ```rust
-use cerne::application::OutboxPolicyProcessor;
-use cerne::sqlite::{SqliteDatabase, SqliteOutbox};
-use shop::composition_root::{CompositionRoot, CompositionRootConstructor, command_registry};
-use shop::infrastructure::http::router;
-use shop::infrastructure::sqlite_order_repository::SqliteOrderRepository;
+use actix::Actor;
+use cerne::application::{EventOutbox, Repository, SyncEventBus};
+use shop::composition_root::{CompositionRoot, CompositionRootConstructor};
+use shop::domain::entities::order::Order;
 use std::sync::Arc;
-use std::time::Duration;
 
-#[tokio::main]
+#[actix::main]
 async fn main() -> anyhow::Result<()> {
     // --- Composition root ----------------------------------------------------
 
-    let database_url = std::env::var("DATABASE_URL").unwrap_or("sqlite://shop.db?mode=rwc".into());
-
-    let database = SqliteDatabase::connect(&database_url, 5).await?;
-
-    let order_repository = SqliteOrderRepository::new(database.clone());
-    let outbox = SqliteOutbox::new(database.clone());
-
-    database.migrate(&sqlx::migrate!()).await?;
+    let order_repository = order_repository_adapter();
+    let event_outbox = event_outbox_adapter();
 
     let composition_root_constructor = CompositionRootConstructor {
-        database,
-        order_repository: Box::new(order_repository),
-        outbox: Box::new(outbox),
+        order_repository,
+        event_outbox,
     };
 
     let composition_root = Arc::new(CompositionRoot::new(composition_root_constructor));
 
-    // --- Outbox: the commands of the policies --------------------------------
+    // --- Event bus: the policies of every event ------------------------------
 
-    let outbox_policy_processor = OutboxPolicyProcessor::new(Arc::clone(&composition_root), command_registry());
+    #[expect(unused_variables, reason = "the blocks of the actors publish their events on it")]
+    let sync_event_bus = SyncEventBus::new(composition_root, |error| eprintln!("policy: {error}")).start();
 
-    tokio::spawn(async move {
-        outbox_policy_processor
-            .run_every(Duration::from_millis(200), |error| eprintln!("outbox: {error}"))
-            .await
-    });
-
-    // --- HTTP: REST ----------------------------------------------------------
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:3000").await?;
-
-    println!("listening on http://127.0.0.1:3000");
-
-    axum::serve(listener, router(composition_root)).await?;
+    // One block per actor: execute the command, then publish its events with
+    // `sync_event_bus.send(PublishEvents(execution.events)).await?`.
 
     Ok(())
+}
+
+/// No adapter of EventOutbox yet: write one in `infrastructure/` and build it here.
+fn event_outbox_adapter() -> Box<dyn EventOutbox> {
+    todo!("an adapter of EventOutbox")
+}
+
+/// No adapter of Repository<Order> yet: write one in `infrastructure/` and build it here.
+fn order_repository_adapter() -> Box<dyn Repository<Order>> {
+    todo!("an adapter of Repository<Order>")
 }
 ```
 
@@ -1236,61 +1286,64 @@ Después de rellenarlo:
 
 <!-- file: src/main.rs -->
 ```rust
-use cerne::application::OutboxPolicyProcessor;
-use cerne::sqlite::{SqliteDatabase, SqliteOutbox};
-use shop::composition_root::{CompositionRoot, CompositionRootConstructor, command_registry};
-use shop::infrastructure::http::router;
+use actix::Actor;
+use cerne::application::{Command, PublishEvents, Query, SyncEventBus};
+use shop::application::commands::place_order::PlaceOrderCommand;
+use shop::application::queries::order_summary::OrderSummaryQuery;
+use shop::composition_root::{CompositionRoot, CompositionRootConstructor};
 use shop::infrastructure::in_memory_catalog::InMemoryCatalog;
+use shop::infrastructure::in_memory_database::{InMemoryDatabase, InMemoryEventOutbox, InMemoryOrderRepository};
 use shop::infrastructure::in_memory_payments::InMemoryPayments;
-use shop::infrastructure::sqlite_order_repository::SqliteOrderRepository;
 use std::sync::Arc;
-use std::time::Duration;
 
-#[tokio::main]
+#[actix::main]
 async fn main() -> anyhow::Result<()> {
     // --- Composition root ----------------------------------------------------
 
-    let database_url = std::env::var("DATABASE_URL").unwrap_or("sqlite://shop.db?mode=rwc".into());
+    let database = InMemoryDatabase::default();
 
-    let database = SqliteDatabase::connect(&database_url, 5).await?;
-
-    let order_repository = SqliteOrderRepository::new(database.clone());
-    let outbox = SqliteOutbox::new(database.clone());
+    let order_repository = InMemoryOrderRepository::new(database.clone());
+    let event_outbox = InMemoryEventOutbox::new(database.clone());
 
     let catalog = InMemoryCatalog {
         products: vec![("mug", 3000, 10), ("t-shirt", 5000, 3)],
     };
     let payments = InMemoryPayments::default();
 
-    database.migrate(&sqlx::migrate!()).await?;
-
     let composition_root_constructor = CompositionRootConstructor {
         database,
         order_repository: Box::new(order_repository),
-        outbox: Box::new(outbox),
+        event_outbox: Box::new(event_outbox),
         catalog: Arc::new(catalog),
         payments: Arc::new(payments),
     };
 
     let composition_root = Arc::new(CompositionRoot::new(composition_root_constructor));
 
-    // --- Outbox: the commands of the policies --------------------------------
+    // --- Event bus: the policies of every event ------------------------------
 
-    let outbox_policy_processor = OutboxPolicyProcessor::new(Arc::clone(&composition_root), command_registry());
+    let sync_event_bus = SyncEventBus::new(Arc::clone(&composition_root), |error| eprintln!("policy: {error}")).start();
 
-    tokio::spawn(async move {
-        outbox_policy_processor
-            .run_every(Duration::from_millis(200), |error| eprintln!("outbox: {error}"))
-            .await
-    });
+    // --- Customer: places an order -------------------------------------------
 
-    // --- HTTP: REST ----------------------------------------------------------
+    let place_order = PlaceOrderCommand {
+        product: "mug".into(),
+        quantity: 2,
+    };
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:3000").await?;
+    let place_order_execution = place_order.execute(&composition_root).await?;
 
-    println!("listening on http://127.0.0.1:3000");
+    let order_id = place_order_execution.output;
 
-    axum::serve(listener, router(composition_root)).await?;
+    sync_event_bus.send(PublishEvents(place_order_execution.events)).await?;
+
+    // --- Customer: reads the order -------------------------------------------
+
+    let order_summary_query = OrderSummaryQuery { order_id };
+
+    let order_summary = order_summary_query.execute(&composition_root).await?;
+
+    println!("{order_summary:?}");
 
     Ok(())
 }
@@ -1301,54 +1354,40 @@ cargo run
 ```
 
 ```console
-$ curl -X POST localhost:3000/orders -H 'content-type: application/json' -d '{"product": "mug", "quantity": 2}'
-1
-$ curl 'localhost:3000/orders?order_id=1'
-{"product":"mug","quantity":2,"total":6000,"status":"Paid"}
+$ cargo run
+OrderSummary { product: "mug", quantity: 2, total: 6000, status: "Paid" }
 ```
 
-El pedido ya está `Paid`: en segundo plano, el `OutboxPolicyProcessor` ejecutó el `ChargeOrderCommand`.
+El pedido ya está `Paid`: el `SyncEventBus` ejecutó el `ChargeOrderCommand` antes de que volviera `send(..).await`. Un servidor web, un consumidor de cola o un CLI ocuparían el lugar de estos bloques: cada uno ejecuta el command y publica sus eventos, de la misma forma.
 
 ## 11. Cuando algo sale mal
 
-Todo error es un `cerne::Error`, en una de tres categorías, y HTTP convierte cada una en una respuesta:
+Todo error es un `cerne::Error`, en una de tres categorías. Un adapter de HTTP (o de cualquier otra cosa) mira la categoría para decidir su respuesta:
 
-| Error | Cuándo | REST | JSON-RPC |
-|---|---|---|---|
-| `DomainError::Violations` | falló una invariante o una regla de negocio | 422, con los nombres | `-32001`, con los nombres en `message` y en `data` |
-| `ApplicationError::NotFound` | el repositorio (o un adapter) no encontró nada | 404 | `-32004` |
-| `InfrastructureError` | base de datos, red, cola | 500, sin detalles | `-32603` |
+| Error | Cuándo |
+|---|---|
+| `DomainError::Violations` | falló una invariante o una regla de negocio; trae todos los nombres que fallaron, como están escritos en el tablero |
+| `ApplicationError::NotFound` | el repositorio (o un adapter) no encontró nada |
+| `InfrastructureError` | base de datos, red, cola |
 
-```console
-$ curl -X POST localhost:3000/orders -H 'content-type: application/json' -d '{"product": "mug", "quantity": 11}'
-{"error":"domain","violations":["stock covers the quantity"]}
-$ curl -X POST localhost:3000/orders -H 'content-type: application/json' -d '{"product": "lamp", "quantity": 1}'
-{"error":"not_found","message":"product not found"}
-```
+En el test del paso 9, `PlaceOrderCommand { product: "mug".into(), quantity: 11 }` vuelve como `DomainError::Violations(["stock covers the quantity"])`.
 
 ## Otras opciones
 
-- **Postgres:** `cerne new shop --db postgres` usa `cerne::postgres`, con la misma API y el mismo SQL. La dirección viene de `DATABASE_URL`.
-- **Sin base de datos:** `cerne new shop`, sin `--db`, no usa ningún adapter de base de datos de Cerne. La outbox vive en memoria (`InMemoryOutbox`), y `--aggregate` genera solo el agregado, sin repositorio. Si el proceso se cae, los commands de las policies que aún no se ejecutaron se pierden.
-- **Base de datos más tarde:** `cerne g db sqlite` (o `postgres`, o `memory`) escribe lo que `cerne new --db` habría escrito: `sqlx`, la tabla de la outbox, el `CompositionRoot` sobre la base de datos y el repositorio SQL de cada agregado que ya existe.
-- **Sin archivo de base de datos:** `cerne new shop --db memory` empieza con un SQLite en memoria, el mismo adapter.
-- **JSON-RPC 2.0:** `cerne new shop --http jsonrpc` atiende `POST /rpc`, y cada `cerne g command` y `cerne g query` añade su método (`place_order`, `order_summary`). Los `params` llegan por nombre (un objeto) o por posición (un array, en el orden de los campos del command).
-- **HTTP más tarde:** un proyecto creado sin `--http` lo obtiene con `cerne g http rest` o `cerne g http jsonrpc`.
-- **Otros procesadores de policy:** además del `OutboxPolicyProcessor` (el predeterminado), el `InlinePolicyProcessor` ejecuta los commands en el acto, en la misma task, y el `TokioPolicyProcessor` los ejecuta en una task en segundo plano.
+- **Una base de datos real:** escribe sobre ella un adapter de `Repository<Order>` y de `EventOutbox` (con `sqlx`, `diesel` o cualquier otro), y un `begin` que abre una transacción y los construye sobre ella. La tabla `event_outbox` es tuya: leerla de vuelta para publicar lo que quedó atrás es cómo una policy sobrevive a una caída.
+- **HTTP, una cola, un CLI:** cada petición ejecuta un bloque de actor de `main.rs`: ejecuta el command, responde con su `output` y publica sus `events`.
+- **Event bus asíncrono:** `AsyncEventBus::new(..).start()` en lugar del `SyncEventBus`: cada evento empieza en cuanto llega, y `send(..).await` no espera la cadena.
 
 ## CLI
 
 ```
-cerne new <name> [--db memory|sqlite|postgres] [--http rest|jsonrpc]
+cerne new <name>
 cerne g entity <Name> [field:type ...] [field:Value1,Value2 ...] [field=Initial:Value1,Value2 ...] [id:type] [--aggregate]
 cerne g value_object <Name> field:type [field:type ...]
 cerne g event <Name> [field:type ...]
-cerne g command <Name> [field:type ...] [--policy]
+cerne g command <Name> [field:type ...]
 cerne g read_model <Name> [field:type ...]
 cerne g query <Name> [field:type ...]
-cerne g endpoint <Name> <GET|POST|PUT|PATCH|DELETE> </path>
-cerne g http <rest|jsonrpc>
-cerne g db <memory|sqlite|postgres>
 cerne g port <Name>
 cerne g adapter <Name> <Port>
 ```

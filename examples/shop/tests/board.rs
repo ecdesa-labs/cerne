@@ -1,48 +1,46 @@
 //! One block per flow of the board: an actor sends a command, and the test checks its events and the policies that fired.
 
+use actix::Actor;
 use cerne::Error;
-use cerne::application::{OutboxPolicyProcessor, Query, TransactionalCompositionRoot};
+use cerne::application::{Command, PublishEvents, Query, SyncEventBus};
 use cerne::domain::{DomainError, ValueObject};
-use cerne::sqlite::{SqliteDatabase, SqliteOutbox};
 use shop::application::commands::place_order::PlaceOrderCommand;
 use shop::application::queries::order_summary::OrderSummaryQuery;
 use shop::application::read_models::order_summary::OrderSummary;
-use shop::composition_root::{CompositionRoot, CompositionRootConstructor, command_registry};
+use shop::composition_root::{CompositionRoot, CompositionRootConstructor};
 use shop::domain::value_objects::order_id::OrderId;
 use shop::infrastructure::in_memory_catalog::InMemoryCatalog;
+use shop::infrastructure::in_memory_database::{InMemoryDatabase, InMemoryEventOutbox, InMemoryOrderRepository};
 use shop::infrastructure::in_memory_payments::InMemoryPayments;
-use shop::infrastructure::sqlite_order_repository::SqliteOrderRepository;
 use std::sync::Arc;
 
-async fn composition_root(payments: Arc<InMemoryPayments>) -> Result<Arc<CompositionRoot>, Error> {
-    let database = SqliteDatabase::in_memory().await?;
+fn composition_root(payments: Arc<InMemoryPayments>) -> Arc<CompositionRoot> {
+    let database = InMemoryDatabase::default();
 
-    let order_repository = SqliteOrderRepository::new(database.clone());
-    let outbox = SqliteOutbox::new(database.clone());
+    let order_repository = InMemoryOrderRepository::new(database.clone());
+    let event_outbox = InMemoryEventOutbox::new(database.clone());
 
     let catalog = InMemoryCatalog {
         products: vec![("mug", 3000, 10)],
     };
 
-    database.migrate(&sqlx::migrate!()).await?;
-
     let composition_root_constructor = CompositionRootConstructor {
         database,
         order_repository: Box::new(order_repository),
-        outbox: Box::new(outbox),
+        event_outbox: Box::new(event_outbox),
         catalog: Arc::new(catalog),
         payments,
     };
 
-    Ok(Arc::new(CompositionRoot::new(composition_root_constructor)))
+    Arc::new(CompositionRoot::new(composition_root_constructor))
 }
 
-#[tokio::test]
-async fn the_customer_places_an_order_and_the_policy_charges_it() -> Result<(), Error> {
+#[actix::test]
+async fn the_customer_places_an_order_and_the_policy_charges_it() -> anyhow::Result<()> {
     let payments = Arc::new(InMemoryPayments::default());
-    let composition_root = composition_root(Arc::clone(&payments)).await?;
+    let composition_root = composition_root(Arc::clone(&payments));
 
-    let outbox_policy_processor = OutboxPolicyProcessor::new(Arc::clone(&composition_root), command_registry());
+    let sync_event_bus = SyncEventBus::new(Arc::clone(&composition_root), |error| eprintln!("policy: {error}")).start();
 
     // --- Customer: places an order -------------------------------------------
 
@@ -51,14 +49,28 @@ async fn the_customer_places_an_order_and_the_policy_charges_it() -> Result<(), 
         quantity: 2,
     };
 
-    let order_id = composition_root.execute_in_transaction(place_order).await?;
+    let place_order_execution = place_order.execute(&composition_root).await?;
+
+    let order_id = place_order_execution.output;
+
+    sync_event_bus
+        .send(PublishEvents(place_order_execution.events))
+        .await?;
 
     // --- Policy: whenever an order is placed, charge the customer -----------
 
-    let command_runs = outbox_policy_processor.run_pending().await?;
-
-    assert_eq!(command_runs.len(), 1);
     assert_eq!(*payments.charges.lock().unwrap(), vec![(order_id.clone(), 6000)]);
+
+    let stored_events: Vec<String> = composition_root
+        .database
+        .event_outbox
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|outbox_entry| outbox_entry.event.clone())
+        .collect();
+
+    assert_eq!(stored_events, ["order_placed", "order_paid"]);
 
     // --- Customer: reads the order -------------------------------------------
 
@@ -78,9 +90,9 @@ async fn the_customer_places_an_order_and_the_policy_charges_it() -> Result<(), 
     Ok(())
 }
 
-#[tokio::test]
-async fn the_domain_refuses_what_breaks_a_rule_or_an_invariant() -> Result<(), Error> {
-    let composition_root = composition_root(Arc::default()).await?;
+#[actix::test]
+async fn the_domain_refuses_what_breaks_a_rule_or_an_invariant() -> anyhow::Result<()> {
+    let composition_root = composition_root(Arc::default());
 
     // --- Business rule: stock covers the quantity ----------------------------
 
@@ -89,7 +101,7 @@ async fn the_domain_refuses_what_breaks_a_rule_or_an_invariant() -> Result<(), E
         quantity: 11,
     };
 
-    let refused = composition_root.execute_in_transaction(too_many_mugs).await;
+    let refused = too_many_mugs.execute(&composition_root).await;
 
     assert!(matches!(
         refused,
@@ -103,7 +115,7 @@ async fn the_domain_refuses_what_breaks_a_rule_or_an_invariant() -> Result<(), E
         quantity: 0,
     };
 
-    let refused = composition_root.execute_in_transaction(no_mugs).await;
+    let refused = no_mugs.execute(&composition_root).await;
 
     assert!(matches!(
         refused,

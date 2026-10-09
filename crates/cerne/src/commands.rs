@@ -7,15 +7,20 @@ use async_trait::async_trait;
 /// `CompositionRoot` is the composition root: the struct holding every port (repositories, external systems) the application uses.
 /// `Output` is what the caller gets back (e.g. the id of what was created); `()` when there is nothing to give back.
 ///
+/// The command opens its own transaction (`composition_root.begin()`, a method of the application's composition
+/// root), stores its events in the [`EventOutbox`](crate::application::EventOutbox) inside it, and commits. Whoever
+/// called it publishes the events it returns.
+///
 /// ```
-/// use cerne::application::{Command, Executed, Repository};
+/// use cerne::application::{Command, EventOutbox, Executed, OutboxEntry, Repository};
 /// use cerne::domain::{
 ///     Aggregate, BusinessRules, DomainEvent, EnforcementResult, Entity, FiredPolicy, Validate, ValueObject,
 ///     business_rule,
 /// };
 /// use cerne::{Error, async_trait};
+/// use serde::Serialize;
 ///
-/// #[derive(Clone, PartialEq)]
+/// #[derive(Clone, PartialEq, Serialize)]
 /// struct ProductId(u64);
 ///
 /// impl ValueObject for ProductId {
@@ -58,6 +63,7 @@ use async_trait::async_trait;
 ///
 /// impl Aggregate for Stock {}
 ///
+/// #[derive(Serialize)]
 /// struct StockReserved {
 ///     product_id: ProductId,
 ///     qty: i32,
@@ -71,6 +77,19 @@ use async_trait::async_trait;
 ///
 /// struct CompositionRoot {
 ///     stock_repository: Box<dyn Repository<Stock>>,
+///     event_outbox: Box<dyn EventOutbox>,
+/// }
+///
+/// impl CompositionRoot {
+///     /// A composition root whose repository and event outbox write in one new transaction of the database.
+///     async fn begin(&self) -> Result<CompositionRoot, Error> {
+///         todo!("open a transaction on your adapters and build a CompositionRoot on it")
+///     }
+///
+///     /// Makes every write of the transaction permanent; dropping it without `commit` rolls them back.
+///     async fn commit(self) -> Result<(), Error> {
+///         todo!("commit the transaction of your adapters")
+///     }
 /// }
 ///
 /// struct ReserveStockCommand {
@@ -83,9 +102,13 @@ use async_trait::async_trait;
 ///     type Output = i32; // units left in stock
 ///
 ///     async fn execute(&self, composition_root: &CompositionRoot) -> Result<Executed<i32, CompositionRoot>, Error> {
+///         // --- Transaction -----------------------------------------------------
+///
+///         let transaction = composition_root.begin().await?;
+///
 ///         // --- Ports -----------------------------------------------------------
 ///
-///         let stock = composition_root.stock_repository.load(&self.product_id).await?;
+///         let stock = transaction.stock_repository.load(&self.product_id).await?;
 ///
 ///         // --- Business rules --------------------------------------------------
 ///
@@ -98,11 +121,14 @@ use async_trait::async_trait;
 ///         let stock = Stock::new((stock.product_id, stock.available - self.qty))?;
 ///         let units_left = stock.available;
 ///
-///         composition_root.stock_repository.save(stock).await?;
+///         transaction.stock_repository.save(stock).await?;
 ///
 ///         // --- Domain events ---------------------------------------------------
 ///
 ///         let stock_reserved = StockReserved { product_id: self.product_id.clone(), qty: self.qty };
+///
+///         transaction.event_outbox.store(OutboxEntry::new(&stock_reserved)?).await?;
+///         transaction.commit().await?;
 ///
 ///         Ok(Executed {
 ///             output: units_left,

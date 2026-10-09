@@ -2,170 +2,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::{env, fs};
 
-/// What the e2e test writes into the generated project: the generated repository, on SQLite in memory.
-const REPOSITORY_TEST: &str = r#"
-use cerne::application::TransactionalCompositionRoot;
-use cerne::domain::Entity;
-use cerne::sqlite::{SqliteDatabase, SqliteOutbox};
-use loja::domain::entities::order::{Order, OrderConstructor};
-use loja::composition_root::{CompositionRoot, CompositionRootConstructor};
-use loja::infrastructure::sqlite_order_repository::SqliteOrderRepository;
-use loja::infrastructure::sqlite_payment_repository::SqlitePaymentRepository;
-
-#[tokio::test]
-async fn the_generated_repository_inserts_loads_and_updates() {
-    let database = SqliteDatabase::in_memory().await.unwrap();
-    let order_repository = SqliteOrderRepository::new(database.clone());
-    let payment_repository = SqlitePaymentRepository::new(database.clone());
-    let outbox = SqliteOutbox::new(database.clone());
-    database.migrate(&sqlx::migrate!()).await.unwrap();
-    let composition_root_constructor = CompositionRootConstructor { database, order_repository: Box::new(order_repository), payment_repository: Box::new(payment_repository), outbox: Box::new(outbox) };
-    let composition_root = CompositionRoot::new(composition_root_constructor);
-
-    let transaction = composition_root.begin().await.unwrap();
-    let order_id = transaction.order_repository.save(Order::new(OrderConstructor { qty: 3 }).unwrap()).await.unwrap();
-    transaction.commit().await.unwrap();
-
-    let order = composition_root.order_repository.load(&order_id).await.unwrap();
-    composition_root.order_repository.save(Order { qty: 5, ..order }).await.unwrap();
-
-    assert_eq!(composition_root.order_repository.load(&order_id).await.unwrap().qty, 5);
-}
-"#;
-
-/// What the e2e test writes into the Postgres project: the generated repository, on a database of its own created in
-/// the Postgres of `DATABASE_URL` (the CI starts one).
-const POSTGRES_REPOSITORY_TEST: &str = r#"
-use cerne::application::TransactionalCompositionRoot;
-use cerne::domain::Entity;
-use cerne::postgres::{PostgresDatabase, PostgresOutbox};
-use vitrine::domain::entities::product::{Product, ProductKind, ProductConstructor};
-use vitrine::composition_root::{CompositionRoot, CompositionRootConstructor};
-use vitrine::infrastructure::postgres_product_repository::PostgresProductRepository;
-
-#[tokio::test]
-async fn the_generated_repository_inserts_loads_and_updates_on_postgres() {
-    let database_url = std::env::var("DATABASE_URL").unwrap();
-    let server = PostgresDatabase::connect(&database_url, 1).await.unwrap();
-    let database_name = format!("cerne_e2e_{}", std::process::id());
-
-    server.execute(sqlx::query(&format!("DROP DATABASE IF EXISTS {database_name}"))).await.unwrap();
-    server.execute(sqlx::query(&format!("CREATE DATABASE {database_name}"))).await.unwrap();
-
-    let (server_url, _) = database_url.rsplit_once('/').unwrap();
-    let database = PostgresDatabase::connect(&format!("{server_url}/{database_name}"), 2).await.unwrap();
-    let product_repository = PostgresProductRepository::new(database.clone());
-    let outbox = PostgresOutbox::new(database.clone());
-    database.migrate(&sqlx::migrate!()).await.unwrap();
-    let composition_root_constructor = CompositionRootConstructor { database, product_repository: Box::new(product_repository), outbox: Box::new(outbox) };
-    let composition_root = CompositionRoot::new(composition_root_constructor);
-
-    let product = Product::new(ProductConstructor {
-        name: "Mug".into(),
-        price: 30,
-        kind: ProductKind::Physical,
-        weight: 0.4,
-        available: true,
-    })
-    .unwrap();
-
-    let transaction = composition_root.begin().await.unwrap();
-    let product_id = transaction.product_repository.save(product).await.unwrap();
-    transaction.commit().await.unwrap();
-
-    let product = composition_root.product_repository.load(&product_id).await.unwrap();
-    composition_root.product_repository.save(Product { price: 35, kind: ProductKind::Digital, available: false, ..product }).await.unwrap();
-
-    let product = composition_root.product_repository.load(&product_id).await.unwrap();
-
-    assert_eq!((product.name.as_str(), product.price, product.weight), ("Mug", 35, 0.4));
-    assert!(matches!(product.kind, ProductKind::Digital));
-    assert!(!product.available);
-
-    drop(composition_root);
-    server.execute(sqlx::query(&format!("DROP DATABASE {database_name} WITH (FORCE)"))).await.unwrap();
-}
-"#;
-
-/// What the e2e test writes into the REST project: a `POST` and a `GET` straight to the generated router.
-/// What the e2e test writes into the project that got its database from `cerne g db`: the repository of the
-/// aggregate that existed before the database.
-const NUCLEO_REPOSITORY_TEST: &str = r#"
-use cerne::application::TransactionalCompositionRoot;
-use cerne::domain::Entity;
-use cerne::sqlite::{SqliteDatabase, SqliteOutbox};
-use nucleo::domain::entities::order::{Order, OrderConstructor, OrderStatus};
-use nucleo::composition_root::{CompositionRoot, CompositionRootConstructor};
-use nucleo::infrastructure::sqlite_order_repository::SqliteOrderRepository;
-
-#[tokio::test]
-async fn the_aggregate_from_before_the_database_gets_a_repository() {
-    let database = SqliteDatabase::in_memory().await.unwrap();
-    let order_repository = SqliteOrderRepository::new(database.clone());
-    let outbox = SqliteOutbox::new(database.clone());
-    database.migrate(&sqlx::migrate!()).await.unwrap();
-    let composition_root_constructor = CompositionRootConstructor { database, order_repository: Box::new(order_repository), outbox: Box::new(outbox) };
-    let composition_root = CompositionRoot::new(composition_root_constructor);
-
-    let order = Order::new(OrderConstructor { product: "mug".into(), quantity: 2 }).unwrap();
-
-    let transaction = composition_root.begin().await.unwrap();
-    let order_id = transaction.order_repository.save(order).await.unwrap();
-    transaction.commit().await.unwrap();
-
-    let order = composition_root.order_repository.load(&order_id).await.unwrap();
-
-    assert_eq!((order.product.as_str(), order.quantity, order.status), ("mug", 2, OrderStatus::Placed));
-}
-"#;
-
-const REST_TEST: &str = r##"
-use axum::body::Body;
-use axum::http::Request;
-use caixa::infrastructure::http::router;
-use caixa::composition_root::{CompositionRoot, CompositionRootConstructor};
-use caixa::infrastructure::sqlite_sale_repository::SqliteSaleRepository;
-use cerne::sqlite::{SqliteDatabase, SqliteOutbox};
-use std::sync::Arc;
-use tower::ServiceExt;
-
-async fn send(request: Request<Body>) -> (u16, String) {
-    let database = SqliteDatabase::in_memory().await.unwrap();
-    let sale_repository = SqliteSaleRepository::new(database.clone());
-    let outbox = SqliteOutbox::new(database.clone());
-    database.migrate(&sqlx::migrate!()).await.unwrap();
-    let composition_root_constructor = CompositionRootConstructor { database, sale_repository: Box::new(sale_repository), outbox: Box::new(outbox) };
-    let router = router(Arc::new(CompositionRoot::new(composition_root_constructor)));
-
-    let response = router.oneshot(request).await.unwrap();
-    let status = response.status().as_u16();
-    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
-
-    (status, String::from_utf8(bytes.to_vec()).unwrap())
-}
-
-fn post(path: &str, body: &str) -> Request<Body> {
-    Request::post(path)
-        .header("content-type", "application/json")
-        .body(Body::from(body.to_string()))
-        .unwrap()
-}
-
-#[tokio::test]
-async fn the_generated_post_executes_the_command() {
-    assert_eq!(send(post("/sales", r#"{"total": 30}"#)).await, (200, "null".into()));
-    assert_eq!(send(post("/sales", "{}")).await.0, 422, "the body is not a RegisterSaleCommand");
-}
-
-#[tokio::test]
-async fn the_generated_get_executes_the_query() {
-    let get = |uri: &str| Request::get(uri).body(Body::empty()).unwrap();
-
-    assert_eq!(send(get("/till?total=30")).await, (200, r#"{"total":30}"#.into()));
-    assert_eq!(send(get("/till?total=abc")).await.0, 400, "the query string is not a TillQuery");
-}
-"##;
-
 fn cerne(args: &[&str], dir: &Path) -> bool {
     Command::new(env!("CARGO_BIN_EXE_cerne"))
         .args(args)
@@ -187,12 +23,11 @@ fn generated_project_passes_clippy_without_touching_anything() {
 
     // --- cerne new -----------------------------------------------------------
 
-    assert!(cerne(&["new", "loja", "--db", "memory", "--http", "jsonrpc"], &tmp));
+    assert!(cerne(&["new", "loja"], &tmp));
     assert!(!cerne(&["new", "loja"], &tmp), "new must not overwrite a project");
+    assert!(!cerne(&["new", "bad", "--db", "sqlite"], &tmp), "new takes no flags");
 
     let project = tmp.join("loja");
-
-    assert!(!cerne(&["g", "http", "rest"], &project), "the project already speaks jsonrpc");
 
     // --- cerne g -------------------------------------------------------------
 
@@ -206,26 +41,27 @@ fn generated_project_passes_clippy_without_touching_anything() {
             "Payment",
             "payment_status=Pending:Pending,Paid",
             "method:Pix,Card",
+            "id:String",
             "--aggregate"
         ],
         &project
     ));
     assert!(cerne(&["g", "value_object", "Amount", "value:u64"], &project));
     assert!(cerne(&["g", "value_object", "Money", "amount:u64", "currency:String"], &project));
-    assert!(cerne(&["g", "event", "OrderPlaced", "order_id:u64"], &project));
+    assert!(cerne(&["g", "event", "OrderPlaced", "order_id:OrderId"], &project));
     assert!(cerne(&["g", "event", "Pinged"], &project));
-    assert!(cerne(&["g", "command", "PlaceOrder", "order_id:u64", "qty:i32"], &project));
-    assert!(cerne(&["g", "command", "ShipOrder", "order_id:u64", "--policy"], &project));
+    assert!(cerne(&["g", "command", "PlaceOrder", "order_id:OrderId", "qty:i32"], &project));
+    assert!(cerne(&["g", "command", "ShipOrder"], &project));
     assert!(cerne(&["g", "port", "Notifier"], &project));
     assert!(cerne(&["g", "adapter", "SmtpNotifier", "Notifier"], &project));
     assert!(!cerne(&["g", "adapter", "Smtp", "Mailer"], &project));
-    assert!(!cerne(&["g", "endpoint", "PlaceOrder", "POST", "/orders"], &project), "endpoint is for REST projects");
 
     assert!(!cerne(&["g", "query", "OrderSummary", "order_id:u64"], &project), "a query needs its read model first");
     assert!(cerne(&["g", "read_model", "OrderSummary", "order_id:u64", "total:u64"], &project));
     assert!(cerne(&["g", "query", "OrderSummary", "order_id:u64"], &project));
 
     assert!(!cerne(&["g", "entity", "Order"], &project), "g must not overwrite a post-it");
+    assert!(!cerne(&["g", "command", "Charge", "--policy"], &project), "a command has no --policy");
     assert!(!cerne(&["g", "value_object", "Empty"], &project));
     assert!(!cerne(&["g", "event", "Bad", "qty"], &project));
     assert!(!cerne(&["g", "event", "Bad", "status:Pending,Paid"], &project));
@@ -247,237 +83,47 @@ fn generated_project_passes_clippy_without_touching_anything() {
         "    #[skip_constructor]\n    pub payment_status: PaymentPaymentStatus,\n    pub method: PaymentMethod,"
     ));
 
-    let rpc = fs::read_to_string(project.join("src/infrastructure/http/rpc.rs")).unwrap();
-
-    assert!(rpc.contains(r#""place_order" => methods.command::<PlaceOrderCommand>(request.params).await,"#));
-    assert!(!rpc.contains("ship_order"), "a policy command has no actor to call it");
-    assert!(!rpc.contains("match_single_binding"));
+    // --- The port of each aggregate's repository, and its adapter still to write
 
     let composition_root = fs::read_to_string(project.join("src/composition_root.rs")).unwrap();
 
     assert!(composition_root.contains("pub order_repository: Box<dyn Repository<Order>>,"));
-    assert!(composition_root.contains("register::<ShipOrderCommand>()"));
+    assert!(composition_root.contains("payment_repository: constructor.payment_repository,"));
 
-    // --- cargo clippy and cargo test, with the generated repository on SQLite in memory
+    let main_rs = fs::read_to_string(project.join("src/main.rs")).unwrap();
 
-    fs::write(project.join("tests/repository.rs"), REPOSITORY_TEST).unwrap();
+    assert!(main_rs.contains("let order_repository = order_repository_adapter();"));
+    assert!(main_rs.contains("fn payment_repository_adapter() -> Box<dyn Repository<Payment>> {"));
+    assert!(main_rs.contains("        order_repository,\n        payment_repository,\n        event_outbox,\n"));
 
-    let memory_and_jsonrpc_passed = cargo(&project, &workspace, &["clippy", "--all-targets", "--", "-D", "warnings"])
-        && cargo(&project, &workspace, &["test"]);
+    // --- cargo clippy, on the project as the CLI left it ---------------------
 
-    // --- Postgres and REST: cargo clippy, and cargo test with DATABASE_URL ---
-
-    assert!(cerne(&["new", "vitrine", "--db", "postgres", "--http", "rest"], &tmp));
-    assert!(!cerne(&["new", "bad", "--db", "mysql"], &tmp));
-
-    let vitrine = tmp.join("vitrine");
-
-    assert!(cerne(
-        &[
-            "g",
-            "entity",
-            "Product",
-            "name:String",
-            "price:u64",
-            "kind:Physical,Digital",
-            "weight:f64",
-            "available:bool",
-            "--aggregate"
-        ],
-        &vitrine
-    ));
-    assert!(cerne(&["g", "command", "AddProduct", "name:String", "price:u64"], &vitrine));
-    assert!(cerne(&["g", "endpoint", "AddProduct", "POST", "/products"], &vitrine));
-    assert!(cerne(&["g", "read_model", "Catalog", "total:u64"], &vitrine));
-    assert!(cerne(&["g", "query", "Catalog", "page:u32"], &vitrine));
-    assert!(cerne(&["g", "endpoint", "Catalog", "GET", "/catalog"], &vitrine));
-    assert!(!cerne(&["g", "endpoint", "Missing", "POST", "/missing"], &vitrine));
-
-    fs::write(vitrine.join("tests/repository.rs"), POSTGRES_REPOSITORY_TEST).unwrap();
-
-    let postgres_and_rest_passed = cargo(&vitrine, &workspace, &["clippy", "--all-targets", "--", "-D", "warnings"])
-        && match env::var("DATABASE_URL") {
-            // Without a Postgres (the CI job postgres starts one), the repository only goes through clippy.
-            Err(_) => true,
-            Ok(database_url) => cargo_on_postgres(&vitrine, &workspace, &["test"], &database_url),
-        };
-
-    // --- SQLite file, no HTTP: cargo run runs the generated migrations ------
-
-    assert!(cerne(&["new", "caixa", "--db", "sqlite"], &tmp));
-
-    let caixa = tmp.join("caixa");
-
-    assert!(cerne(&["g", "entity", "Sale", "total:u64", "--aggregate"], &caixa));
-    assert!(cerne(&["g", "command", "RegisterSale", "total:u64"], &caixa));
-    assert!(cerne(&["g", "read_model", "Till", "total:u64"], &caixa));
-    assert!(cerne(&["g", "query", "Till", "total:u64"], &caixa));
-
-    let sqlite_passed = cargo(&caixa, &workspace, &["clippy", "--all-targets", "--", "-D", "warnings"])
-        && cargo(&caixa, &workspace, &["run"]);
-
-    // --- cerne g http rest: the same project, now with REST -----------------
-
-    assert!(!cerne(&["g", "http", "soap"], &caixa));
-    assert!(cerne(&["g", "http", "rest"], &caixa));
-    assert!(!cerne(&["g", "http", "rest"], &caixa), "the project already speaks rest");
-    assert!(cerne(&["g", "endpoint", "RegisterSale", "POST", "/sales"], &caixa));
-    assert!(cerne(&["g", "endpoint", "Till", "GET", "/till"], &caixa));
-
-    let caixa_cargo_toml = fs::read_to_string(caixa.join("Cargo.toml")).unwrap();
-
-    assert!(caixa_cargo_toml.contains(r#"http = "rest""#));
-    assert!(caixa_cargo_toml.contains(r#"features = ["axum"]"#));
-    assert!(
-        fs::read_to_string(caixa.join("src/main.rs"))
-            .unwrap()
-            .contains("axum::serve(listener, router(composition_root))")
-    );
-
-    // The query is the one part the actor's developer writes: here, it echoes the query string.
-    let till_query = caixa.join("src/application/queries/till.rs");
-    let till_query_written = fs::read_to_string(&till_query)
-        .unwrap()
-        .replace(r#"todo!("read the ports and build the Till read model")"#, "Ok(Till { total: self.total })");
-
-    fs::write(&till_query, till_query_written).unwrap();
-    fs::write(caixa.join("tests/rest.rs"), REST_TEST).unwrap();
-    fs::write(
-        caixa.join("Cargo.toml"),
-        caixa_cargo_toml + "\n[dev-dependencies]\ntower = { version = \"0.5\", features = [\"util\"] }\n",
-    )
-    .unwrap();
-
-    let rest_passed = cargo(&caixa, &workspace, &["clippy", "--all-targets", "--", "-D", "warnings"])
-        && cargo(&caixa, &workspace, &["test"]);
-
-    // --- cerne g http jsonrpc: the commands and queries already there get their method
-
-    assert!(cerne(&["new", "balcao"], &tmp));
-
-    let balcao = tmp.join("balcao");
-
-    assert!(cerne(&["g", "command", "OpenTab", "table:u32"], &balcao));
-    assert!(cerne(&["g", "command", "PrintBill", "table:u32", "--policy"], &balcao));
-    assert!(cerne(&["g", "read_model", "Tab", "total:u64"], &balcao));
-    assert!(cerne(&["g", "query", "Tab", "table:u32"], &balcao));
-    assert!(cerne(&["g", "http", "jsonrpc"], &balcao));
-
-    let balcao_rpc = fs::read_to_string(balcao.join("src/infrastructure/http/rpc.rs")).unwrap();
-
-    assert!(balcao_rpc.contains(r#""open_tab" => methods.command::<OpenTabCommand>(request.params).await,"#));
-    assert!(balcao_rpc.contains(r#""tab" => methods.query::<TabQuery>(request.params).await,"#));
-    assert!(!balcao_rpc.contains("print_bill"), "a policy command has no actor to call it");
-    assert!(
-        fs::read_to_string(balcao.join("src/infrastructure/mod.rs"))
-            .unwrap()
-            .starts_with("pub mod http;")
-    );
-
-    // --- No database: the outbox in memory, then cerne g db sqlite ----------
-
-    assert!(cerne(&["new", "nucleo", "--http", "rest"], &tmp));
-
-    let nucleo = tmp.join("nucleo");
-
-    assert!(!nucleo.join("migrations").exists());
-    assert!(cerne(
-        &[
-            "g",
-            "entity",
-            "Order",
-            "product:String",
-            "quantity:u32",
-            "status=Placed:Placed,Paid",
-            "--aggregate"
-        ],
-        &nucleo
-    ));
-    assert!(
-        !nucleo
-            .join("src/infrastructure/sqlite_order_repository.rs")
-            .exists(),
-        "no database, no repository"
-    );
-    assert!(cerne(&["g", "command", "PlaceOrder", "product:String", "quantity:u32"], &nucleo));
-    assert!(cerne(&["g", "command", "ShipOrder", "order_id:OrderId", "--policy"], &nucleo));
-    assert!(cerne(&["g", "endpoint", "PlaceOrder", "POST", "/orders"], &nucleo));
-
-    let nucleo_cargo_toml = fs::read_to_string(nucleo.join("Cargo.toml")).unwrap();
-
-    assert!(nucleo_cargo_toml.contains("default-features = false"));
-    assert!(!nucleo_cargo_toml.contains("sqlx"));
-
-    let no_database_passed = cargo(&nucleo, &workspace, &["clippy", "--all-targets", "--", "-D", "warnings"]);
-
-    assert!(!cerne(&["g", "db", "mysql"], &nucleo));
-    assert!(cerne(&["g", "db", "sqlite"], &nucleo));
-    assert!(!cerne(&["g", "db", "postgres"], &nucleo), "the project already has a database");
-    assert!(
-        nucleo
-            .join("src/infrastructure/sqlite_order_repository.rs")
-            .exists()
-    );
-    assert!(nucleo.join("migrations/1_create_cerne_outbox.sql").exists());
-    assert!(
-        !fs::read_to_string(nucleo.join("src/composition_root.rs"))
-            .unwrap()
-            .contains("InMemoryOutbox")
-    );
-
-    fs::write(nucleo.join("tests/repository.rs"), NUCLEO_REPOSITORY_TEST).unwrap();
-
-    let database_added_passed = cargo(&nucleo, &workspace, &["clippy", "--all-targets", "--", "-D", "warnings"])
-        && cargo(&nucleo, &workspace, &["test"]);
+    let project_passed = cargo(&project, &workspace, &["clippy", "--all-targets", "--", "-D", "warnings"]);
 
     fs::remove_dir_all(&tmp).unwrap();
 
-    assert!(no_database_passed);
-    assert!(database_added_passed);
-    assert!(memory_and_jsonrpc_passed);
-    assert!(postgres_and_rest_passed);
-    assert!(sqlite_passed);
-    assert!(rest_passed);
+    assert!(project_passed);
 }
 
-/// Runs cargo in a generated project, with the repository's own crate standing in for the published one. Without
-/// `DATABASE_URL`: a SQLite project would read the Postgres of the CI job as its database.
+/// Runs cargo in a generated project, with the repository's own crate standing in for the published one.
 fn cargo(project: &Path, workspace: &Path, args: &[&str]) -> bool {
-    cargo_command(project, workspace, args)
-        .env_remove("DATABASE_URL")
-        .status()
-        .unwrap()
-        .success()
-}
-
-/// The same, with `DATABASE_URL` pointing at a Postgres.
-fn cargo_on_postgres(project: &Path, workspace: &Path, args: &[&str], database_url: &str) -> bool {
-    cargo_command(project, workspace, args)
-        .env("DATABASE_URL", database_url)
-        .status()
-        .unwrap()
-        .success()
-}
-
-fn cargo_command(project: &Path, workspace: &Path, args: &[&str]) -> Command {
     let manifest = project.join("Cargo.toml");
     let cerne_path = workspace.join("crates/cerne");
     let cargo_toml = fs::read_to_string(&manifest).unwrap().replace(
-        concat!("version = \"", env!("CARGO_PKG_VERSION"), "\""),
-        &format!("path = {:?}", cerne_path.display().to_string()),
+        concat!("cerne = { version = \"", env!("CARGO_PKG_VERSION"), "\" }"),
+        &format!("cerne = {{ path = {:?} }}", cerne_path.display().to_string()),
     );
 
     fs::write(&manifest, cargo_toml).unwrap();
     fs::copy(workspace.join("Cargo.lock"), project.join("Cargo.lock")).unwrap();
 
-    let mut command = Command::new(env::var("CARGO").unwrap_or("cargo".into()));
-
-    command
+    Command::new(env::var("CARGO").unwrap_or("cargo".into()))
         .args(args)
         .current_dir(project)
-        .env("CARGO_TARGET_DIR", workspace.join("target/e2e"));
-
-    command
+        .env("CARGO_TARGET_DIR", workspace.join("target/e2e"))
+        .status()
+        .unwrap()
+        .success()
 }
 
 // --- The tutorial (docs/<language>/tutorial.md) is a project that compiles -

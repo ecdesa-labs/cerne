@@ -1,4 +1,3 @@
-use cerne::application::ReadModel;
 use serde::Serialize;
 
 /// What the actor sees on the screen: plain fields, no behavior, no invariants.
@@ -9,5 +8,3 @@ pub struct OrderSummary {
     pub total: u64,
     pub status: String,
 }
-
-impl ReadModel for OrderSummary {}

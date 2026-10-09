@@ -40,10 +40,10 @@ use async_trait::async_trait;
 /// }
 ///
 /// #[derive(Default)]
-/// struct InMemoryOrders(Mutex<HashMap<OrderId, Order>>);
+/// struct InMemoryOrderRepository(Mutex<HashMap<OrderId, Order>>);
 ///
 /// #[async_trait]
-/// impl Repository<Order> for InMemoryOrders {
+/// impl Repository<Order> for InMemoryOrderRepository {
 ///     async fn load(&self, id: &OrderId) -> Result<Order, Error> {
 ///         let orders = self.0.lock().unwrap();
 ///
@@ -66,9 +66,9 @@ use async_trait::async_trait;
 ///
 /// # #[tokio::main]
 /// # async fn main() -> Result<(), Error> {
-/// let orders = InMemoryOrders::default();
+/// let order_repository = InMemoryOrderRepository::default();
 ///
-/// let order_id = orders.save(Order::new(OrderConstructor {})?).await?;
+/// let order_id = order_repository.save(Order::new(OrderConstructor {})?).await?;
 ///
 /// assert!(order_id == OrderId(1));
 /// # Ok(())

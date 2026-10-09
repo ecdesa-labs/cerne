@@ -22,7 +22,7 @@ O Cerne não impede o sistema de mudar. Ele dá a cada mudança um lugar certo e
 - **Toda regra tem nome e endereço.** Uma decisão judicial vira uma `BusinessRule` com a frase dela, na seção `Business rules` do command que ela afeta, e não um `if` perdido no meio do código. Quem chega depois acha a regra pelo nome, e quando ela recusa um pedido, o erro diz qual foi.
 - **O código tem a forma do board.** Cada post-it do Event Storming é um tipo Rust, e todo `execute` tem as mesmas seções, na mesma ordem. Equipes diferentes, em anos diferentes, podem escrever no mesmo formato, porque o `cerne g` dá a todas o mesmo esqueleto.
 - **O board e o código contam a mesma história.** A conversa com o negócio acontece no board, com as mesmas palavras do código. Uma regra nova começa como um post-it e termina no lugar que o post-it indica.
-- **Uma reação é uma policy, não um efeito colateral.** "Sempre que X, faça Y" vira uma `Policy` com nome, e o command dela passa pela outbox. Ninguém precisa caçar onde a reação foi parar.
+- **Uma reação é uma policy, não um efeito colateral.** "Sempre que X, faça Y" vira uma `Policy` com nome, e o event bus executa o command dela. Ninguém precisa caçar onde a reação foi parar.
 
 Essa é a proposta do Cerne: um sistema que dure 30 anos e continue legível, não porque nada mudou, mas porque cada mudança ficou à vista.
 
@@ -42,21 +42,15 @@ A camada Domain é o coração do board: entidades e agregados (`Entity`, `Aggre
 
 ### Camada Application
 
-A camada Application é onde os atores agem. Um command (`Command`) lê os ports, confere as regras de negócio (`BusinessRule`), muda um agregado e devolve os eventos, sempre nessa ordem, então o `execute` se lê como um fluxo do board. Uma query (`Query`) devolve um read model (`ReadModel`). Os ports são traits assíncronas para os repositórios e os sistemas externos. Os commands que as policies disparam vão para uma outbox na mesma transação do agregado, e o `OutboxPolicyProcessor` os executa, mesmo que o processo caia no meio.
+A camada Application é onde os atores agem. Um command (`Command`) abre a sua transação, lê os ports, confere as regras de negócio (`BusinessRule`), muda um agregado e grava os eventos no event outbox (`EventOutbox`), sempre nessa ordem, então o `execute` se lê como um fluxo do board. Uma query (`Query`) devolve um read model, uma struct de campos simples. Os ports são traits assíncronas para os repositórios e os sistemas externos. Quem enviou o command publica os eventos dele num event bus, que executa as policies: o `SyncEventBus`, uma cadeia por vez, ou o `AsyncEventBus`, todos os eventos ao mesmo tempo. O bus torce pelo melhor: uma policy que falha vai para o `on_error` dele, e como cada policy sobrevive a uma falha é decisão da aplicação.
 
-### Camada Infrastructure (opcional)
+### Camada Infrastructure
 
-O Cerne é, antes de tudo, um framework de modelagem de domínio e de aplicação, não de infraestrutura. A camada Infrastructure é um extra para acelerar o desenvolvimento: adapters prontos para os repositórios SQL (`cerne::sqlite`, também em memória, e `cerne::postgres`, com a mesma API e o mesmo SQL) e para o HTTP, em REST ou JSON-RPC 2.0 (feature `axum`).
-
-O `cerne new` só os usa quando pedido: sem `--db`, o projeto não depende de nenhum adapter de banco, e a outbox fica em memória; o `--db` ou, depois, o `cerne g db` acrescentam o banco. Nada nas camadas Domain e Application depende desses adapters. Os ports são traits, e qualquer adapter que as implemente serve: outro banco, outro framework web, uma fila. Para usar o Cerne sem nenhum adapter dele:
-
-```toml
-cerne = { version = "0.1", default-features = false }
-```
+O Cerne é, antes de tudo, um framework de modelagem de domínio e de aplicação, não de infraestrutura, e não traz adapters. Os ports são traits: os repositórios, o event outbox e cada sistema externo são implementados pela aplicação, sobre o banco, o framework web e a fila que ela escolher. O `cerne new` escreve uma função com um `todo!()` onde entra cada adapter.
 
 ## Crates
 
-- [`cerne`](https://crates.io/crates/cerne): a biblioteca. As features `sqlite` (padrão), `postgres` e `axum` são a camada Infrastructure, opcional.
+- [`cerne`](https://crates.io/crates/cerne): a biblioteca.
 - [`cerne-cli`](https://crates.io/crates/cerne-cli): o comando `cerne`, que cria um projeto organizado como o board (`cerne new`) e gera cada post-it no seu lugar, já compilando (`cerne g`).
 - [`cerne-macros`](https://crates.io/crates/cerne-macros): os atributos `#[entity]`, `#[aggregate]` e `#[value_object]`. O `cerne::domain` os reexporta, então um projeto só depende do `cerne`.
 
@@ -68,29 +62,22 @@ cerne = { version = "0.1", default-features = false }
    cargo install cerne-cli
    ```
 
-2. Crie um projeto com uma API REST:
+2. Crie um projeto:
 
    ```bash
-   cerne new shop --http rest
+   cerne new shop
    ```
 
-3. Gere um command e a rota dele, e suba o servidor:
+3. Gere um agregado e um command, e rode os testes:
 
    ```bash
    cd shop
+   cerne g entity Order product:String quantity:u32 --aggregate
    cerne g command PlaceOrder product:String quantity:u32
-   cerne g endpoint PlaceOrder POST /orders
-   cargo run
+   cargo test
    ```
 
-4. Envie o command:
-
-   ```console
-   $ curl -X POST localhost:3000/orders -H 'content-type: application/json' -d '{"product": "mug", "quantity": 2}'
-   null
-   ```
-
-5. Preencha os post-its. Estes recursos ajudam:
+4. Preencha os post-its. Estes recursos ajudam:
    - [O tutorial](docs/pt-BR/tutorial.md): uma loja, do board ao código, com todos os post-its.
    - [A documentação da API](https://docs.rs/cerne)
    - O `cerne` sem argumentos lista todos os generators.

@@ -12,7 +12,6 @@ use crate::policies::FiredPolicy;
 ///
 /// struct CompositionRoot;
 ///
-/// #[derive(serde::Serialize, serde::Deserialize)]
 /// struct ReserveStockCommand {
 ///     order_id: u64,
 /// }
@@ -59,11 +58,9 @@ mod tests {
     use crate::policies::Policies;
     use crate::policy;
     use async_trait::async_trait;
-    use serde::Serialize;
 
     struct CompositionRoot;
 
-    #[derive(Serialize)]
     struct NoopCommand;
 
     #[async_trait]

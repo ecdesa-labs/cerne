@@ -1,7 +1,6 @@
 {% for line in uses %}
 {{ line }}
 {% endfor %}
-use cerne::application::ReadModel;
 use serde::Serialize;
 
 /// What the actor sees on the screen: plain fields, no behavior, no invariants.
@@ -11,5 +10,3 @@ pub struct {{ name }} {
     pub {{ field.name }}: {{ field.ty }},
 {% endfor %}
 }
-
-impl ReadModel for {{ name }} {}

@@ -5,9 +5,7 @@ use crate::application::read_models::{{ file }}::{{ name }};
 use crate::composition_root::CompositionRoot;
 use cerne::application::Query;
 use cerne::{Error, async_trait};
-use serde::Deserialize;
 
-#[derive(Deserialize)]
 pub struct {{ name }}Query {
 {% for field in fields %}
     pub {{ field.name }}: {{ field.ty }},

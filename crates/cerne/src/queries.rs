@@ -4,11 +4,11 @@ use async_trait::async_trait;
 /// The green post-it: what the actor looks at before deciding. A query only reads: it never changes state and
 /// produces no events.
 ///
-/// `CompositionRoot` is the same composition root the commands use. `ReadModel` is what the actor sees, shaped for the screen,
-/// not like the aggregate.
+/// `CompositionRoot` is the same composition root the commands use. `ReadModel` is what the actor sees: a struct of plain
+/// fields, no behavior and no invariants, shaped for the screen, not like the aggregate.
 ///
 /// ```
-/// use cerne::application::{Query, ReadModel};
+/// use cerne::application::Query;
 /// use cerne::{Error, async_trait};
 ///
 /// struct CompositionRoot {
@@ -21,8 +21,6 @@ use async_trait::async_trait;
 ///     sku: &'static str,
 ///     in_stock: bool,
 /// }
-///
-/// impl ReadModel for ProductAvailability {}
 ///
 /// struct ProductAvailabilityQuery {
 ///     sku: &'static str,
@@ -57,11 +55,8 @@ use async_trait::async_trait;
 /// ```
 #[async_trait]
 pub trait Query<CompositionRoot>: Send + Sync {
-    type ReadModel: ReadModel;
+    type ReadModel: Send;
 
     /// Reads the ports and builds the read model; changes nothing.
     async fn execute(&self, composition_root: &CompositionRoot) -> Result<Self::ReadModel, Error>;
 }
-
-/// The data a query gives back: plain fields, no behavior, no invariants.
-pub trait ReadModel: Send {}

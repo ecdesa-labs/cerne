@@ -22,7 +22,7 @@ Cerne does not stop the system from changing. It gives every change a proper pla
 - **Every rule has a name and an address.** A court decision becomes a `BusinessRule` with its sentence, in the `Business rules` section of the command it affects, not an `if` lost in the middle of the code. Whoever comes later finds the rule by its name, and when it refuses a request, the error says which one.
 - **The code has the shape of the board.** Every Event Storming sticky note is a Rust type, and every `execute` has the same sections, in the same order. Different teams, in different years, can write in the same format, because `cerne g` gives all of them the same skeleton.
 - **The board and the code tell the same story.** The conversation with the business happens on the board, with the same words as the code. A new rule starts as a sticky note and ends up where the sticky note says.
-- **A reaction is a policy, not a side effect.** "Whenever X, do Y" becomes a named `Policy`, and its command goes through the outbox. Nobody has to hunt for where the reaction ended up.
+- **A reaction is a policy, not a side effect.** "Whenever X, do Y" becomes a named `Policy`, and the event bus runs its command. Nobody has to hunt for where the reaction ended up.
 
 That is what Cerne sets out to do: a system that lasts 30 years and stays readable, not because nothing changed, but because every change stayed in sight.
 
@@ -42,21 +42,15 @@ The Domain layer is the heart of the board: entities and aggregates (`Entity`, `
 
 ### Application layer
 
-The Application layer is where the actors act. A command (`Command`) reads the ports, checks the business rules (`BusinessRule`), changes an aggregate and returns its events, always in that order, so the `execute` reads like a flow of the board. A query (`Query`) returns a read model (`ReadModel`). The ports are async traits for the repositories and the external systems. The commands that policies fire go to an outbox in the same transaction as the aggregate, and the `OutboxPolicyProcessor` runs them, even if the process dies in between.
+The Application layer is where the actors act. A command (`Command`) opens its transaction, reads the ports, checks the business rules (`BusinessRule`), changes an aggregate and stores its events in the event outbox (`EventOutbox`), always in that order, so the `execute` reads like a flow of the board. A query (`Query`) returns a read model, a struct of plain fields. The ports are async traits for the repositories and the external systems. Whoever sent the command publishes its events on an event bus, which runs the policies: the `SyncEventBus`, one chain at a time, or the `AsyncEventBus`, every event at once. The bus hopes for the best: a policy that fails goes to its `on_error`, and how each policy survives a failure is up to the application.
 
-### Infrastructure layer (optional)
+### Infrastructure layer
 
-Cerne is, first of all, a framework for modeling the domain and the application, not the infrastructure. The Infrastructure layer is an extra to speed up development: ready-made adapters for the SQL repositories (`cerne::sqlite`, also in memory, and `cerne::postgres`, with the same API and the same SQL) and for HTTP, as REST or JSON-RPC 2.0 (feature `axum`).
-
-`cerne new` only uses them when asked: without `--db`, the project depends on no database adapter, and the outbox lives in memory; `--db`, or `cerne g db` later, adds the database. Nothing in the Domain and Application layers depends on these adapters. The ports are traits, and any adapter that implements them will do: another database, another web framework, a queue. To use Cerne without any of its adapters:
-
-```toml
-cerne = { version = "0.1", default-features = false }
-```
+Cerne is, first of all, a framework for modeling the domain and the application, not the infrastructure, and it brings no adapters. The ports are traits: the repositories, the event outbox and every external system are implemented by the application, on the database, the web framework and the queue it picks. `cerne new` writes a function with a `todo!()` where each adapter goes.
 
 ## Crates
 
-- [`cerne`](https://crates.io/crates/cerne): the library. The features `sqlite` (default), `postgres` and `axum` are the optional Infrastructure layer.
+- [`cerne`](https://crates.io/crates/cerne): the library.
 - [`cerne-cli`](https://crates.io/crates/cerne-cli): the `cerne` command, which creates a project laid out like the board (`cerne new`) and generates each sticky note in its place, already compiling (`cerne g`).
 - [`cerne-macros`](https://crates.io/crates/cerne-macros): the attributes `#[entity]`, `#[aggregate]` and `#[value_object]`. `cerne::domain` re-exports them, so a project only depends on `cerne`.
 
@@ -68,29 +62,22 @@ cerne = { version = "0.1", default-features = false }
    cargo install cerne-cli
    ```
 
-2. Create a project with a REST API:
+2. Create a project:
 
    ```bash
-   cerne new shop --http rest
+   cerne new shop
    ```
 
-3. Generate a command and its route, and start the server:
+3. Generate an aggregate and a command, and run the tests:
 
    ```bash
    cd shop
+   cerne g entity Order product:String quantity:u32 --aggregate
    cerne g command PlaceOrder product:String quantity:u32
-   cerne g endpoint PlaceOrder POST /orders
-   cargo run
+   cargo test
    ```
 
-4. Send the command:
-
-   ```console
-   $ curl -X POST localhost:3000/orders -H 'content-type: application/json' -d '{"product": "mug", "quantity": 2}'
-   null
-   ```
-
-5. Fill in the sticky notes. You may find these resources handy:
+4. Fill in the sticky notes. You may find these resources handy:
    - [The tutorial](docs/en/tutorial.md): a shop, from the board to the code, with every sticky note.
    - [The API documentation](https://docs.rs/cerne)
    - `cerne` with no arguments lists every generator.

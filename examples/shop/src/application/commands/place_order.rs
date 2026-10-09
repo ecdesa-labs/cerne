@@ -2,13 +2,11 @@ use crate::composition_root::CompositionRoot;
 use crate::domain::entities::order::{Order, OrderConstructor};
 use crate::domain::events::order_placed::OrderPlaced;
 use crate::domain::value_objects::order_id::OrderId;
-use cerne::application::{Command, Executed};
+use cerne::application::{Command, Executed, OutboxEntry};
 use cerne::domain::{BusinessRules, Entity, business_rule};
 use cerne::{Error, async_trait};
-use serde::{Deserialize, Serialize};
 
-/// Actor: the customer. The body of `POST /orders` is this command (that is why it is `Deserialize`).
-#[derive(Serialize, Deserialize)]
+/// Actor: the customer.
 pub struct PlaceOrderCommand {
     pub product: String,
     pub quantity: u32,
@@ -19,13 +17,14 @@ impl Command<CompositionRoot> for PlaceOrderCommand {
     type Output = OrderId; // the id of the new order, for the customer to follow it
 
     async fn execute(&self, composition_root: &CompositionRoot) -> Result<Executed<OrderId, CompositionRoot>, Error> {
+        // --- Transaction -----------------------------------------------------
+
+        let transaction = composition_root.begin().await?;
+
         // --- Ports -----------------------------------------------------------
 
-        let unit_price = composition_root.catalog.unit_price(&self.product).await?;
-        let units_in_stock = composition_root
-            .catalog
-            .units_in_stock(&self.product)
-            .await?;
+        let unit_price = transaction.catalog.unit_price(&self.product).await?;
+        let units_in_stock = transaction.catalog.units_in_stock(&self.product).await?;
 
         // --- Business rules --------------------------------------------------
 
@@ -43,7 +42,7 @@ impl Command<CompositionRoot> for PlaceOrderCommand {
             total,
         })?;
 
-        let order_id = composition_root.order_repository.save(order).await?;
+        let order_id = transaction.order_repository.save(order).await?;
 
         // --- Domain events ---------------------------------------------------
 
@@ -51,6 +50,12 @@ impl Command<CompositionRoot> for PlaceOrderCommand {
             order_id: order_id.clone(),
             total,
         };
+
+        transaction
+            .event_outbox
+            .store(OutboxEntry::new(&order_placed)?)
+            .await?;
+        transaction.commit().await?;
 
         Ok(Executed {
             output: order_id,

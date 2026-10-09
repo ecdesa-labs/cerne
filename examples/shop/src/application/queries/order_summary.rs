@@ -3,9 +3,7 @@ use crate::composition_root::CompositionRoot;
 use crate::domain::value_objects::order_id::OrderId;
 use cerne::application::Query;
 use cerne::{Error, async_trait};
-use serde::Deserialize;
 
-#[derive(Deserialize)]
 pub struct OrderSummaryQuery {
     pub order_id: OrderId,
 }

@@ -44,29 +44,3 @@ jobs:
 
       - name: Check on the minimum supported Rust version
         run: cargo check --workspace --all-features
-
-  postgres:
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:17
-        env:
-          POSTGRES_PASSWORD: cerne
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
-    env:
-      DATABASE_URL: postgres://postgres:cerne@localhost:5432/postgres
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Test the Postgres adapter
-        run: cargo test -p cerne --no-default-features --features postgres --test postgres
-
-      - name: Test the generated Postgres repository
-        run: cargo test -p cerne-cli

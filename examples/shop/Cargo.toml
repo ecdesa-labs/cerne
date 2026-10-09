@@ -4,16 +4,8 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 
-# Read by `cerne g`: what `cerne new` chose.
-[package.metadata.cerne]
-db = "sqlite"
-http = "rest"
-
 [dependencies]
+actix = "0.13"
 anyhow = "1"
-axum = "0.8"
-cerne = { path = "../../crates/cerne", features = ["axum"] }
+cerne = { path = "../../crates/cerne" }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "migrate"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "time"] }

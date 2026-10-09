@@ -4,16 +4,8 @@
 use crate::composition_root::CompositionRoot;
 use cerne::application::{Command, Executed};
 use cerne::{Error, async_trait};
-use serde::{Deserialize, Serialize};
 
-{% if policy %}
-/// No actor: a policy fires this command, and the outbox stores it (that is why it is `Serialize`).
-{% else %}
-/// Actor: who sends it? The body of the request is this command (that is why it is `Deserialize`).
-///
-/// In JSON-RPC, the params can come by position, in the order of these fields: that order is part of the API.
-{% endif %}
-#[derive(Serialize, Deserialize)]
+/// Who sends it: an actor, or a policy?
 pub struct {{ name }}Command {
 {% for field in fields %}
     pub {{ field.name }}: {{ field.ty }},
@@ -24,7 +16,11 @@ pub struct {{ name }}Command {
 impl Command<CompositionRoot> for {{ name }}Command {
     type Output = ();
 
-    async fn execute(&self, _ports: &CompositionRoot) -> Result<Executed<(), CompositionRoot>, Error> {
+    async fn execute(&self, composition_root: &CompositionRoot) -> Result<Executed<(), CompositionRoot>, Error> {
+        // --- Transaction -----------------------------------------------------
+
+        let transaction = composition_root.begin().await?;
+
         // --- Ports -----------------------------------------------------------
 
         // --- Business rules --------------------------------------------------
@@ -32,6 +28,8 @@ impl Command<CompositionRoot> for {{ name }}Command {
         // --- Aggregate -------------------------------------------------------
 
         // --- Domain events ---------------------------------------------------
+
+        transaction.commit().await?;
 
         Ok(Executed {
             output: (),
