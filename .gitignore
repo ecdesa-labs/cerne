@@ -6,5 +6,3 @@
 # Markdown Preview Enhanced creates these templates; only style.less is ours
 /.crossnote/*
 !/.crossnote/style.less
-# CocoIndex Code (ccc)
-/.cocoindex_code/
