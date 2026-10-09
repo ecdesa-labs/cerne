@@ -42,7 +42,7 @@ A camada Domain é o coração do board: entidades e agregados (`Entity`, `Aggre
 
 ### Camada Application
 
-A camada Application é onde os atores agem. Um command (`Command`) abre a sua transação, lê os ports, confere as regras de negócio (`BusinessRule`), muda um agregado e grava os eventos no event outbox (`EventOutbox`), sempre nessa ordem, então o `execute` se lê como um fluxo do board. Uma query (`Query`) devolve um read model, uma struct de campos simples. Os ports são traits assíncronas para os repositórios e os sistemas externos. Quem enviou o command publica os eventos dele num event bus, que executa as policies: o `SyncEventBus`, uma cadeia por vez, ou o `AsyncEventBus`, todos os eventos ao mesmo tempo. O bus torce pelo melhor: uma policy que falha vai para o `on_error` dele, e como cada policy sobrevive a uma falha é decisão da aplicação.
+A camada Application é onde os atores agem. Um command (`Command`) abre a sua transação, lê os ports, confere as regras de negócio (`BusinessRule`), muda um agregado e grava os eventos no event outbox (`EventOutbox`), sempre nessa ordem, então o `execute` se lê como um fluxo do board. Uma query (`Query`) devolve um read model, uma struct de campos simples. Os ports são traits assíncronas para os repositórios e os sistemas externos. Quem enviou o command publica os eventos dele num event bus, que executa as policies: o `SequentialEventBus`, uma cadeia por vez, ou o `ConcurrentEventBus`, todos os eventos ao mesmo tempo. O bus torce pelo melhor: uma policy que falha vai para o `on_error` dele, e como cada policy sobrevive a uma falha é decisão da aplicação.
 
 ### Camada Infrastructure
 

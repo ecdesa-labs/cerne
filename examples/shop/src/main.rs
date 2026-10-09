@@ -1,4 +1,4 @@
-use cerne::application::{Command, EventOutbox, Query, Repository, SyncEventBus};
+use cerne::application::{Command, EventOutbox, Query, Repository, SequentialEventBus};
 use shop::application::commands::place_order::PlaceOrderCommand;
 use shop::application::queries::order_summary::OrderSummaryQuery;
 use shop::composition_root::{CompositionRoot, CompositionRootConstructor};
@@ -32,7 +32,8 @@ async fn main() -> anyhow::Result<()> {
 
     // --- Event bus: the policies of every event ------------------------------
 
-    let sync_event_bus = SyncEventBus::new(Arc::clone(&composition_root), |error| eprintln!("policy: {error}"));
+    let sequential_event_bus =
+        SequentialEventBus::new(Arc::clone(&composition_root), |error| eprintln!("policy: {error}"));
 
     // --- Customer: places an order -------------------------------------------
 
@@ -45,7 +46,9 @@ async fn main() -> anyhow::Result<()> {
 
     let order_id = place_order_execution.output;
 
-    sync_event_bus.publish(place_order_execution.events).await;
+    sequential_event_bus
+        .publish(place_order_execution.events)
+        .await;
 
     // --- Customer: reads the order -------------------------------------------
 

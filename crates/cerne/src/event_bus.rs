@@ -36,27 +36,27 @@ type OnError = Arc<dyn Fn(Error) + Send + Sync>;
 /// #         Ok(Policies::trigger([policy!("reserve stock", true, ReserveStockCommand)]))
 /// #     }
 /// # }
-/// use cerne::application::SyncEventBus;
+/// use cerne::application::SequentialEventBus;
 /// use std::sync::Arc;
 ///
 /// # #[tokio::main]
 /// # async fn main() {
 /// let composition_root = Arc::new(CompositionRoot);
 ///
-/// let sync_event_bus = SyncEventBus::new(composition_root, |error| eprintln!("{error}"));
+/// let sequential_event_bus = SequentialEventBus::new(composition_root, |error| eprintln!("{error}"));
 ///
 /// let place_order_events: Vec<Box<dyn DomainEvent<CompositionRoot>>> = vec![Box::new(OrderPlaced)];
 ///
-/// sync_event_bus.publish(place_order_events).await; // the whole chain already ran
+/// sequential_event_bus.publish(place_order_events).await; // the whole chain already ran
 /// # }
 /// ```
-pub struct SyncEventBus<CompositionRoot> {
+pub struct SequentialEventBus<CompositionRoot> {
     composition_root: Arc<CompositionRoot>,
     on_error: OnError,
     one_chain_at_a_time: Mutex<()>,
 }
 
-impl<CompositionRoot> SyncEventBus<CompositionRoot> {
+impl<CompositionRoot> SequentialEventBus<CompositionRoot> {
     pub fn new(composition_root: Arc<CompositionRoot>, on_error: impl Fn(Error) + Send + Sync + 'static) -> Self {
         Self {
             composition_root,
@@ -82,7 +82,7 @@ impl<CompositionRoot> SyncEventBus<CompositionRoot> {
 /// others, and the events its commands return are published back to the bus, where they start at once too. On the
 /// multi-thread runtime (the default of `#[tokio::main]`), the tasks run in parallel on every core.
 ///
-/// Like the [`SyncEventBus`], it opens no transaction, and a failure goes to `on_error`. `publish` returns as soon as
+/// Like the [`SequentialEventBus`], it opens no transaction, and a failure goes to `on_error`. `publish` returns as soon as
 /// the events have started: nothing tells when a chain ends. A command that does heavy CPU work (hashing, checking
 /// signatures) holds a worker thread until it ends: it should move that work to `tokio::task::spawn_blocking`.
 ///
@@ -93,26 +93,26 @@ impl<CompositionRoot> SyncEventBus<CompositionRoot> {
 /// # impl DomainEvent<CompositionRoot> for OrderPlaced {
 /// #     fn trigger_policies(&self) -> EnforcementResult<Vec<FiredPolicy<CompositionRoot>>> { Ok(vec![]) }
 /// # }
-/// use cerne::application::AsyncEventBus;
+/// use cerne::application::ConcurrentEventBus;
 /// use std::sync::Arc;
 ///
 /// # #[tokio::main]
 /// # async fn main() {
 /// let composition_root = Arc::new(CompositionRoot);
 ///
-/// let async_event_bus = AsyncEventBus::new(composition_root, |error| eprintln!("{error}"));
+/// let concurrent_event_bus = ConcurrentEventBus::new(composition_root, |error| eprintln!("{error}"));
 ///
 /// let place_order_events: Vec<Box<dyn DomainEvent<CompositionRoot>>> = vec![Box::new(OrderPlaced)];
 ///
-/// async_event_bus.publish(place_order_events); // the chain runs in the background
+/// concurrent_event_bus.publish(place_order_events); // the chain runs in the background
 /// # }
 /// ```
-pub struct AsyncEventBus<CompositionRoot> {
+pub struct ConcurrentEventBus<CompositionRoot> {
     composition_root: Arc<CompositionRoot>,
     on_error: OnError,
 }
 
-impl<CompositionRoot> AsyncEventBus<CompositionRoot> {
+impl<CompositionRoot> ConcurrentEventBus<CompositionRoot> {
     pub fn new(composition_root: Arc<CompositionRoot>, on_error: impl Fn(Error) + Send + Sync + 'static) -> Self {
         Self {
             composition_root,
@@ -122,7 +122,7 @@ impl<CompositionRoot> AsyncEventBus<CompositionRoot> {
 }
 
 // By hand: `#[derive(Clone)]` would ask for `CompositionRoot: Clone`, and only the `Arc`s are cloned.
-impl<CompositionRoot> Clone for AsyncEventBus<CompositionRoot> {
+impl<CompositionRoot> Clone for ConcurrentEventBus<CompositionRoot> {
     fn clone(&self) -> Self {
         Self {
             composition_root: Arc::clone(&self.composition_root),
@@ -131,17 +131,17 @@ impl<CompositionRoot> Clone for AsyncEventBus<CompositionRoot> {
     }
 }
 
-impl<CompositionRoot: Send + Sync + 'static> AsyncEventBus<CompositionRoot> {
+impl<CompositionRoot: Send + Sync + 'static> ConcurrentEventBus<CompositionRoot> {
     /// Starts each event in its own task and returns at once. Must be called inside a Tokio runtime.
     pub fn publish(&self, events: Vec<Box<dyn DomainEvent<CompositionRoot>>>) {
         for event in events {
-            let async_event_bus = self.clone();
+            let concurrent_event_bus = self.clone();
 
             tokio::spawn(async move {
-                let composition_root = &async_event_bus.composition_root;
-                let next_events = run_policies(event, composition_root, &*async_event_bus.on_error).await;
+                let composition_root = &concurrent_event_bus.composition_root;
+                let next_events = run_policies(event, composition_root, &*concurrent_event_bus.on_error).await;
 
-                async_event_bus.publish(next_events);
+                concurrent_event_bus.publish(next_events);
             });
         }
     }
@@ -283,43 +283,43 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sync_event_bus_runs_the_whole_chain_before_publish_returns() {
+    async fn sequential_event_bus_runs_the_whole_chain_before_publish_returns() {
         let composition_root = Arc::new(CompositionRoot::default());
-        let sync_event_bus = SyncEventBus::new(Arc::clone(&composition_root), |_| {});
+        let sequential_event_bus = SequentialEventBus::new(Arc::clone(&composition_root), |_| {});
 
         let place_order_events: Vec<Box<dyn DomainEvent<CompositionRoot>>> =
             vec![Box::new(OrderPlaced { has_items: true })];
 
-        sync_event_bus.publish(place_order_events).await;
+        sequential_event_bus.publish(place_order_events).await;
 
         assert_eq!(*composition_root.log.lock().unwrap(), vec!["stock reserved", "order shipped"]);
     }
 
     #[tokio::test]
-    async fn sync_event_bus_sends_a_failing_command_to_on_error_and_moves_on() {
+    async fn sequential_event_bus_sends_a_failing_command_to_on_error_and_moves_on() {
         let composition_root = Arc::new(CompositionRoot::default());
         let (errors, on_error) = errors_and_on_error();
-        let sync_event_bus = SyncEventBus::new(Arc::clone(&composition_root), on_error);
+        let sequential_event_bus = SequentialEventBus::new(Arc::clone(&composition_root), on_error);
 
         let events: Vec<Box<dyn DomainEvent<CompositionRoot>>> =
             vec![Box::new(PaymentRefused), Box::new(StockReserved)];
 
-        sync_event_bus.publish(events).await;
+        sequential_event_bus.publish(events).await;
 
         assert_eq!(*errors.lock().unwrap(), vec![r#"violated: ["always fails"]"#]);
         assert_eq!(*composition_root.log.lock().unwrap(), vec!["order shipped"]);
     }
 
     #[tokio::test]
-    async fn sync_event_bus_runs_nothing_for_an_invalid_event() {
+    async fn sequential_event_bus_runs_nothing_for_an_invalid_event() {
         let composition_root = Arc::new(CompositionRoot::default());
         let (errors, on_error) = errors_and_on_error();
-        let sync_event_bus = SyncEventBus::new(Arc::clone(&composition_root), on_error);
+        let sequential_event_bus = SequentialEventBus::new(Arc::clone(&composition_root), on_error);
 
         let place_order_events: Vec<Box<dyn DomainEvent<CompositionRoot>>> =
             vec![Box::new(OrderPlaced { has_items: false })];
 
-        sync_event_bus.publish(place_order_events).await;
+        sequential_event_bus.publish(place_order_events).await;
 
         assert_eq!(*errors.lock().unwrap(), vec![r#"violated: ["order has items"]"#]);
         assert!(composition_root.log.lock().unwrap().is_empty());
@@ -357,23 +357,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sync_event_bus_runs_one_chain_at_a_time_in_the_order_they_arrived() {
+    async fn sequential_event_bus_runs_one_chain_at_a_time_in_the_order_they_arrived() {
         let composition_root = Arc::new(CompositionRoot::default());
-        let sync_event_bus = SyncEventBus::new(Arc::clone(&composition_root), |_| {});
+        let sequential_event_bus = SequentialEventBus::new(Arc::clone(&composition_root), |_| {});
 
         let place_order_events: Vec<Box<dyn DomainEvent<CompositionRoot>>> =
             vec![Box::new(OrderPlaced { has_items: true })];
         let register_customer_events: Vec<Box<dyn DomainEvent<CompositionRoot>>> = vec![Box::new(CustomerRegistered)];
 
         // "reserve stock" gives way in the middle of the first chain: the second one must wait anyway.
-        tokio::join!(sync_event_bus.publish(place_order_events), sync_event_bus.publish(register_customer_events));
+        tokio::join!(
+            sequential_event_bus.publish(place_order_events),
+            sequential_event_bus.publish(register_customer_events)
+        );
 
         assert_eq!(*composition_root.log.lock().unwrap(), vec!["stock reserved", "order shipped", "customer welcomed"]);
     }
 
     // An axum handler or a `tokio::spawn` only takes a `publish` whose future is `Send`.
-    fn _sync_event_bus_publish_is_send(sync_event_bus: &'static SyncEventBus<CompositionRoot>) -> impl Send {
-        sync_event_bus.publish(vec![])
+    fn _sequential_event_bus_publish_is_send(
+        sequential_event_bus: &'static SequentialEventBus<CompositionRoot>,
+    ) -> impl Send {
+        sequential_event_bus.publish(vec![])
     }
 
     // --- Two events at once: the first waits for the second ----------------------------------------------------------
@@ -442,18 +447,18 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn async_event_bus_runs_two_events_at_once() {
+    async fn concurrent_event_bus_runs_two_events_at_once() {
         let (finished, mut received) = mpsc::unbounded_channel();
         let composition_root = Arc::new(GateCompositionRoot {
             gate: Notify::new(),
             finished,
         });
-        let async_event_bus = AsyncEventBus::new(composition_root, |_| {});
+        let concurrent_event_bus = ConcurrentEventBus::new(composition_root, |_| {});
 
         // One at a time, the first would wait forever for the gate the second opens.
         let events: Vec<Box<dyn DomainEvent<GateCompositionRoot>>> = vec![Box::new(GateClosed), Box::new(GateOpened)];
 
-        async_event_bus.publish(events);
+        concurrent_event_bus.publish(events);
 
         let both_finished = async { [received.recv().await.unwrap(), received.recv().await.unwrap()] };
         let finished_in_order = tokio::time::timeout(Duration::from_secs(5), both_finished)
@@ -464,14 +469,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn async_event_bus_publishes_the_events_of_a_command_back_to_itself() {
+    async fn concurrent_event_bus_publishes_the_events_of_a_command_back_to_itself() {
         let composition_root = Arc::new(CompositionRoot::default());
-        let async_event_bus = AsyncEventBus::new(Arc::clone(&composition_root), |_| {});
+        let concurrent_event_bus = ConcurrentEventBus::new(Arc::clone(&composition_root), |_| {});
 
         let place_order_events: Vec<Box<dyn DomainEvent<CompositionRoot>>> =
             vec![Box::new(OrderPlaced { has_items: true })];
 
-        async_event_bus.publish(place_order_events);
+        concurrent_event_bus.publish(place_order_events);
 
         for _ in 0..100 {
             if composition_root.log.lock().unwrap().len() == 2 {

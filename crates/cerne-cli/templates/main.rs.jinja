@@ -1,4 +1,4 @@
-use cerne::application::{EventOutbox, SyncEventBus};
+use cerne::application::{EventOutbox, SequentialEventBus};
 use {{ crate_name }}::composition_root::{CompositionRoot, CompositionRootConstructor};
 use {{ crate_name }}::infrastructure::database::{Database, Transaction};
 use std::sync::Arc;
@@ -18,10 +18,10 @@ async fn main() -> anyhow::Result<()> {
     // --- Event bus: the policies of every event ------------------------------
 
     #[expect(unused_variables, reason = "the blocks of the actors publish their events on it")]
-    let sync_event_bus = SyncEventBus::new(composition_root, |error| eprintln!("policy: {error}"));
+    let sequential_event_bus = SequentialEventBus::new(composition_root, |error| eprintln!("policy: {error}"));
 
     // One block per actor: execute the command, then publish its events with
-    // `sync_event_bus.publish(execution.events).await;`.
+    // `sequential_event_bus.publish(execution.events).await;`.
 
     Ok(())
 }

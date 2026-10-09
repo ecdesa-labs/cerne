@@ -42,7 +42,7 @@ The Domain layer is the heart of the board: entities and aggregates (`Entity`, `
 
 ### Application layer
 
-The Application layer is where the actors act. A command (`Command`) opens its transaction, reads the ports, checks the business rules (`BusinessRule`), changes an aggregate and stores its events in the event outbox (`EventOutbox`), always in that order, so the `execute` reads like a flow of the board. A query (`Query`) returns a read model, a struct of plain fields. The ports are async traits for the repositories and the external systems. Whoever sent the command publishes its events on an event bus, which runs the policies: the `SyncEventBus`, one chain at a time, or the `AsyncEventBus`, every event at once. The bus hopes for the best: a policy that fails goes to its `on_error`, and how each policy survives a failure is up to the application.
+The Application layer is where the actors act. A command (`Command`) opens its transaction, reads the ports, checks the business rules (`BusinessRule`), changes an aggregate and stores its events in the event outbox (`EventOutbox`), always in that order, so the `execute` reads like a flow of the board. A query (`Query`) returns a read model, a struct of plain fields. The ports are async traits for the repositories and the external systems. Whoever sent the command publishes its events on an event bus, which runs the policies: the `SequentialEventBus`, one chain at a time, or the `ConcurrentEventBus`, every event at once. The bus hopes for the best: a policy that fails goes to its `on_error`, and how each policy survives a failure is up to the application.
 
 ### Infrastructure layer
 

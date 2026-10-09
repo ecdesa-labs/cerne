@@ -42,7 +42,7 @@ La capa Domain es el corazón del tablero: entidades y agregados (`Entity`, `Agg
 
 ### Capa Application
 
-La capa Application es donde actúan los actores. Un command (`Command`) abre su transacción, lee los ports, comprueba las reglas de negocio (`BusinessRule`), cambia un agregado y guarda sus eventos en el event outbox (`EventOutbox`), siempre en ese orden, así que el `execute` se lee como un flujo del tablero. Una query (`Query`) devuelve un read model, un struct de campos simples. Los ports son traits asíncronos para los repositorios y los sistemas externos. Quien envió el command publica sus eventos en un event bus, que ejecuta las policies: el `SyncEventBus`, una cadena a la vez, o el `AsyncEventBus`, todos los eventos a la vez. El bus espera lo mejor: una policy que falla va a su `on_error`, y cómo sobrevive cada policy a un fallo lo decide la aplicación.
+La capa Application es donde actúan los actores. Un command (`Command`) abre su transacción, lee los ports, comprueba las reglas de negocio (`BusinessRule`), cambia un agregado y guarda sus eventos en el event outbox (`EventOutbox`), siempre en ese orden, así que el `execute` se lee como un flujo del tablero. Una query (`Query`) devuelve un read model, un struct de campos simples. Los ports son traits asíncronos para los repositorios y los sistemas externos. Quien envió el command publica sus eventos en un event bus, que ejecuta las policies: el `SequentialEventBus`, una cadena a la vez, o el `ConcurrentEventBus`, todos los eventos a la vez. El bus espera lo mejor: una policy que falla va a su `on_error`, y cómo sobrevive cada policy a un fallo lo decide la aplicación.
 
 ### Capa Infrastructure
 

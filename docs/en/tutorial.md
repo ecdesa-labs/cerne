@@ -8,7 +8,7 @@
 | 🟨 | Aggregate / Entity | attributes `#[entity]` and `#[aggregate]`, which write the traits `Entity` and `Aggregate`; the invariants go in the trait `Validate` |
 | — | Value Object | trait `ValueObject`, also the type of every entity id; attribute `#[value_object]`, for a value object of one value |
 | 🟧 | Domain Event | trait `DomainEvent<CompositionRoot>`; the command stores it in the `EventOutbox` |
-| 🟪 | Policy | `Policy` + `Policies`; the `SyncEventBus` or the `AsyncEventBus` runs them |
+| 🟪 | Policy | `Policy` + `Policies`; the `SequentialEventBus` or the `ConcurrentEventBus` runs them |
 | 🩷 | External System | a port (an async trait of the application) and its adapters, gathered in the `CompositionRoot` |
 | 🟩 | Read Model / Query | trait `Query<CompositionRoot>`, which returns a read model: a struct of plain fields |
 | — | Invariants | `Invariant` + `Invariants`: what is always true about an entity or a value object |
@@ -774,15 +774,15 @@ impl DomainEvent<CompositionRoot> for OrderPlaced {
 }
 ```
 
-The policy does not run the command: the event bus does. Whoever sent `PlaceOrderCommand` publishes its events with `sync_event_bus.publish(events)`, and, for each event, the bus calls `trigger_policies`, executes the command of each policy that fired and publishes the events that command returns, until the chain ends. The bus opens no transaction: each command opens its own. The command only returns its events: it never publishes them.
+The policy does not run the command: the event bus does. Whoever sent `PlaceOrderCommand` publishes its events with `sequential_event_bus.publish(events)`, and, for each event, the bus calls `trigger_policies`, executes the command of each policy that fired and publishes the events that command returns, until the chain ends. The bus opens no transaction: each command opens its own. The command only returns its events: it never publishes them.
 
-| | `SyncEventBus` | `AsyncEventBus` |
+| | `SequentialEventBus` | `ConcurrentEventBus` |
 |---|---|---|
 | Order | one chain at a time: the next `publish` waits for the current chain to end | every event starts as soon as it arrives |
 | `publish` | returns, after the `.await`, when the whole chain has run | returns at once, without `.await`: the events have started |
 | Threads | one chain, so one core at a time | every event in its own Tokio task, on every core |
 
-Both run on Tokio, so `main` runs on `#[tokio::main]` and the tests on `#[tokio::test]`. The `AsyncEventBus` only uses every core on the multi-thread runtime, the default of `#[tokio::main]`; `#[tokio::test]` runs on one thread.
+Both run on Tokio, so `main` runs on `#[tokio::main]` and the tests on `#[tokio::test]`. The `ConcurrentEventBus` only uses every core on the multi-thread runtime, the default of `#[tokio::main]`; `#[tokio::test]` runs on one thread.
 
 The bus hopes for the best. A command that fails, or an event whose invariants fail, goes to the `on_error` the bus was built with, and the bus moves on: nothing runs again, and nothing marks the event. How each policy survives a failure is up to you. Take a policy that sends an e-mail through a notification API: if the API is down, the command fails, and the e-mail is lost, unless you do something about it. You can read the `event_outbox` table again and publish what was left behind, or let the command try again itself; then the API may get the same e-mail twice, unless it takes an idempotency key. Cerne writes every event to the outbox; reading it back is yours.
 
@@ -1047,7 +1047,7 @@ fn the_domain_refuses_what_breaks_an_invariant() {
 }
 ```
 
-The test follows the flow step by step: the order the command would save, the policy its event fires, and the state transition of the command that policy fires. Once the adapters exist, a test can execute the commands themselves and publish their events on the `SyncEventBus`.
+The test follows the flow step by step: the order the command would save, the policy its event fires, and the state transition of the command that policy fires. Once the adapters exist, a test can execute the commands themselves and publish their events on the `SequentialEventBus`.
 
 ```bash
 cargo test
@@ -1061,7 +1061,7 @@ The `src/main.rs` as `cerne new shop` and `cerne g entity Order product:String q
 
 <!-- generated: src/main.rs -->
 ```rust
-use cerne::application::{EventOutbox, Repository, SyncEventBus};
+use cerne::application::{EventOutbox, Repository, SequentialEventBus};
 use shop::composition_root::{CompositionRoot, CompositionRootConstructor};
 use shop::domain::entities::order::Order;
 use shop::infrastructure::database::{Database, Transaction};
@@ -1087,10 +1087,10 @@ async fn main() -> anyhow::Result<()> {
     // --- Event bus: the policies of every event ------------------------------
 
     #[expect(unused_variables, reason = "the blocks of the actors publish their events on it")]
-    let sync_event_bus = SyncEventBus::new(composition_root, |error| eprintln!("policy: {error}"));
+    let sequential_event_bus = SequentialEventBus::new(composition_root, |error| eprintln!("policy: {error}"));
 
     // One block per actor: execute the command, then publish its events with
-    // `sync_event_bus.publish(execution.events).await;`.
+    // `sequential_event_bus.publish(execution.events).await;`.
 
     Ok(())
 }
@@ -1110,7 +1110,7 @@ Filled in:
 
 <!-- file: src/main.rs -->
 ```rust
-use cerne::application::{Command, EventOutbox, Query, Repository, SyncEventBus};
+use cerne::application::{Command, EventOutbox, Query, Repository, SequentialEventBus};
 use shop::application::commands::place_order::PlaceOrderCommand;
 use shop::application::queries::order_summary::OrderSummaryQuery;
 use shop::composition_root::{CompositionRoot, CompositionRootConstructor};
@@ -1144,7 +1144,8 @@ async fn main() -> anyhow::Result<()> {
 
     // --- Event bus: the policies of every event ------------------------------
 
-    let sync_event_bus = SyncEventBus::new(Arc::clone(&composition_root), |error| eprintln!("policy: {error}"));
+    let sequential_event_bus =
+        SequentialEventBus::new(Arc::clone(&composition_root), |error| eprintln!("policy: {error}"));
 
     // --- Customer: places an order -------------------------------------------
 
@@ -1157,7 +1158,7 @@ async fn main() -> anyhow::Result<()> {
 
     let order_id = place_order_execution.output;
 
-    sync_event_bus.publish(place_order_execution.events).await;
+    sequential_event_bus.publish(place_order_execution.events).await;
 
     // --- Customer: reads the order -------------------------------------------
 
@@ -1190,7 +1191,7 @@ $ cargo run
 OrderSummary { product: "mug", quantity: 2, total: 6000, status: "Paid" }
 ```
 
-Once the adapters are written, the order is already `Paid` when the customer reads it: the `SyncEventBus` runs the `ChargeOrderCommand` before `publish(..).await` returns. A web server, a queue consumer or a CLI would take the place of these blocks: each one executes the command and publishes its events, the same way.
+Once the adapters are written, the order is already `Paid` when the customer reads it: the `SequentialEventBus` runs the `ChargeOrderCommand` before `publish(..).await` returns. A web server, a queue consumer or a CLI would take the place of these blocks: each one executes the command and publishes its events, the same way.
 
 ## 11. When something goes wrong
 
@@ -1208,7 +1209,7 @@ In the test of step 9, an order with `quantity: 0` comes back as `DomainError::V
 
 - **A real database:** write the `Database` and the `Transaction` of `src/infrastructure/database.rs` on it (with `sqlx`, `diesel` or any other), and the adapters of `Repository<Order, Transaction>` and `EventOutbox<Transaction>` on that transaction. The `event_outbox` table is yours: reading it back to publish what was left behind is how a policy survives a crash.
 - **HTTP, a queue, a CLI:** each request runs one actor block of `main.rs`: execute the command, answer with its `output`, publish its `events`.
-- **Async event bus:** `AsyncEventBus::new(..)` instead of the `SyncEventBus`: every event starts in its own task as soon as it arrives, and `async_event_bus.publish(..)` returns without waiting for the chain.
+- **Concurrent event bus:** `ConcurrentEventBus::new(..)` instead of the `SequentialEventBus`: every event starts in its own task as soon as it arrives, and `concurrent_event_bus.publish(..)` returns without waiting for the chain.
 
 ## CLI
 

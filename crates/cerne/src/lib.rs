@@ -9,7 +9,7 @@
 //! | 🟨 | Aggregate / Entity | [`domain::entity`] and [`domain::aggregate`], which write [`domain::Entity`] and [`domain::Aggregate`]; the invariants go in [`domain::Validate`] |
 //! | — | Value Object | [`domain::ValueObject`], also the type of every entity id |
 //! | 🟧 | Domain Event | [`domain::DomainEvent`], stored in an [`application::EventOutbox`] |
-//! | 🟪 | Policy | [`domain::Policy`] + [`domain::Policies`], run by an [`application::SyncEventBus`] or an [`application::AsyncEventBus`] |
+//! | 🟪 | Policy | [`domain::Policy`] + [`domain::Policies`], run by an [`application::SequentialEventBus`] or an [`application::ConcurrentEventBus`] |
 //! | 🩷 | External System (Port) | [`application::Repository`] and the ports of the application |
 //! | 🟩 | Read Model / Query | [`application::Query`], which returns a read model: a struct of the application |
 //! | — | Invariants | [`domain::Invariant`] + [`domain::Invariants`] |

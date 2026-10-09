@@ -337,8 +337,8 @@ fn insert_lines(path: &str, uses: &str, anchor: &str, lines: &[&str]) -> CliResu
     Ok(())
 }
 
-/// `use cerne::application::{EventOutbox, SyncEventBus};` + `Repository` →
-/// `use cerne::application::{EventOutbox, Repository, SyncEventBus};`: one `use` per path, the names in order.
+/// `use cerne::application::{EventOutbox, SequentialEventBus};` + `Repository` →
+/// `use cerne::application::{EventOutbox, Repository, SequentialEventBus};`: one `use` per path, the names in order.
 fn add_to_use(path: &str, module: &str, name: &str) -> CliResult {
     let content = fs::read_to_string(path).map_err(|_| format!("{path} not found"))?;
     let path_prefix = format!("use {module}::");
