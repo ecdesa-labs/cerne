@@ -21,7 +21,7 @@ impl Command<Ports> for ChargeOrderCommand {
     async fn execute(&self, ports: &Ports) -> Result<Executed<(), Ports>, Error> {
         // --- Ports -----------------------------------------------------------
 
-        let order = ports.orders.load(&self.order_id).await?;
+        let order = ports.order_repository.load(&self.order_id).await?;
 
         // --- Business rules --------------------------------------------------
 
@@ -37,7 +37,7 @@ impl Command<Ports> for ChargeOrderCommand {
 
         let paid_order = order.pay()?;
 
-        ports.orders.save(paid_order).await?;
+        ports.order_repository.save(paid_order).await?;
 
         // --- Domain events ---------------------------------------------------
 

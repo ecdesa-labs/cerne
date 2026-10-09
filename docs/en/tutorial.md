@@ -542,14 +542,14 @@ use cerne::{Error, async_trait};
 /// `begin` hands the same adapters to the new ports.
 pub struct Ports {
     pub database: SqliteDatabase,
-    pub orders: Box<dyn Repository<Order>>,
+    pub order_repository: Box<dyn Repository<Order>>,
     pub outbox: Box<dyn Outbox<Ports>>,
 }
 
 impl Ports {
     pub fn new(database: SqliteDatabase) -> Self {
         Self {
-            orders: Box::new(SqliteOrderRepository::new(database.clone())),
+            order_repository: Box::new(SqliteOrderRepository::new(database.clone())),
             outbox: Box::new(SqliteOutbox::new(database.clone())),
             database,
         }
@@ -599,7 +599,7 @@ use std::sync::Arc;
 /// `begin` hands the same adapters to the new ports.
 pub struct Ports {
     pub database: SqliteDatabase,
-    pub orders: Box<dyn Repository<Order>>,
+    pub order_repository: Box<dyn Repository<Order>>,
     pub outbox: Box<dyn Outbox<Ports>>,
     pub catalog: Arc<dyn Catalog>,
     pub payments: Arc<dyn Payments>,
@@ -608,7 +608,7 @@ pub struct Ports {
 impl Ports {
     pub fn new(database: SqliteDatabase, catalog: Arc<dyn Catalog>, payments: Arc<dyn Payments>) -> Self {
         Self {
-            orders: Box::new(SqliteOrderRepository::new(database.clone())),
+            order_repository: Box::new(SqliteOrderRepository::new(database.clone())),
             outbox: Box::new(SqliteOutbox::new(database.clone())),
             database,
             catalog,
@@ -732,7 +732,7 @@ impl Command<Ports> for PlaceOrderCommand {
             total,
         })?;
 
-        let order_id = ports.orders.save(order).await?;
+        let order_id = ports.order_repository.save(order).await?;
 
         // --- Domain events ---------------------------------------------------
 
@@ -880,7 +880,7 @@ impl Command<Ports> for ChargeOrderCommand {
     async fn execute(&self, ports: &Ports) -> Result<Executed<(), Ports>, Error> {
         // --- Ports -----------------------------------------------------------
 
-        let order = ports.orders.load(&self.order_id).await?;
+        let order = ports.order_repository.load(&self.order_id).await?;
 
         // --- Business rules --------------------------------------------------
 
@@ -896,7 +896,7 @@ impl Command<Ports> for ChargeOrderCommand {
 
         let paid_order = order.pay()?;
 
-        ports.orders.save(paid_order).await?;
+        ports.order_repository.save(paid_order).await?;
 
         // --- Domain events ---------------------------------------------------
 
@@ -971,7 +971,7 @@ impl Query<Ports> for OrderSummaryQuery {
     async fn execute(&self, ports: &Ports) -> Result<OrderSummary, Error> {
         // --- Ports -----------------------------------------------------------
 
-        let order = ports.orders.load(&self.order_id).await?;
+        let order = ports.order_repository.load(&self.order_id).await?;
 
         // --- Read model ------------------------------------------------------
 

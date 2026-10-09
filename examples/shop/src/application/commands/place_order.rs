@@ -40,7 +40,7 @@ impl Command<Ports> for PlaceOrderCommand {
             total,
         })?;
 
-        let order_id = ports.orders.save(order).await?;
+        let order_id = ports.order_repository.save(order).await?;
 
         // --- Domain events ---------------------------------------------------
 

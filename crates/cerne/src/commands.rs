@@ -70,7 +70,7 @@ use async_trait::async_trait;
 /// }
 ///
 /// struct Ports {
-///     stock: Box<dyn Repository<Stock>>,
+///     stock_repository: Box<dyn Repository<Stock>>,
 /// }
 ///
 /// struct ReserveStockCommand {
@@ -85,7 +85,7 @@ use async_trait::async_trait;
 ///     async fn execute(&self, ports: &Ports) -> Result<Executed<i32, Ports>, Error> {
 ///         // --- Ports -----------------------------------------------------------
 ///
-///         let stock = ports.stock.load(&self.product_id).await?;
+///         let stock = ports.stock_repository.load(&self.product_id).await?;
 ///
 ///         // --- Business rules --------------------------------------------------
 ///
@@ -98,7 +98,7 @@ use async_trait::async_trait;
 ///         let stock = Stock::new((stock.product_id, stock.available - self.qty))?;
 ///         let units_left = stock.available;
 ///
-///         ports.stock.save(stock).await?;
+///         ports.stock_repository.save(stock).await?;
 ///
 ///         // --- Domain events ---------------------------------------------------
 ///

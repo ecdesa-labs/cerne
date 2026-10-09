@@ -17,13 +17,13 @@ async fn the_generated_repository_inserts_loads_and_updates() {
     let ports = Ports::new(database);
 
     let transaction = ports.begin().await.unwrap();
-    let order_id = transaction.orders.save(Order::new(OrderConstructor { qty: 3 }).unwrap()).await.unwrap();
+    let order_id = transaction.order_repository.save(Order::new(OrderConstructor { qty: 3 }).unwrap()).await.unwrap();
     transaction.commit().await.unwrap();
 
-    let order = ports.orders.load(&order_id).await.unwrap();
-    ports.orders.save(Order { qty: 5, ..order }).await.unwrap();
+    let order = ports.order_repository.load(&order_id).await.unwrap();
+    ports.order_repository.save(Order { qty: 5, ..order }).await.unwrap();
 
-    assert_eq!(ports.orders.load(&order_id).await.unwrap().qty, 5);
+    assert_eq!(ports.order_repository.load(&order_id).await.unwrap().qty, 5);
 }
 "#;
 
@@ -60,13 +60,13 @@ async fn the_generated_repository_inserts_loads_and_updates_on_postgres() {
     .unwrap();
 
     let transaction = ports.begin().await.unwrap();
-    let product_id = transaction.products.save(product).await.unwrap();
+    let product_id = transaction.product_repository.save(product).await.unwrap();
     transaction.commit().await.unwrap();
 
-    let product = ports.products.load(&product_id).await.unwrap();
-    ports.products.save(Product { price: 35, kind: ProductKind::Digital, available: false, ..product }).await.unwrap();
+    let product = ports.product_repository.load(&product_id).await.unwrap();
+    ports.product_repository.save(Product { price: 35, kind: ProductKind::Digital, available: false, ..product }).await.unwrap();
 
-    let product = ports.products.load(&product_id).await.unwrap();
+    let product = ports.product_repository.load(&product_id).await.unwrap();
 
     assert_eq!((product.name.as_str(), product.price, product.weight), ("Mug", 35, 0.4));
     assert!(matches!(product.kind, ProductKind::Digital));
@@ -96,10 +96,10 @@ async fn the_aggregate_from_before_the_database_gets_a_repository() {
     let order = Order::new(OrderConstructor { product: "mug".into(), quantity: 2 }).unwrap();
 
     let transaction = ports.begin().await.unwrap();
-    let order_id = transaction.orders.save(order).await.unwrap();
+    let order_id = transaction.order_repository.save(order).await.unwrap();
     transaction.commit().await.unwrap();
 
-    let order = ports.orders.load(&order_id).await.unwrap();
+    let order = ports.order_repository.load(&order_id).await.unwrap();
 
     assert_eq!((order.product.as_str(), order.quantity, order.status), ("mug", 2, OrderStatus::Placed));
 }
@@ -237,7 +237,7 @@ fn generated_project_passes_clippy_without_touching_anything() {
 
     let ports = fs::read_to_string(project.join("src/ports.rs")).unwrap();
 
-    assert!(ports.contains("pub orders: Box<dyn Repository<Order>>,"));
+    assert!(ports.contains("pub order_repository: Box<dyn Repository<Order>>,"));
     assert!(ports.contains("register::<ShipOrderCommand>()"));
 
     // --- cargo clippy and cargo test, with the generated repository on SQLite in memory

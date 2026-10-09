@@ -134,7 +134,7 @@ pub mod domain {
     /// }
     ///
     /// struct Ports {
-    ///     orders: Box<dyn Repository<Order>>,
+    ///     order_repository: Box<dyn Repository<Order>>,
     /// }
     /// ```
     pub use cerne_macros::aggregate;

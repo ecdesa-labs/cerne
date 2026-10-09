@@ -413,7 +413,7 @@ fn add_repository(name: &str, file: &str, id_type: &str, fields: &[Value]) -> Cl
             "use crate::domain::entities::{file}::{name};\nuse crate::infrastructure::{repository_file}::{repository};"
         ),
         PORTS_STRUCT,
-        &[&format!("pub {table}: Box<dyn Repository<{name}>>,")],
+        &[&format!("pub {file}_repository: Box<dyn Repository<{name}>>,")],
         Before,
     )?;
 
@@ -423,7 +423,7 @@ fn add_repository(name: &str, file: &str, id_type: &str, fields: &[Value]) -> Cl
         "src/ports.rs",
         "",
         PORTS_NEW,
-        &[&format!("{table}: Box::new({repository}::new(database.clone())),")],
+        &[&format!("{file}_repository: Box::new({repository}::new(database.clone())),")],
         Before,
     )
 }

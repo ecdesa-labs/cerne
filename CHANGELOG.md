@@ -23,6 +23,7 @@ Every change that breaks compatibility is listed here. While Cerne is in `0.x`, 
 - `cerne g entity` and `cerne g value_object` write `Invariants::enforce([])?`, and `cerne g event` writes `Policies::trigger([])`.
 - `cerne new` writes a `rustfmt.toml`: lines of up to 120 columns, with the arguments of a call on one line while they fit, one item per line in a list past 80 columns, and struct literals and method chains broken as before.
 - `cerne g db` finds the aggregates by their `#[aggregate]`, no longer by `impl Aggregate for`.
+- **Breaking:** the field that `cerne g aggregate` (and `cerne g db`) adds to the `Ports` for the repository of an aggregate is `<name>_repository`, no longer the table name: `order_repository` instead of `orders`. Rename the field and every `ports.orders` in the commands and queries.
 
 ## 0.1.0
 

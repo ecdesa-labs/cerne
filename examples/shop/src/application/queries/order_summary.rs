@@ -17,7 +17,7 @@ impl Query<Ports> for OrderSummaryQuery {
     async fn execute(&self, ports: &Ports) -> Result<OrderSummary, Error> {
         // --- Ports -----------------------------------------------------------
 
-        let order = ports.orders.load(&self.order_id).await?;
+        let order = ports.order_repository.load(&self.order_id).await?;
 
         // --- Read model ------------------------------------------------------
 

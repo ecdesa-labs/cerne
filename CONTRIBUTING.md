@@ -30,6 +30,7 @@ The goal: whoever reads the code knows which part of the Event Storming board th
 - **Sections with an 80-column divider:** the body of an `execute` follows the board, in this order: `Domain service`, `Ports`, `Business rules`, `External system: <Name>`, `Aggregate`, `Domain events`. The same goes for aggregates, `trigger_policies` (one variable per policy, ending in `_policy`), `main` (one block per actor) and tests (one block per flow).
 - **The variable names the processor:** `outbox_policy_processor`, `sync_policy_processor`, `async_policy_processor`. Never just `processor`.
 - **A repository in memory is SQLite in memory** (`SqliteDatabase::in_memory()`), with the production adapter. Never a `Vec` or a `HashMap`.
+- **Whatever is a repository ends in `_repository`:** the field of the `Ports` is `order_repository: Box<dyn Repository<Order>>`, and a command reads `ports.order_repository.load(..)`. Never just `orders`.
 - **Method names say the part of the flow:** `send_events`, `send_command`, `trigger_policies`.
 - **A create command receives no id:** the repository decides it on insert.
 - **Errors:** the domain returns `EnforcementResult<T>`; commands, repositories and processors return `Result<T, cerne::Error>`.

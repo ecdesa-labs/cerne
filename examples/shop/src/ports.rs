@@ -14,7 +14,7 @@ use std::sync::Arc;
 /// `begin` hands the same adapters to the new ports.
 pub struct Ports {
     pub database: SqliteDatabase,
-    pub orders: Box<dyn Repository<Order>>,
+    pub order_repository: Box<dyn Repository<Order>>,
     pub outbox: Box<dyn Outbox<Ports>>,
     pub catalog: Arc<dyn Catalog>,
     pub payments: Arc<dyn Payments>,
@@ -23,7 +23,7 @@ pub struct Ports {
 impl Ports {
     pub fn new(database: SqliteDatabase, catalog: Arc<dyn Catalog>, payments: Arc<dyn Payments>) -> Self {
         Self {
-            orders: Box::new(SqliteOrderRepository::new(database.clone())),
+            order_repository: Box::new(SqliteOrderRepository::new(database.clone())),
             outbox: Box::new(SqliteOutbox::new(database.clone())),
             database,
             catalog,
