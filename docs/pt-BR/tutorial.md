@@ -145,7 +145,7 @@ Liga a `OrderSummary` à rota `GET /orders`.
 cerne g endpoint OrderSummary GET /orders
 ```
 
-Os campos são `nome:tipo`, e `status=Placed:Placed,Paid` cria um enum com os valores `Placed` e `Paid`, que começa em `Placed`. Depois de cada comando, o projeto continua compilando. O `--aggregate` também acrescenta o campo `order_repository` no `CompositionRoot`, e o `--policy` registra o command na outbox.
+Os campos são `nome:tipo`, e `status=Placed:Placed,Paid` cria um enum com os valores `Placed` e `Paid`, que começa em `Placed`. Depois de cada comando, o projeto continua compilando. O `--aggregate` também acrescenta o campo `order_repository` no `CompositionRoot` e monta o repositório no `main.rs` e no `begin`, e o `--policy` registra o command na outbox.
 
 ```console
 $ tree shop
@@ -523,7 +523,7 @@ impl Payments for InMemoryPayments {
 }
 ```
 
-O `CompositionRoot` reúne todos os ports. O `cerne g entity --aggregate` já acrescentou o `order_repository`; os dois sistemas externos entram à mão. O repositório e a outbox moram no banco, então o `begin` abre uma transação e os entrega ao novo `CompositionRoot`. Os sistemas externos continuam os mesmos, porque uma chamada a eles não tem como ser desfeita.
+O `CompositionRoot` reúne todos os ports, e o `CompositionRoot::new` só guarda os adapters que recebe: quem os monta é o `main.rs`. O `cerne g entity --aggregate` já acrescentou o `order_repository`; os dois sistemas externos entram à mão. O repositório e a outbox moram no banco, então o `begin` abre uma transação e os monta de novo em cima dela. Os sistemas externos continuam os mesmos, um `Arc::clone` dos mesmos adapters, porque uma chamada a eles não tem como ser desfeita.
 
 Como o `cerne new shop --db sqlite --http rest`, o `cerne g entity Order product:String quantity:u32 total:u64 status=Placed:Placed,Paid --aggregate` e o `cerne g command ChargeOrder order_id:OrderId total:u64 --policy` geraram o `src/composition_root.rs`:
 
@@ -538,25 +538,27 @@ use cerne::{Error, async_trait};
 
 /// The composition root: every port the commands and queries can use.
 ///
-/// The repositories and the outbox live in the database, so they follow its transaction. External systems do not:
-/// `begin` hands the same adapters to the new composition root.
+/// The repositories and the outbox live in the database, so `begin` builds them again on its transaction. External
+/// systems do not: `begin` hands the same adapters to the new composition root.
 pub struct CompositionRoot {
     pub database: SqliteDatabase,
     pub order_repository: Box<dyn Repository<Order>>,
     pub outbox: Box<dyn Outbox<CompositionRoot>>,
 }
 
-/// What `CompositionRoot::new` takes: the adapters the composition root is built from.
+/// What `CompositionRoot::new` takes: every adapter, already built.
 pub struct CompositionRootConstructor {
     pub database: SqliteDatabase,
+    pub order_repository: Box<dyn Repository<Order>>,
+    pub outbox: Box<dyn Outbox<CompositionRoot>>,
 }
 
 impl CompositionRoot {
     pub fn new(constructor: CompositionRootConstructor) -> Self {
         Self {
-            order_repository: Box::new(SqliteOrderRepository::new(constructor.database.clone())),
-            outbox: Box::new(SqliteOutbox::new(constructor.database.clone())),
             database: constructor.database,
+            order_repository: constructor.order_repository,
+            outbox: constructor.outbox,
         }
     }
 }
@@ -571,8 +573,13 @@ impl TransactionalCompositionRoot for CompositionRoot {
     async fn begin(&self) -> Result<Self, Error> {
         let transaction = self.database.begin().await?;
 
+        let order_repository = SqliteOrderRepository::new(transaction.clone());
+        let outbox = SqliteOutbox::new(transaction.clone());
+
         let composition_root_constructor = CompositionRootConstructor {
             database: transaction,
+            order_repository: Box::new(order_repository),
+            outbox: Box::new(outbox),
         };
 
         Ok(CompositionRoot::new(composition_root_constructor))
@@ -604,8 +611,8 @@ use std::sync::Arc;
 
 /// The composition root: every port the commands and queries can use.
 ///
-/// The repositories and the outbox live in the database, so they follow its transaction. External systems do not:
-/// `begin` hands the same adapters to the new composition root.
+/// The repositories and the outbox live in the database, so `begin` builds them again on its transaction. External
+/// systems do not: `begin` hands the same adapters to the new composition root.
 pub struct CompositionRoot {
     pub database: SqliteDatabase,
     pub order_repository: Box<dyn Repository<Order>>,
@@ -614,9 +621,11 @@ pub struct CompositionRoot {
     pub payments: Arc<dyn Payments>,
 }
 
-/// What `CompositionRoot::new` takes: the adapters the composition root is built from.
+/// What `CompositionRoot::new` takes: every adapter, already built.
 pub struct CompositionRootConstructor {
     pub database: SqliteDatabase,
+    pub order_repository: Box<dyn Repository<Order>>,
+    pub outbox: Box<dyn Outbox<CompositionRoot>>,
     pub catalog: Arc<dyn Catalog>,
     pub payments: Arc<dyn Payments>,
 }
@@ -624,9 +633,9 @@ pub struct CompositionRootConstructor {
 impl CompositionRoot {
     pub fn new(constructor: CompositionRootConstructor) -> Self {
         Self {
-            order_repository: Box::new(SqliteOrderRepository::new(constructor.database.clone())),
-            outbox: Box::new(SqliteOutbox::new(constructor.database.clone())),
             database: constructor.database,
+            order_repository: constructor.order_repository,
+            outbox: constructor.outbox,
             catalog: constructor.catalog,
             payments: constructor.payments,
         }
@@ -643,8 +652,13 @@ impl TransactionalCompositionRoot for CompositionRoot {
     async fn begin(&self) -> Result<Self, Error> {
         let transaction = self.database.begin().await?;
 
+        let order_repository = SqliteOrderRepository::new(transaction.clone());
+        let outbox = SqliteOutbox::new(transaction.clone());
+
         let composition_root_constructor = CompositionRootConstructor {
             database: transaction,
+            order_repository: Box::new(order_repository),
+            outbox: Box::new(outbox),
             catalog: Arc::clone(&self.catalog),
             payments: Arc::clone(&self.payments),
         };
@@ -1038,7 +1052,7 @@ Depois de preenchido:
 use cerne::Error;
 use cerne::application::{OutboxPolicyProcessor, Query, TransactionalCompositionRoot};
 use cerne::domain::{DomainError, ValueObject};
-use cerne::sqlite::SqliteDatabase;
+use cerne::sqlite::{SqliteDatabase, SqliteOutbox};
 use shop::application::commands::place_order::PlaceOrderCommand;
 use shop::application::queries::order_summary::OrderSummaryQuery;
 use shop::application::read_models::order_summary::OrderSummary;
@@ -1046,20 +1060,26 @@ use shop::composition_root::{CompositionRoot, CompositionRootConstructor, comman
 use shop::domain::value_objects::order_id::OrderId;
 use shop::infrastructure::in_memory_catalog::InMemoryCatalog;
 use shop::infrastructure::in_memory_payments::InMemoryPayments;
+use shop::infrastructure::sqlite_order_repository::SqliteOrderRepository;
 use std::sync::Arc;
 
 async fn composition_root(payments: Arc<InMemoryPayments>) -> Result<Arc<CompositionRoot>, Error> {
     let database = SqliteDatabase::in_memory().await?;
 
-    database.migrate(&sqlx::migrate!()).await?;
+    let order_repository = SqliteOrderRepository::new(database.clone());
+    let outbox = SqliteOutbox::new(database.clone());
 
-    let catalog = Arc::new(InMemoryCatalog {
+    let catalog = InMemoryCatalog {
         products: vec![("mug", 3000, 10)],
-    });
+    };
+
+    database.migrate(&sqlx::migrate!()).await?;
 
     let composition_root_constructor = CompositionRootConstructor {
         database,
-        catalog,
+        order_repository: Box::new(order_repository),
+        outbox: Box::new(outbox),
+        catalog: Arc::new(catalog),
         payments,
     };
 
@@ -1157,14 +1177,15 @@ cargo test
 
 O `cerne new --http rest` gerou o router, e cada `cerne g endpoint` acrescentou uma rota: o corpo do `POST /orders` é o `PlaceOrderCommand`, e a query string do `GET /orders` é a `OrderSummaryQuery`. No `main.rs`, só os dois adapters entram à mão:
 
-Como o `cerne new shop --db sqlite --http rest` gerou o `src/main.rs`:
+Como o `cerne new shop --db sqlite --http rest` e o `cerne g entity Order product:String quantity:u32 total:u64 status=Placed:Placed,Paid --aggregate` geraram o `src/main.rs`:
 
 <!-- generated: src/main.rs -->
 ```rust
 use cerne::application::OutboxPolicyProcessor;
-use cerne::sqlite::SqliteDatabase;
-use shop::infrastructure::http::router;
+use cerne::sqlite::{SqliteDatabase, SqliteOutbox};
 use shop::composition_root::{CompositionRoot, CompositionRootConstructor, command_registry};
+use shop::infrastructure::http::router;
+use shop::infrastructure::sqlite_order_repository::SqliteOrderRepository;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -1176,9 +1197,16 @@ async fn main() -> anyhow::Result<()> {
 
     let database = SqliteDatabase::connect(&database_url, 5).await?;
 
+    let order_repository = SqliteOrderRepository::new(database.clone());
+    let outbox = SqliteOutbox::new(database.clone());
+
     database.migrate(&sqlx::migrate!()).await?;
 
-    let composition_root_constructor = CompositionRootConstructor { database };
+    let composition_root_constructor = CompositionRootConstructor {
+        database,
+        order_repository: Box::new(order_repository),
+        outbox: Box::new(outbox),
+    };
 
     let composition_root = Arc::new(CompositionRoot::new(composition_root_constructor));
 
@@ -1209,11 +1237,12 @@ Depois de preenchido:
 <!-- file: src/main.rs -->
 ```rust
 use cerne::application::OutboxPolicyProcessor;
-use cerne::sqlite::SqliteDatabase;
+use cerne::sqlite::{SqliteDatabase, SqliteOutbox};
 use shop::composition_root::{CompositionRoot, CompositionRootConstructor, command_registry};
 use shop::infrastructure::http::router;
 use shop::infrastructure::in_memory_catalog::InMemoryCatalog;
 use shop::infrastructure::in_memory_payments::InMemoryPayments;
+use shop::infrastructure::sqlite_order_repository::SqliteOrderRepository;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -1225,17 +1254,22 @@ async fn main() -> anyhow::Result<()> {
 
     let database = SqliteDatabase::connect(&database_url, 5).await?;
 
-    database.migrate(&sqlx::migrate!()).await?;
+    let order_repository = SqliteOrderRepository::new(database.clone());
+    let outbox = SqliteOutbox::new(database.clone());
 
-    let catalog = Arc::new(InMemoryCatalog {
+    let catalog = InMemoryCatalog {
         products: vec![("mug", 3000, 10), ("t-shirt", 5000, 3)],
-    });
-    let payments = Arc::new(InMemoryPayments::default());
+    };
+    let payments = InMemoryPayments::default();
+
+    database.migrate(&sqlx::migrate!()).await?;
 
     let composition_root_constructor = CompositionRootConstructor {
         database,
-        catalog,
-        payments,
+        order_repository: Box::new(order_repository),
+        outbox: Box::new(outbox),
+        catalog: Arc::new(catalog),
+        payments: Arc::new(payments),
     };
 
     let composition_root = Arc::new(CompositionRoot::new(composition_root_constructor));

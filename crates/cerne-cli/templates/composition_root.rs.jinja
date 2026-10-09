@@ -9,44 +9,46 @@ use cerne::{Error, async_trait};
 /// The composition root: every port the commands and queries can use.
 ///
 {% if db %}
-/// The repositories and the outbox live in the database, so they follow its transaction. External systems do not:
-/// `begin` hands the same adapters to the new composition root.
+/// The repositories and the outbox live in the database, so `begin` builds them again on its transaction. External
+/// systems do not: `begin` hands the same adapters to the new composition root.
 pub struct CompositionRoot {
     pub database: {{ database }},
     pub outbox: Box<dyn Outbox<CompositionRoot>>,
 }
 
-/// What `CompositionRoot::new` takes: the adapters the composition root is built from.
+/// What `CompositionRoot::new` takes: every adapter, already built.
 pub struct CompositionRootConstructor {
     pub database: {{ database }},
+    pub outbox: Box<dyn Outbox<CompositionRoot>>,
 }
 
 impl CompositionRoot {
     pub fn new(constructor: CompositionRootConstructor) -> Self {
         Self {
-            outbox: Box::new({{ outbox }}::new(constructor.database.clone())),
             database: constructor.database,
+            outbox: constructor.outbox,
         }
     }
 }
 {% else %}
-/// No database yet (`cerne g db` adds one): the outbox lives in memory, and a transaction is only the same composition root.
-/// If the process dies, the commands the policies fired and that did not run yet are lost.
+/// No database yet (`cerne g db` adds one): the outbox lives in memory, and a transaction is only the same outbox. If
+/// the process dies, the commands the policies fired and that did not run yet are lost.
 pub struct CompositionRoot {
     pub in_memory_outbox: InMemoryOutbox,
     pub outbox: Box<dyn Outbox<CompositionRoot>>,
 }
 
-/// What `CompositionRoot::new` takes: the adapters the composition root is built from.
+/// What `CompositionRoot::new` takes: every adapter, already built.
 pub struct CompositionRootConstructor {
     pub in_memory_outbox: InMemoryOutbox,
+    pub outbox: Box<dyn Outbox<CompositionRoot>>,
 }
 
 impl CompositionRoot {
     pub fn new(constructor: CompositionRootConstructor) -> Self {
         Self {
-            outbox: Box::new(constructor.in_memory_outbox.clone()),
             in_memory_outbox: constructor.in_memory_outbox,
+            outbox: constructor.outbox,
         }
     }
 }
@@ -62,17 +64,23 @@ impl TransactionalCompositionRoot for CompositionRoot {
     async fn begin(&self) -> Result<Self, Error> {
 {% if db %}
         let transaction = self.database.begin().await?;
-{% else %}
-        let transaction = self.in_memory_outbox.begin().await?;
-{% endif %}
+
+        let outbox = {{ outbox }}::new(transaction.clone());
 
         let composition_root_constructor = CompositionRootConstructor {
-{% if db %}
             database: transaction,
-{% else %}
-            in_memory_outbox: transaction,
-{% endif %}
+            outbox: Box::new(outbox),
         };
+{% else %}
+        let transaction = self.in_memory_outbox.begin().await?;
+
+        let outbox = transaction.clone();
+
+        let composition_root_constructor = CompositionRootConstructor {
+            in_memory_outbox: transaction,
+            outbox: Box::new(outbox),
+        };
+{% endif %}
 
         Ok(CompositionRoot::new(composition_root_constructor))
     }

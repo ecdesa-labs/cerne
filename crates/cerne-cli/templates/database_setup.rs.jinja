@@ -7,5 +7,3 @@
 {% else %}
     let database = {{ database }}::connect(&std::env::var("DATABASE_URL")?, 5).await?;
 {% endif %}
-
-    database.migrate(&sqlx::migrate!()).await?;

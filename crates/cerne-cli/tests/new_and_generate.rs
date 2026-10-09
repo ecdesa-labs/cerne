@@ -6,15 +6,20 @@ use std::{env, fs};
 const REPOSITORY_TEST: &str = r#"
 use cerne::application::TransactionalCompositionRoot;
 use cerne::domain::Entity;
-use cerne::sqlite::SqliteDatabase;
+use cerne::sqlite::{SqliteDatabase, SqliteOutbox};
 use loja::domain::entities::order::{Order, OrderConstructor};
 use loja::composition_root::{CompositionRoot, CompositionRootConstructor};
+use loja::infrastructure::sqlite_order_repository::SqliteOrderRepository;
+use loja::infrastructure::sqlite_payment_repository::SqlitePaymentRepository;
 
 #[tokio::test]
 async fn the_generated_repository_inserts_loads_and_updates() {
     let database = SqliteDatabase::in_memory().await.unwrap();
+    let order_repository = SqliteOrderRepository::new(database.clone());
+    let payment_repository = SqlitePaymentRepository::new(database.clone());
+    let outbox = SqliteOutbox::new(database.clone());
     database.migrate(&sqlx::migrate!()).await.unwrap();
-    let composition_root_constructor = CompositionRootConstructor { database };
+    let composition_root_constructor = CompositionRootConstructor { database, order_repository: Box::new(order_repository), payment_repository: Box::new(payment_repository), outbox: Box::new(outbox) };
     let composition_root = CompositionRoot::new(composition_root_constructor);
 
     let transaction = composition_root.begin().await.unwrap();
@@ -33,9 +38,10 @@ async fn the_generated_repository_inserts_loads_and_updates() {
 const POSTGRES_REPOSITORY_TEST: &str = r#"
 use cerne::application::TransactionalCompositionRoot;
 use cerne::domain::Entity;
-use cerne::postgres::PostgresDatabase;
+use cerne::postgres::{PostgresDatabase, PostgresOutbox};
 use vitrine::domain::entities::product::{Product, ProductKind, ProductConstructor};
 use vitrine::composition_root::{CompositionRoot, CompositionRootConstructor};
+use vitrine::infrastructure::postgres_product_repository::PostgresProductRepository;
 
 #[tokio::test]
 async fn the_generated_repository_inserts_loads_and_updates_on_postgres() {
@@ -48,8 +54,10 @@ async fn the_generated_repository_inserts_loads_and_updates_on_postgres() {
 
     let (server_url, _) = database_url.rsplit_once('/').unwrap();
     let database = PostgresDatabase::connect(&format!("{server_url}/{database_name}"), 2).await.unwrap();
+    let product_repository = PostgresProductRepository::new(database.clone());
+    let outbox = PostgresOutbox::new(database.clone());
     database.migrate(&sqlx::migrate!()).await.unwrap();
-    let composition_root_constructor = CompositionRootConstructor { database };
+    let composition_root_constructor = CompositionRootConstructor { database, product_repository: Box::new(product_repository), outbox: Box::new(outbox) };
     let composition_root = CompositionRoot::new(composition_root_constructor);
 
     let product = Product::new(ProductConstructor {
@@ -85,15 +93,18 @@ async fn the_generated_repository_inserts_loads_and_updates_on_postgres() {
 const NUCLEO_REPOSITORY_TEST: &str = r#"
 use cerne::application::TransactionalCompositionRoot;
 use cerne::domain::Entity;
-use cerne::sqlite::SqliteDatabase;
+use cerne::sqlite::{SqliteDatabase, SqliteOutbox};
 use nucleo::domain::entities::order::{Order, OrderConstructor, OrderStatus};
 use nucleo::composition_root::{CompositionRoot, CompositionRootConstructor};
+use nucleo::infrastructure::sqlite_order_repository::SqliteOrderRepository;
 
 #[tokio::test]
 async fn the_aggregate_from_before_the_database_gets_a_repository() {
     let database = SqliteDatabase::in_memory().await.unwrap();
+    let order_repository = SqliteOrderRepository::new(database.clone());
+    let outbox = SqliteOutbox::new(database.clone());
     database.migrate(&sqlx::migrate!()).await.unwrap();
-    let composition_root_constructor = CompositionRootConstructor { database };
+    let composition_root_constructor = CompositionRootConstructor { database, order_repository: Box::new(order_repository), outbox: Box::new(outbox) };
     let composition_root = CompositionRoot::new(composition_root_constructor);
 
     let order = Order::new(OrderConstructor { product: "mug".into(), quantity: 2 }).unwrap();
@@ -113,14 +124,17 @@ use axum::body::Body;
 use axum::http::Request;
 use caixa::infrastructure::http::router;
 use caixa::composition_root::{CompositionRoot, CompositionRootConstructor};
-use cerne::sqlite::SqliteDatabase;
+use caixa::infrastructure::sqlite_sale_repository::SqliteSaleRepository;
+use cerne::sqlite::{SqliteDatabase, SqliteOutbox};
 use std::sync::Arc;
 use tower::ServiceExt;
 
 async fn send(request: Request<Body>) -> (u16, String) {
     let database = SqliteDatabase::in_memory().await.unwrap();
+    let sale_repository = SqliteSaleRepository::new(database.clone());
+    let outbox = SqliteOutbox::new(database.clone());
     database.migrate(&sqlx::migrate!()).await.unwrap();
-    let composition_root_constructor = CompositionRootConstructor { database };
+    let composition_root_constructor = CompositionRootConstructor { database, sale_repository: Box::new(sale_repository), outbox: Box::new(outbox) };
     let router = router(Arc::new(CompositionRoot::new(composition_root_constructor)));
 
     let response = router.oneshot(request).await.unwrap();

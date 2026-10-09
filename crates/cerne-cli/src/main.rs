@@ -63,8 +63,11 @@ const PORT: &str = include_str!("../templates/port.rs.jinja");
 const ADAPTER: &str = include_str!("../templates/adapter.rs.jinja");
 
 /// The lines `cerne g` adds to files that already exist, right before (or after) a line that `cerne new` wrote.
-const COMPOSITION_ROOT_STRUCT: &str = "pub outbox: Box<dyn Outbox<CompositionRoot>>,";
-const COMPOSITION_ROOT_NEW: &str = "outbox: Box::new(";
+const COMPOSITION_ROOT_FIELD: &str = "pub outbox: Box<dyn Outbox<CompositionRoot>>,";
+const COMPOSITION_ROOT_NEW: &str = "outbox: constructor.outbox,";
+const OUTBOX_BUILT: &str = "let outbox = ";
+const CONSTRUCTOR_OUTBOX: &str = "outbox: Box::new(outbox),";
+const OUTBOX_PROCESSOR: &str = "    let outbox_policy_processor = OutboxPolicyProcessor::new(";
 const COMMAND_REGISTRY: &str = "CommandRegistry::new()";
 const RPC_LAST_ARM: &str = "method => methods.not_found(method),";
 const ROUTER_STATE: &str = ".with_state(composition_root)";
@@ -407,12 +410,14 @@ fn add_repository(name: &str, file: &str, id_type: &str, fields: &[Value]) -> Cl
 
     println!("created {migration_file}");
 
+    let repository_use = format!("use crate::infrastructure::{repository_file}::{repository};");
+
+    // --- composition_root.rs: the field, and the repository on the transaction of `begin`
+
     insert_lines(
         "src/composition_root.rs",
-        &format!(
-            "use crate::domain::entities::{file}::{name};\nuse crate::infrastructure::{repository_file}::{repository};"
-        ),
-        COMPOSITION_ROOT_STRUCT,
+        &format!("use crate::domain::entities::{file}::{name};\n{repository_use}"),
+        COMPOSITION_ROOT_FIELD,
         &[&format!("pub {file}_repository: Box<dyn Repository<{name}>>,")],
         Before,
     )?;
@@ -423,11 +428,50 @@ fn add_repository(name: &str, file: &str, id_type: &str, fields: &[Value]) -> Cl
         "src/composition_root.rs",
         "",
         COMPOSITION_ROOT_NEW,
-        &[&format!(
-            "{file}_repository: Box::new({repository}::new(constructor.database.clone())),"
-        )],
+        &[&format!("{file}_repository: constructor.{file}_repository,")],
+        Before,
+    )?;
+
+    insert_lines(
+        "src/composition_root.rs",
+        "",
+        OUTBOX_BUILT,
+        &[&format!("let {file}_repository = {repository}::new(transaction.clone());")],
+        Before,
+    )?;
+
+    insert_lines(
+        "src/composition_root.rs",
+        "",
+        CONSTRUCTOR_OUTBOX,
+        &[&format!("{file}_repository: Box::new({file}_repository),")],
+        Before,
+    )?;
+
+    // --- main.rs: the repository on the database ------------------------------
+
+    let main_use = format!("use {}::infrastructure::{repository_file}::{repository};", project.name.replace('-', "_"));
+
+    insert_lines(
+        "src/main.rs",
+        &main_use,
+        OUTBOX_BUILT,
+        &[&format!("let {file}_repository = {repository}::new(database.clone());")],
+        Before,
+    )?;
+
+    insert_lines(
+        "src/main.rs",
+        "",
+        CONSTRUCTOR_OUTBOX,
+        &[&format!("{file}_repository: Box::new({file}_repository),")],
         Before,
     )
+}
+
+/// Two `use` lines that differ only in spaces, as a template writes them and as rustfmt leaves them.
+fn same_use(one: &str, other: &str) -> bool {
+    one.replace(' ', "") == other.replace(' ', "")
 }
 
 /// How one field of an aggregate goes to its column and comes back: `qty: i32` is a `BIGINT`, bound as `i64`.
@@ -565,20 +609,34 @@ fn generate_http(http: &str) -> CliResult {
 
     fs::write("src/infrastructure/mod.rs", format!("pub mod http;\n{infrastructure_mod}"))?;
 
-    // --- main.rs: rewritten only if it is still the one cerne new wrote -------
+    // --- main.rs: from the outbox down, rewritten only if it is the one cerne new wrote
 
     let main_rs = fs::read_to_string("src/main.rs")?;
-    let main_is_untouched = main_rs == render(MAIN, &without_http)?;
+    let main_without_http = render(MAIN, &without_http)?;
+    let main_with_http = render(MAIN, &with_http)?;
 
-    if main_is_untouched {
-        fs::write("src/main.rs", render(MAIN, &with_http)?)?;
+    let serving = main_rs.find(OUTBOX_PROCESSOR);
+    let untouched_serving = main_without_http
+        .find(OUTBOX_PROCESSOR)
+        .map(|at| &main_without_http[at..]);
+    let http_serving = main_with_http
+        .find(OUTBOX_PROCESSOR)
+        .map(|at| &main_with_http[at..]);
 
-        println!("updated src/main.rs");
-    } else {
-        println!(
-            "src/main.rs changed since cerne new: serve the router by hand, as in\n\n{}",
-            render(MAIN, &with_http)?
-        );
+    match (serving, untouched_serving, http_serving) {
+        (Some(at), Some(untouched), Some(http)) if &main_rs[at..] == untouched => {
+            let http_uses: String = main_with_http
+                .lines()
+                .filter(|line| line.starts_with("use ") && !main_rs.lines().any(|existing| same_use(existing, line)))
+                .map(|line| format!("{line}\n"))
+                .collect();
+
+            fs::write("src/main.rs", format!("{http_uses}{}{http}", &main_rs[..at]))?;
+            rustfmt(Path::new("src/main.rs"));
+
+            println!("updated src/main.rs");
+        }
+        _ => println!("src/main.rs changed since cerne new: serve the router by hand, as in\n\n{main_with_http}"),
     }
 
     // --- JSON-RPC: one method per command and query of an actor --------------
@@ -608,14 +666,17 @@ fn generate_http(http: &str) -> CliResult {
 
 /// The lines a project without a database has in `composition_root.rs` and `main.rs`, which `cerne g db` swaps for the
 /// database.
-const NO_DATABASE_COMPOSITION_ROOT_DOC: &str = "/// No database yet (`cerne g db` adds one): the outbox lives in memory, and a transaction is only the same composition root.
-/// If the process dies, the commands the policies fired and that did not run yet are lost.";
+const NO_DATABASE_COMPOSITION_ROOT_DOC: &str =
+    "/// No database yet (`cerne g db` adds one): the outbox lives in memory, and a transaction is only the same outbox. If
+/// the process dies, the commands the policies fired and that did not run yet are lost.";
 const DATABASE_COMPOSITION_ROOT_DOC: &str =
-    "/// The repositories and the outbox live in the database, so they follow its transaction. External systems do not:
-/// `begin` hands the same adapters to the new composition root.";
+    "/// The repositories and the outbox live in the database, so `begin` builds them again on its transaction. External
+/// systems do not: `begin` hands the same adapters to the new composition root.";
 const NO_DATABASE_SETUP: &str =
     "    // No database yet (`cerne g db` adds one): the commands of the policies wait in memory.
-    let in_memory_outbox = InMemoryOutbox::new();";
+    let in_memory_outbox = InMemoryOutbox::new();
+
+    let outbox = in_memory_outbox.clone();";
 
 /// `cerne g db memory|sqlite|postgres`: the database of a project created without `--db`, as `cerne new --db` writes
 /// it: `sqlx` and the adapters of `cerne`, the outbox table, the `CompositionRoot` on the database, and the SQL
@@ -695,10 +756,7 @@ fn generate_db(db: &str) -> CliResult {
 
     let composition_root_rs = fs::read_to_string("src/composition_root.rs")?
         .replace(NO_DATABASE_COMPOSITION_ROOT_DOC, DATABASE_COMPOSITION_ROOT_DOC)
-        .replace(
-            "Box::new(constructor.in_memory_outbox.clone())",
-            &format!("Box::new({outbox}::new(constructor.database.clone()))"),
-        )
+        .replace("let outbox = transaction.clone();", &format!("let outbox = {outbox}::new(transaction.clone());"))
         .replace("in_memory_outbox: InMemoryOutbox", &format!("database: {database}"))
         .replace("in_memory_outbox", "database")
         .replace("InMemoryOutbox, ", "");
@@ -719,19 +777,23 @@ fn generate_db(db: &str) -> CliResult {
     let main_rs = fs::read_to_string("src/main.rs")?;
     let database_setup = with_db.get_attr("database_setup")?.to_string();
 
+    let outbox_setup = format!(
+        "{database_setup}\n\n    let outbox = {outbox}::new(database.clone());\n\n    database.migrate(&sqlx::migrate!()).await?;"
+    );
+
     if main_rs.contains(NO_DATABASE_SETUP) {
         let main_rs = main_rs
-            .replace(NO_DATABASE_SETUP, &database_setup)
-            .replace("CompositionRootConstructor { in_memory_outbox }", "CompositionRootConstructor { database }")
+            .replace(NO_DATABASE_SETUP, &outbox_setup)
+            .replace("        in_memory_outbox,\n", "        database,\n")
             .replace("{InMemoryOutbox, OutboxPolicyProcessor}", "OutboxPolicyProcessor");
 
-        fs::write("src/main.rs", format!("use cerne::{module}::{database};\n{main_rs}"))?;
+        fs::write("src/main.rs", format!("use cerne::{module}::{{{database}, {outbox}}};\n{main_rs}"))?;
         rustfmt(Path::new("src/main.rs"));
 
         println!("updated src/main.rs");
     } else {
         println!(
-            "src/main.rs changed since cerne new: build the CompositionRoot on the database by hand, as in\n\n{database_setup}\n"
+            "src/main.rs changed since cerne new: build the CompositionRoot on the database by hand, as in\n\n{outbox_setup}\n"
         );
     }
 
@@ -927,24 +989,30 @@ enum Position {
 
 use Position::{After, Before};
 
-/// Adds `lines` right before (or after) the line that contains `anchor`, with its indentation, and the `use` lines at
-/// the top. The anchor is a line `cerne new` wrote; nothing else in the file changes.
+/// Adds `lines` right before (or after) every line that starts with `anchor`, with its indentation, and the `use` lines
+/// at the top. The anchor is a line `cerne new` wrote; nothing else in the file changes.
 fn insert_lines(path: &str, uses: &str, anchor: &str, lines: &[&str], position: Position) -> CliResult {
     let content = fs::read_to_string(path).map_err(|_| format!("{path} not found"))?;
     let mut file_lines: Vec<String> = content.lines().map(String::from).collect();
 
-    let Some(at) = file_lines.iter().position(|line| line.contains(anchor)) else {
-        return Err(format!("{path} has no line with {anchor:?}: add {lines:?} by hand").into());
-    };
-
-    let indentation: String = file_lines[at]
-        .chars()
-        .take_while(|c| c.is_whitespace())
+    let anchors: Vec<usize> = (0..file_lines.len())
+        .filter(|&at| file_lines[at].trim_start().starts_with(anchor))
         .collect();
-    let at = if position == After { at + 1 } else { at };
 
-    for line in lines.iter().rev() {
-        file_lines.insert(at, format!("{indentation}{}", line.trim_start()));
+    if anchors.is_empty() {
+        return Err(format!("{path} has no line with {anchor:?}: add {lines:?} by hand").into());
+    }
+
+    for &at in anchors.iter().rev() {
+        let indentation: String = file_lines[at]
+            .chars()
+            .take_while(|c| c.is_whitespace())
+            .collect();
+        let at = if position == After { at + 1 } else { at };
+
+        for line in lines.iter().rev() {
+            file_lines.insert(at, format!("{indentation}{}", line.trim_start()));
+        }
     }
 
     for use_line in uses.lines().rev() {

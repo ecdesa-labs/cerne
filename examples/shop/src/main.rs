@@ -1,9 +1,10 @@
 use cerne::application::OutboxPolicyProcessor;
-use cerne::sqlite::SqliteDatabase;
+use cerne::sqlite::{SqliteDatabase, SqliteOutbox};
 use shop::composition_root::{CompositionRoot, CompositionRootConstructor, command_registry};
 use shop::infrastructure::http::router;
 use shop::infrastructure::in_memory_catalog::InMemoryCatalog;
 use shop::infrastructure::in_memory_payments::InMemoryPayments;
+use shop::infrastructure::sqlite_order_repository::SqliteOrderRepository;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -15,17 +16,22 @@ async fn main() -> anyhow::Result<()> {
 
     let database = SqliteDatabase::connect(&database_url, 5).await?;
 
-    database.migrate(&sqlx::migrate!()).await?;
+    let order_repository = SqliteOrderRepository::new(database.clone());
+    let outbox = SqliteOutbox::new(database.clone());
 
-    let catalog = Arc::new(InMemoryCatalog {
+    let catalog = InMemoryCatalog {
         products: vec![("mug", 3000, 10), ("t-shirt", 5000, 3)],
-    });
-    let payments = Arc::new(InMemoryPayments::default());
+    };
+    let payments = InMemoryPayments::default();
+
+    database.migrate(&sqlx::migrate!()).await?;
 
     let composition_root_constructor = CompositionRootConstructor {
         database,
-        catalog,
-        payments,
+        order_repository: Box::new(order_repository),
+        outbox: Box::new(outbox),
+        catalog: Arc::new(catalog),
+        payments: Arc::new(payments),
     };
 
     let composition_root = Arc::new(CompositionRoot::new(composition_root_constructor));

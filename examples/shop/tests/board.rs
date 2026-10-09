@@ -3,7 +3,7 @@
 use cerne::Error;
 use cerne::application::{OutboxPolicyProcessor, Query, TransactionalCompositionRoot};
 use cerne::domain::{DomainError, ValueObject};
-use cerne::sqlite::SqliteDatabase;
+use cerne::sqlite::{SqliteDatabase, SqliteOutbox};
 use shop::application::commands::place_order::PlaceOrderCommand;
 use shop::application::queries::order_summary::OrderSummaryQuery;
 use shop::application::read_models::order_summary::OrderSummary;
@@ -11,20 +11,26 @@ use shop::composition_root::{CompositionRoot, CompositionRootConstructor, comman
 use shop::domain::value_objects::order_id::OrderId;
 use shop::infrastructure::in_memory_catalog::InMemoryCatalog;
 use shop::infrastructure::in_memory_payments::InMemoryPayments;
+use shop::infrastructure::sqlite_order_repository::SqliteOrderRepository;
 use std::sync::Arc;
 
 async fn composition_root(payments: Arc<InMemoryPayments>) -> Result<Arc<CompositionRoot>, Error> {
     let database = SqliteDatabase::in_memory().await?;
 
-    database.migrate(&sqlx::migrate!()).await?;
+    let order_repository = SqliteOrderRepository::new(database.clone());
+    let outbox = SqliteOutbox::new(database.clone());
 
-    let catalog = Arc::new(InMemoryCatalog {
+    let catalog = InMemoryCatalog {
         products: vec![("mug", 3000, 10)],
-    });
+    };
+
+    database.migrate(&sqlx::migrate!()).await?;
 
     let composition_root_constructor = CompositionRootConstructor {
         database,
-        catalog,
+        order_repository: Box::new(order_repository),
+        outbox: Box::new(outbox),
+        catalog: Arc::new(catalog),
         payments,
     };
 
